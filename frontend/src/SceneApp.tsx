@@ -1,6 +1,8 @@
 import { createSignal, onCleanup, onMount } from 'solid-js';
 import { Stage } from './components/Stage';
+import { PlayerUI } from './components/PlayerUI';
 import { BackendPlaybackClient } from './audio/BackendPlaybackClient';
+import type { ConnectionStatus, PlaybackStatus } from './audio/BackendPlaybackClient';
 import type { AudioEngine } from './audio/AudioEngine';
 import type { SceneDef } from './viz/scenes';
 
@@ -13,20 +15,23 @@ interface Props {
 
 /**
  * One visualizer page. Every scene in the catalogue renders through this
- * component, so they all share the same playback wiring, the same "On Air"
- * chrome and the same transparent-overlay behaviour.
+ * component, so they all share the same playback wiring, broadcast workspace,
+ * and transparent-overlay behaviour.
  *
- * The opaque variant shows a small badge and the current track. The transparent
- * variant shows the visuals alone, so it can be composited over other sources
+ * The opaque variant shows the shared player UI. The transparent variant
+ * shows the visuals alone, so it can be composited over other sources
  * in OBS without a background or any text.
  */
 export function SceneApp(props: Props) {
-  const [trackName, setTrackName] = createSignal('');
-  const [trackArtist, setTrackArtist] = createSignal('');
-  const [live, setLive] = createSignal(false);
+  const [trackName, setTrackName] = createSignal('Waiting for a track…');
+  const [trackArtist, setTrackArtist] = createSignal('lofi radio · 24/7');
+  const [audio, setAudio] = createSignal<AudioEngine | null>(null);
+  const [wsStatus, setWsStatus] = createSignal<ConnectionStatus>('disconnected');
+  const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
   let backendClient: BackendPlaybackClient | null = null;
 
   onMount(() => {
+    document.title = `lofi.radio — ${props.scene.label}${props.transparent ? ' overlay' : ''}`;
     const root = document.documentElement;
     // Transparent pages get the overlay class only, so the page background
     // stays clear for compositing. Opaque pages get the scene's own backdrop.
@@ -36,7 +41,7 @@ export function SceneApp(props: Props) {
     root.classList.add(pageClass);
 
     const retryPending = () => backendClient?.retryPendingPlay();
-    window.addEventListener('pointerdown', retryPending);
+    if (props.transparent) window.addEventListener('pointerdown', retryPending);
 
     onCleanup(() => {
       window.removeEventListener('pointerdown', retryPending);
@@ -45,14 +50,14 @@ export function SceneApp(props: Props) {
   });
 
   const onReady = (audio: AudioEngine) => {
+    setAudio(audio);
     backendClient?.dispose();
     backendClient = new BackendPlaybackClient({
       audio,
-      onStatus: (status) =>
-        setLive(status.connection === 'connected' && status.playback === 'playing'),
+      onStatus: (status) => { setWsStatus(status.connection); setPlaybackStatus(status.playback); },
       onSongChange: (song) => {
-        setTrackName(song?.title ?? '');
-        setTrackArtist(song?.artist ?? '');
+        setTrackName(song?.title || 'Waiting for a track…');
+        setTrackArtist(song?.artist || 'lofi radio · 24/7');
       },
     });
     backendClient.start();
@@ -75,16 +80,16 @@ export function SceneApp(props: Props) {
         }
       />
       {!props.transparent && (
-        <div id="spectrum-chrome">
-          <div class="spec-badge" classList={{ 'spec-badge--live': live() }}>
-            <span class="spec-dot" />
-            {live() ? 'On Air' : 'Standby'}
-          </div>
-          <div class="spec-now" classList={{ 'spec-now--show': !!trackName() }}>
-            <span class="spec-title">{trackName() || '—'}</span>
-            <span class="spec-artist">{trackArtist()}</span>
-          </div>
-        </div>
+        <PlayerUI
+          trackName={trackName}
+          trackArtist={trackArtist}
+          wsStatus={wsStatus}
+          playbackStatus={playbackStatus}
+          audio={audio}
+          onEnableAudio={() => backendClient?.retryPendingPlay()}
+          sceneName={props.scene.label}
+          sceneSlug={props.scene.slug}
+        />
       )}
     </>
   );

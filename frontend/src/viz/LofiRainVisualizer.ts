@@ -15,7 +15,6 @@
 */
 import * as PIXI from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
-import gsap from 'gsap';
 import { lerp, clamp } from './util';
 import type { AudioEngine } from '../audio/AudioEngine';
 
@@ -447,8 +446,6 @@ export class LofiRainVisualizer {
       this.fluid, this.bassRing, this.eq, this.wave, this.coreWrap,
       this.comets, this.sparkles,
     );
-
-    gsap.to(this.coreWrap.scale, { x: 1.05, y: 1.05, duration: 4.2, yoyo: true, repeat: -1, ease: 'sine.inOut' });
   }
 
   // ── Particles ─────────────────────────────────────────────────────────────────
@@ -731,6 +728,9 @@ export class LofiRainVisualizer {
     this._preSmooth();
 
     this.t += dt;
+    // Keep the breathing motion on the scene's clock, so reduced motion can
+    // hold the entire composition rather than leaving a separate tween running.
+    this.coreWrap.scale.set(1 + 0.025 * (1 - Math.cos(this.t * Math.PI / 4.2)));
     const a = this.audio;
     const b = a.bands;
     const bass = clamp(b.bass * this.bassGain, 0, 1.4);
@@ -1210,7 +1210,6 @@ export class LofiRainVisualizer {
   // ── Cleanup ───────────────────────────────────────────────────────────────────
 
   dispose() {
-    gsap.killTweensOf(this.coreWrap.scale);
     this.bgLayer.destroy({ children: true });
     this.glowLayer.destroy({ children: true });
     this.fgLayer.destroy({ children: true });

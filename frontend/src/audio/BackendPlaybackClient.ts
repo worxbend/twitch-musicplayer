@@ -150,7 +150,7 @@ export class BackendPlaybackClient {
 
   retryPendingPlay() {
     if (!this.pendingPlay) return;
-    void this.play(this.pendingPlay);
+    return this.play(this.pendingPlay);
   }
 
   private connect() {

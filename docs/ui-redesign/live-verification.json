@@ -1,0 +1,257 @@
+{
+  "passed": [
+    "Real WebSocket connection",
+    "Keyboard audio unlock",
+    "Playback and track metadata",
+    "Live admin updates",
+    "Search",
+    "Queue add/remove",
+    "Play now",
+    "Skip",
+    "Clear cancel/confirm",
+    "Clipboard with selected ramp",
+    "Responsive screenshots"
+  ],
+  "errors": [],
+  "warnings": [
+    "[.WebGL-0x267c001cbe00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+    "[.WebGL-0x267c001cbe00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+  ],
+  "responses": [
+    {
+      "method": "GET",
+      "path": "/v1/songs/d7bdb5e8-1083-56ac-a7dc-0522412e20c3/content",
+      "status": 206
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/songs",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/songs",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/v1/queue",
+      "status": 201
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/queue/82d27aff-c958-4199-b4b4-c3f161defccf",
+      "status": 204
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/v1/queue:play-next",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/songs/2af2af5a-678a-592c-92a2-3dbd53dd6077/content",
+      "status": 206
+    },
+    {
+      "method": "POST",
+      "path": "/v1/player:skip",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/songs/72d8c2a5-ac98-5737-86d7-623d2353b83b/content",
+      "status": 206
+    },
+    {
+      "method": "POST",
+      "path": "/v1/queue:clear",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/songs",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/v1/queue",
+      "status": 201
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/v1/queue",
+      "status": 201
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/v1/queue",
+      "status": 201
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/player",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v1/queue",
+      "status": 200
+    }
+  ]
+}

@@ -38,9 +38,17 @@ export function Stage(props: Props) {
     let viz: Visualizer | null = null;
     let ro: ResizeObserver | null = null;
     let tickerUpdate: (() => void) | null = null;
+    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let needsVisualFrame = true;
+    const onMotionChange = () => {
+      needsVisualFrame = true;
+      if (initialized) app.ticker.maxFPS = motionPreference.matches ? 30 : 60;
+    };
+    motionPreference.addEventListener('change', onMotionChange);
 
     onCleanup(() => {
       disposed = true;
+      motionPreference.removeEventListener('change', onMotionChange);
       ro?.disconnect();
       if (tickerUpdate && initialized) app.ticker.remove(tickerUpdate);
       viz?.dispose();
@@ -70,7 +78,7 @@ export function Stage(props: Props) {
         return;
       }
 
-      app.ticker.maxFPS = 60;
+      app.ticker.maxFPS = motionPreference.matches ? 30 : 60;
       app.ticker.minFPS = 30;
       stageRef.appendChild(app.canvas);
 
@@ -90,14 +98,22 @@ export function Stage(props: Props) {
         const dt = Math.min((now - last) / 1000, 0.05);
         last = now;
         audio.update(dt, 1);
-        viz.update(dt);
+        // Keep playback running, but hold a still composition when motion is reduced.
+        if (!motionPreference.matches || needsVisualFrame) {
+          viz.update(motionPreference.matches ? 0 : dt);
+          needsVisualFrame = false;
+        }
       };
       app.ticker.add(tickerUpdate);
 
-      ro = new ResizeObserver(() => viz?.resize());
+      ro = new ResizeObserver(() => {
+        app.resize();
+        viz?.resize();
+        needsVisualFrame = true;
+      });
       ro.observe(stageRef);
     })().catch(err => console.error('Stage init failed', err));
   });
 
-  return <div id="stage" ref={stageRef!} />;
+  return <div id="stage" ref={stageRef!} aria-hidden="true" />;
 }

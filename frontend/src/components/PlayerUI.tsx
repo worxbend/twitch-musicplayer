@@ -1,112 +1,78 @@
-import { createSignal, onMount, onCleanup, createEffect, on } from 'solid-js';
+import { createSignal, onMount, onCleanup, Show } from 'solid-js';
 import type { AudioEngine } from '../audio/AudioEngine';
+import type { ConnectionStatus, PlaybackStatus } from '../audio/BackendPlaybackClient';
+import { TerminalHeader } from './TerminalHeader';
 
 interface Props {
-  trackName:   () => string;
+  trackName: () => string;
   trackArtist: () => string;
-  wsStatus:    () => 'connected' | 'reconnecting' | 'disconnected';
-  audio:       () => AudioEngine | null;
+  wsStatus: () => ConnectionStatus;
+  playbackStatus: () => PlaybackStatus;
+  audio: () => AudioEngine | null;
+  onEnableAudio: () => Promise<void> | undefined;
+  sceneName?: string;
+  sceneSlug?: string;
 }
-
 function fmtTime(secs: number): string {
   if (!Number.isFinite(secs) || secs < 0) secs = 0;
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  return `${Math.floor(secs / 60)}:${Math.floor(secs % 60).toString().padStart(2, '0')}`;
 }
 
 export function PlayerUI(props: Props) {
-  const [time, setTime] = createSignal('--:--');
+  const [time, setTime] = createSignal('--:--:--');
+  const [enabling, setEnabling] = createSignal(false);
+  const enableAudio = async () => {
+    if (enabling()) return;
+    setEnabling(true);
+    try { await props.onEnableAudio(); }
+    finally { setEnabling(false); }
+  };
   const [fraction, setFraction] = createSignal(0);
   const [elapsed, setElapsed] = createSignal('0:00');
   const [remaining, setRemaining] = createSignal('0:00');
-  const [reveal, setReveal] = createSignal(true);
-
   onMount(() => {
-    const tickClock = () => {
-      const d = new Date();
-      setTime(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-    };
-    tickClock();
-    const clockId = setInterval(tickClock, 30_000);
-    onCleanup(() => clearInterval(clockId));
-
-    // Smooth progress bar, driven by the active audio element.
-    let raf = 0;
-    let lastSec = -1;
     const tick = () => {
-      const prog = props.audio()?.getPlaybackProgress?.() ?? null;
-      if (prog && prog.duration > 0) {
-        const f = Math.min(1, Math.max(0, prog.currentTime / prog.duration));
-        setFraction(f);
-        const es = Math.floor(prog.currentTime);
-        if (es !== lastSec) {
-          lastSec = es;
-          setElapsed(fmtTime(prog.currentTime));
-          setRemaining('-' + fmtTime(prog.duration - prog.currentTime));
-        }
-      } else {
-        setFraction(0);
-        if (lastSec !== -1) { lastSec = -1; setElapsed('0:00'); setRemaining('0:00'); }
-      }
-      raf = requestAnimationFrame(tick);
+      setTime(new Date().toLocaleTimeString([], { hour12: false }));
+      const progress = props.audio()?.getPlaybackProgress() ?? null;
+      if (progress && progress.duration > 0) {
+        setFraction(Math.min(1, Math.max(0, progress.currentTime / progress.duration)));
+        setElapsed(fmtTime(progress.currentTime));
+        setRemaining('-' + fmtTime(progress.duration - progress.currentTime));
+      } else { setFraction(0); setElapsed('0:00'); setRemaining('0:00'); }
     };
-    raf = requestAnimationFrame(tick);
-    onCleanup(() => cancelAnimationFrame(raf));
+    tick();
+    const interval = window.setInterval(tick, 250);
+    onCleanup(() => window.clearInterval(interval));
   });
-
-  // Re-trigger the reveal animation each time the track changes.
-  createEffect(on(() => props.trackName(), () => {
-    setReveal(false);
-    requestAnimationFrame(() => requestAnimationFrame(() => setReveal(true)));
-  }, { defer: true }));
-
-  const liveDotClass = () =>
-    props.wsStatus() === 'connected'    ? 'dot'          :
-    props.wsStatus() === 'reconnecting' ? 'dot dot--warn' : 'dot dot--off';
-
-  const liveLabel = () =>
-    props.wsStatus() === 'connected'    ? 'Live'         :
-    props.wsStatus() === 'reconnecting' ? 'Reconnecting' : 'Offline';
-
+  const isPlaying = () => props.wsStatus() === 'connected' && props.playbackStatus() === 'playing';
+  const statusLabel = () => props.wsStatus() === 'connected'
+    ? isPlaying() ? 'On air' : 'Standby'
+    : props.wsStatus() === 'reconnecting' ? 'Reconnecting' : 'Offline';
+  const detail = () => props.wsStatus() !== 'connected' ? 'Waiting for the backend. Reconnecting automatically.'
+    : props.playbackStatus() === 'blocked' ? 'Your browser needs a click before it can play audio.'
+    : props.playbackStatus() === 'error' ? 'Audio unavailable. The player will retry automatically.'
+    : props.playbackStatus() === 'idle' ? 'Connected. Waiting for the next track.'
+    : 'Your library, on a continuous frequency.';
   return (
-    <>
-      <div id="vignette" />
-      <div id="grain" />
-
-      <div id="chrome">
-        {/* top-left: live badge */}
-        <div class="live">
-          <span class="badge">
-            <span class={liveDotClass()} />
-            {liveLabel()}
-          </span>
+    <div class="player-shell">
+      <TerminalHeader active="player" />
+      <main id="main" class="player-workspace" tabIndex={-1}>
+        <div class="player-frame" aria-hidden="true" />
+        <div class="session-header">
+          <div><div class="command-line"><span>streamer@lofi</span>:~$ radio --listen</div><h1>{props.sceneName || 'Ambient frequency'}</h1><p>{props.sceneSlug ? `scene://${props.sceneSlug}` : 'scene://lofi-rain'} <span>/ audio-reactive</span></p></div>
+          <div class="session-meta"><span class="status" classList={{'status--live': isPlaying()}}><span class="status-dot" />{statusLabel()}</span><time>{time()}</time></div>
         </div>
-
-        {/* top-right: clock only */}
-        <div class="meta">
-          <div id="clock">{time()}</div>
-        </div>
-
-        {/* bottom-left: now playing */}
-        <div class="nowplaying">
-          <div class="np-art" />
-          <div class="np-info" classList={{ 'np-reveal': reveal() }}>
-            <span class="np-label">Now Playing</span>
-            <span id="np-title">{props.trackName()}</span>
-            <span id="np-artist">{props.trackArtist()}</span>
-            <div class="np-progress">
-              <div class="np-bar">
-                <div class="np-bar-fill" style={{ width: `${fraction() * 100}%` }} />
-              </div>
-              <div class="np-times">
-                <span>{elapsed()}</span>
-                <span>{remaining()}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
+        <Show when={props.playbackStatus() !== 'playing' || props.wsStatus() !== 'connected'}>
+          <div class="player-message" role="status"><span class="message-prompt" aria-hidden="true">&gt;_</span><p>{detail()}</p><Show when={props.playbackStatus() === 'blocked'}><button class="btn btn-primary" disabled={enabling()} onClick={() => void enableAudio()}>{enabling() ? 'Starting audio…' : 'Enable audio ▶'}</button></Show></div>
+        </Show>
+        <section class="player-deck" aria-label="Current track">
+          <div class="deck-art" aria-hidden="true">▂▅█▅▂</div>
+          <div class="np-info"><span class="np-label">{isPlaying() ? 'Now playing' : 'Current track'}</span><span id="np-title" title={props.trackName()}>{props.trackName()}</span><span id="np-artist">{props.trackArtist()}</span></div>
+          <div class="np-progress"><div class="np-times"><span>{elapsed()}</span><span>{remaining()}</span></div><div class="np-bar" role="progressbar" aria-label="Track progress" aria-valuenow={Math.round(fraction() * 100)} aria-valuemin={0} aria-valuemax={100}><div class="np-bar-fill" style={{width: `${fraction() * 100}%`}} /></div><span class="progress-caption">backend-driven / continuous playback</span></div>
+          <a class="btn deck-link" href="/scenes">Change scene ↗</a>
+        </section>
+        <footer class="player-footer"><span>lofi.radio / {props.sceneSlug || 'ambient'}</span><span>Beats to stream, chill &amp; build to.</span><a href={props.sceneSlug ? `/${props.sceneSlug}-overlay${window.location.search}` : '/overlay'}>Clean OBS view ↗</a></footer>
+      </main>
+    </div>
   );
 }

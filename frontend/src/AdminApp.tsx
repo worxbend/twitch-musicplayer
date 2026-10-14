@@ -1,359 +1,194 @@
-import {
-  createSignal,
-  createEffect,
-  onMount,
-  onCleanup,
-  For,
-  Show,
-} from 'solid-js';
+import { createSignal, createEffect, onMount, onCleanup, For, Show } from 'solid-js';
 import { getBackendURL, getWebSocketURL } from './config/backend';
-
-// ── Types ──────────────────────────────────────────────────────────────────
+import { TerminalHeader } from './components/TerminalHeader';
 
 interface Song {
-  id: string;
-  filename: string;
-  title: string;
-  artist: string;
-  album: string;
-  duration_secs: number;
-  size_bytes: number;
+  id: string; filename: string; title: string; artist: string; album: string;
+  duration_secs: number; size_bytes: number;
 }
-
 interface QueueItem {
-  id: string;
-  song_id: string;
-  song?: Song;
-  position: number;
-  source: 'auto' | 'manual';
-  added_at: string;
+  id: string; song_id: string; song?: Song; position: number;
+  source: 'auto' | 'manual'; added_at: string;
 }
-
-interface WsMessage {
-  type: string;
-  payload?: unknown;
-}
-
-// ── Utility ────────────────────────────────────────────────────────────────
-
 function formatDuration(secs: number): string {
   if (!secs || secs <= 0) return '--:--';
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  return `${Math.floor(secs / 60)}:${Math.floor(secs % 60).toString().padStart(2, '0')}`;
 }
-
-function songLabel(song: Song): string {
-  return song.artist ? `${song.artist} — ${song.title}` : song.title || song.filename;
-}
-
-// ── Admin App ──────────────────────────────────────────────────────────────
+function songLabel(song: Song) { return song.title || song.filename; }
 
 export function AdminApp() {
   const backendURL = getBackendURL();
-
   const [songs, setSongs] = createSignal<Song[]>([]);
   const [queue, setQueue] = createSignal<QueueItem[]>([]);
   const [currentSong, setCurrentSong] = createSignal<Song | null>(null);
   const [connected, setConnected] = createSignal(false);
   const [notification, setNotification] = createSignal('');
+  const [notificationError, setNotificationError] = createSignal(false);
+  const [searchQuery, setSearchQuery] = createSignal('');
+  const [loading, setLoading] = createSignal(true);
+  const [libraryError, setLibraryError] = createSignal(false);
+  const [queueError, setQueueError] = createSignal(false);
+  const [playerError, setPlayerError] = createSignal(false);
+  const [busy, setBusy] = createSignal('');
   let notifTimer = 0;
+  let searchTimer = 0;
+  let searchRequest = 0;
+  let disposed = false;
+  let clearDialog!: HTMLDialogElement;
 
-  // ── REST helpers ───────────────────────────────────────────────────────
-
-  async function fetchSongs(q = '') {
-    try {
-      const url = q
-        ? `${backendURL}/v1/songs?q=${encodeURIComponent(q)}`
-        : `${backendURL}/v1/songs`;
-      const res = await fetch(url);
-      const data = await res.json();
-      setSongs(data.songs ?? []);
-    } catch { /* network error, keep stale data */ }
+  async function request(path: string, init?: RequestInit) {
+    const res = await fetch(`${backendURL}${path}`, init);
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    return res;
   }
-
+  async function fetchSongs(q = searchQuery()) {
+    const id = ++searchRequest;
+    setLoading(true);
+    try {
+      const data = await (await request(`/v1/songs${q ? `?q=${encodeURIComponent(q)}` : ''}`)).json();
+      if (id === searchRequest && !disposed) { setSongs(data.songs ?? []); setLibraryError(false); }
+    } catch { if (id === searchRequest && !disposed) setLibraryError(true); }
+    finally { if (id === searchRequest && !disposed) setLoading(false); }
+  }
   async function fetchQueue() {
     try {
-      const res = await fetch(`${backendURL}/v1/queue`);
-      const data = await res.json();
-      setQueue(data.items ?? []);
-    } catch { /* keep stale */ }
+      const data = await (await request('/v1/queue')).json();
+      if (!disposed) { setQueue(data.items ?? []); setQueueError(false); }
+    } catch { if (!disposed) setQueueError(true); }
   }
-
   async function fetchPlayerState() {
     try {
-      const res = await fetch(`${backendURL}/v1/player`);
-      const data = await res.json();
-      setCurrentSong(data.current_song ?? null);
-    } catch { /* keep stale */ }
+      const data = await (await request('/v1/player')).json();
+      if (!disposed) { setCurrentSong(data.current_song ?? null); setPlayerError(false); }
+    } catch { if (!disposed) setPlayerError(true); }
   }
-
-  // ── Actions ────────────────────────────────────────────────────────────
-
-  async function addToQueue(songId: string, title: string) {
-    const res = await fetch(`${backendURL}/v1/queue`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ song_id: songId }),
-    });
-    if (res.ok) {
-      await fetchQueue();
-      showNotification(`Queued: ${title}`);
-    }
-  }
-
-  async function playNow(songId: string, title: string) {
-    const res = await fetch(`${backendURL}/v1/queue:play-next`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ song_id: songId }),
-    });
-    if (res.ok) {
-      await fetchQueue();
-      showNotification(`Playing: ${title}`);
-    }
-  }
-
-  async function removeFromQueue(itemId: string) {
-    await fetch(`${backendURL}/v1/queue/${itemId}`, { method: 'DELETE' });
-    await fetchQueue();
-  }
-
-  async function skipCurrent() {
-    // Broadcasts skip_now via WebSocket so the main scene / overlay immediately
-    // abandons the current track and pulls the next one from the queue.
-    await fetch(`${backendURL}/v1/player:skip`, { method: 'POST' });
-    await Promise.all([fetchQueue(), fetchPlayerState()]);
-  }
-
-  async function clearQueue() {
-    await fetch(`${backendURL}/v1/queue:clear`, { method: 'POST' });
-    await fetchQueue();
-  }
-
-  function showNotification(msg: string) {
+  function showNotification(message: string, error = false) {
     window.clearTimeout(notifTimer);
-    setNotification(msg);
-    notifTimer = window.setTimeout(() => setNotification(''), 2500);
+    setNotificationError(error);
+    setNotification(message);
+    notifTimer = window.setTimeout(() => setNotification(''), 4500);
   }
-
-  // ── WebSocket (live updates) ───────────────────────────────────────────
+  async function action(path: string, message: string, method = 'POST', songId?: string) {
+    if (busy()) return;
+    setBusy(path);
+    try {
+      await request(path, {
+        method,
+        ...(songId ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ song_id: songId }) } : {}),
+      });
+      await Promise.all([fetchQueue(), fetchPlayerState()]);
+      showNotification(`✓ ${message}`);
+    } catch { showNotification('Action failed. Check the backend connection and try again.', true); }
+    finally { setBusy(''); }
+  }
 
   let socket: WebSocket | null = null;
   let heartbeatInterval = 0;
   let reconnectTimeout = 0;
-
   function connectWS() {
-    if (socket && socket.readyState <= WebSocket.OPEN) return;
-
+    if (disposed || (socket && socket.readyState <= WebSocket.OPEN)) return;
     socket = new WebSocket(getWebSocketURL());
-
     socket.onopen = () => {
       setConnected(true);
+      void fetchQueue(); void fetchPlayerState();
       window.clearInterval(heartbeatInterval);
       heartbeatInterval = window.setInterval(() => {
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'heartbeat' }));
-        }
+        if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'heartbeat' }));
       }, 25000);
     };
-
-    socket.onmessage = (e) => {
+    socket.onmessage = e => {
       try {
-        const msg = JSON.parse(e.data) as WsMessage;
-        handleWSMessage(msg);
-      } catch { /* malformed message */ }
+        const msg = JSON.parse(e.data) as { type: string; payload?: { song?: Song; current_song?: Song } };
+        if (msg.type === 'queue_updated') void fetchQueue();
+        if (msg.type === 'now_playing') { setCurrentSong(msg.payload?.song ?? null); void fetchQueue(); }
+        if (msg.type === 'state') { setCurrentSong(msg.payload?.current_song ?? null); void fetchQueue(); }
+      } catch { /* Ignore malformed protocol messages. */ }
     };
-
     socket.onclose = () => {
       setConnected(false);
       window.clearInterval(heartbeatInterval);
-      window.clearTimeout(reconnectTimeout);
-      reconnectTimeout = window.setTimeout(connectWS, 3000);
+      if (!disposed) reconnectTimeout = window.setTimeout(connectWS, 3000);
     };
-
     socket.onerror = () => socket?.close();
   }
-
-  function handleWSMessage(msg: WsMessage) {
-    switch (msg.type) {
-      case 'queue_updated':
-        void fetchQueue();
-        break;
-      case 'now_playing': {
-        const p = msg.payload as { song?: Song; queue_depth?: number } | undefined;
-        if (p?.song) {
-          setCurrentSong(p.song);
-          void fetchQueue();
-        }
-        break;
-      }
-      case 'state': {
-        const p = msg.payload as { current_song?: Song } | undefined;
-        if (p?.current_song) setCurrentSong(p.current_song);
-        void fetchQueue();
-        break;
-      }
-    }
-  }
-
-  // ── Search with debounce ───────────────────────────────────────────────
-
-  const [searchQuery, setSearchQuery] = createSignal('');
-  let searchTimer = 0;
-
   createEffect(() => {
     const q = searchQuery();
     window.clearTimeout(searchTimer);
+    // Invalidate an in-flight result as soon as the query changes.
+    searchRequest++;
     searchTimer = window.setTimeout(() => void fetchSongs(q), 280);
   });
-
-  // ── Lifecycle ──────────────────────────────────────────────────────────
-
-  onMount(async () => {
-    await Promise.all([fetchSongs(), fetchQueue(), fetchPlayerState()]);
-    connectWS();
+  onMount(() => {
+    void fetchQueue(); void fetchPlayerState(); connectWS();
   });
-
   onCleanup(() => {
+    disposed = true;
     window.clearInterval(heartbeatInterval);
     window.clearTimeout(reconnectTimeout);
     window.clearTimeout(notifTimer);
-    socket?.close();
+    window.clearTimeout(searchTimer);
+    if (socket) { socket.onclose = null; socket.close(); }
   });
-
-  // ── Render ─────────────────────────────────────────────────────────────
 
   return (
     <div class="admin-shell">
-
-      {/* Header */}
-      <header class="admin-header">
-        <h1>Lofi Radio — Admin</h1>
-        <span class="status-label">
-          <span class={`status-dot ${connected() ? 'connected' : ''}`} />
-          {connected() ? 'Connected' : 'Disconnected'}
-        </span>
-      </header>
-
-      {/* Now playing bar */}
-      <div class="now-playing-bar">
-        <span class="now-playing-label">Now Playing</span>
-        <div class="now-playing-info">
-          <Show
-            when={currentSong()}
-            fallback={<span class="now-playing-empty">Nothing playing</span>}
-          >
-            {(song) => (
-              <>
-                <div class="now-playing-title">{song().title || song().filename}</div>
-                <div class="now-playing-artist">{song().artist || 'Unknown artist'}</div>
-              </>
-            )}
-          </Show>
-        </div>
-        <button class="btn btn-warning" onClick={skipCurrent}>Skip</button>
-        <button class="btn btn-ghost" onClick={clearQueue}>Clear Queue</button>
-      </div>
-
-      {/* Main two-column layout */}
-      <div class="admin-main">
-
-        {/* Left: Song browser */}
-        <div class="song-panel">
-          <div class="panel-header">
-            <span class="panel-title">Library</span>
-            <input
-              class="search-box"
-              type="search"
-              placeholder="Search title, artist, album…"
-              value={searchQuery()}
-              onInput={(e) => setSearchQuery(e.currentTarget.value)}
-            />
-            <span class="song-count">{songs().length} songs</span>
-          </div>
-          <div class="song-list">
-            <For each={songs()} fallback={
-              <div class="queue-empty">No songs found</div>
-            }>
-              {(song) => (
-                <div class="song-item">
-                  <div class="song-info">
-                    <div class="song-title">{song.title || song.filename}</div>
-                    <div class="song-meta">
-                      {[song.artist, song.album].filter(Boolean).join(' · ') || 'Unknown'}
-                    </div>
-                  </div>
-                  <span class="song-duration">{formatDuration(song.duration_secs)}</span>
-                  <div class="song-actions">
-                    <button
-                      class="btn btn-ghost btn-icon"
-                      title="Add to queue"
-                      onClick={() => addToQueue(song.id, songLabel(song))}
-                    >+</button>
-                    <button
-                      class="btn btn-primary btn-icon"
-                      title="Play now"
-                      onClick={() => playNow(song.id, songLabel(song))}
-                    >▶</button>
-                  </div>
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
-
-        {/* Right: Queue */}
-        <div class="queue-panel">
-          <div class="panel-header">
-            <span class="panel-title">Queue</span>
-            <span class="song-count">{queue().length} items</span>
-            <div class="queue-actions">
-              <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px" onClick={skipCurrent}>
-                Skip
-              </button>
-              <button class="btn btn-danger" style="font-size:11px;padding:4px 8px" onClick={clearQueue}>
-                Clear
-              </button>
-            </div>
-          </div>
-          <div class="queue-list">
-            <Show
-              when={queue().length > 0}
-              fallback={<div class="queue-empty">Queue is empty</div>}
-            >
-              <For each={queue()}>
-                {(item, idx) => (
-                  <div class="queue-item">
-                    <span class="queue-pos">{idx() + 1}</span>
-                    <span class={`queue-source ${item.source}`} title={item.source} />
-                    <div class="queue-info">
-                      <div class="queue-title">
-                        {item.song?.title || item.song?.filename || item.song_id}
-                      </div>
-                      <div class="queue-artist">
-                        {item.song?.artist || 'Unknown artist'}
-                      </div>
-                    </div>
-                    <button
-                      class="btn btn-danger btn-icon"
-                      title="Remove from queue"
-                      onClick={() => removeFromQueue(item.id)}
-                    >✕</button>
-                  </div>
-                )}
-              </For>
+      <TerminalHeader active="console" />
+      <main id="main" class="admin-content" tabIndex={-1}>
+        <header class="console-intro">
+          <div><div class="command-line"><span>streamer@lofi</span>:~$ radio --manage</div><h1>Station control<span aria-hidden="true">_</span></h1><p>Keep the music moving. You’re at the controls.</p></div>
+          <div class="connection-box"><span class="status" classList={{'status--live': connected()}}><span class="status-dot" />{connected() ? 'Backend connected' : 'Reconnecting to backend'}</span><span>WebSocket / live updates</span></div>
+        </header>
+        <section class="now-playing-bar" aria-labelledby="now-playing-heading">
+          <div class="broadcast-mark" aria-hidden="true">▂▅█▅▂</div>
+          <div class="now-playing-info">
+            <h2 id="now-playing-heading" class="now-playing-label">{currentSong() ? 'Now playing / current track' : 'Now playing / standby'}</h2>
+            <Show when={currentSong()} fallback={<><div class="now-playing-title">{playerError() ? 'Player status unavailable' : 'Waiting for a listener'}</div><div class="now-playing-artist">{playerError() ? 'Check the backend connection.' : 'Open the player to start the station.'}</div></>}>
+              {song => <><div class="now-playing-title">{songLabel(song())}</div><div class="now-playing-artist">{song().artist || 'Unknown artist'}<span class="now-duration">{formatDuration(song().duration_secs)}</span></div></>}
             </Show>
           </div>
+          <a class="btn" href="/">Open player ↗</a>
+          <button class="btn btn-warning" disabled={!!busy() || !currentSong()} onClick={() => void action('/v1/player:skip', 'Skip requested. The player will advance.')}><span aria-hidden="true">≫</span>{busy() === '/v1/player:skip' ? 'Skipping…' : 'Skip track'}</button>
+        </section>
+        <div class="admin-main">
+          <section class="song-panel" aria-labelledby="library-heading">
+            <div class="panel-header"><h2 id="library-heading" class="panel-title"><span aria-hidden="true">~/</span>Music library</h2><span class="panel-meta">{songs().length} {searchQuery() ? 'matches' : 'tracks'}</span></div>
+            <div class="search-row"><span aria-hidden="true">&gt;</span><input class="search-box" aria-label="Search music library" type="search" placeholder="Search title, artist, album…" value={searchQuery()} onInput={e => setSearchQuery(e.currentTarget.value)} /><Show when={searchQuery()}><button class="btn" onClick={() => setSearchQuery('')}>Reset</button></Show></div>
+            <div class="list-column-labels" aria-hidden="true"><span>Track / artist / album</span><span>Time</span><span>Actions</span></div>
+            <div class="song-list" aria-busy={loading()}>
+              <Show when={!loading()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">[ … ]</span><h3>Reading your library</h3><p>Fetching tracks from the backend.</p></div>}>
+                <Show when={!libraryError()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">[ ! ]</span><h3>Library unavailable</h3><p>Check the backend connection, then try again.</p><button class="btn" onClick={() => void fetchSongs()}>Retry connection</button></div>}>
+                  <For each={songs()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">[ ∅ ]</span><h3>{searchQuery() ? 'No matching tracks' : 'Your library is quiet'}</h3><p>{searchQuery() ? 'Try a different title, artist, or album.' : 'Add MP3 files to your configured music folder.'}</p></div>}>
+                    {(song, idx) => <div class="song-item" classList={{'song-item--playing': currentSong()?.id === song.id}}>
+                      <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
+                      <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta">{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
+                      <span class="song-duration">{formatDuration(song.duration_secs)}</span>
+                      <div class="song-actions"><button class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} disabled={!!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', song.id)}>+</button><button class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} disabled={!!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', song.id)}>▶</button></div>
+                    </div>}
+                  </For>
+                </Show>
+              </Show>
+            </div>
+            <div class="panel-footnote"><span class="key-hint">+</span> queue it <span class="key-hint">▶</span> play it now</div>
+          </section>
+          <section class="queue-panel" aria-labelledby="queue-heading">
+            <div class="panel-header"><h2 id="queue-heading" class="panel-title"><span aria-hidden="true">≡</span>Up next <span class="queue-count">{queue().length}</span></h2><button class="btn btn-danger" disabled={!!busy() || !queue().length} onClick={() => clearDialog.showModal()}>Clear queue</button></div>
+            <div class="queue-legend"><span><i class="queue-source manual" />manual</span><span><i class="queue-source auto" />auto rotation</span></div>
+            <div class="queue-list">
+              <Show when={!queueError()} fallback={<div class="empty-state"><h3>Queue unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => void fetchQueue()}>Retry</button></div>}>
+                <For each={queue()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">[ + ]</span><h3>Make the next move</h3><p>Add a track from the library. Automatic rotation keeps things moving when the player is listening.</p></div>}>
+                  {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{item.song?.title || item.song?.filename || item.song_id}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><button class="btn btn-danger btn-icon" aria-label={`Remove ${item.song?.title || 'track'} from queue`} title="Remove from queue" disabled={!!busy()} onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</button></div>}
+                </For>
+              </Show>
+            </div>
+            <div class="panel-footnote">Queue changes sync with every listener.</div>
+          </section>
         </div>
-
-      </div>
-
-      {/* Toast notification */}
-      <Show when={notification()}>
-        <div class="notification">{notification()}</div>
-      </Show>
-
+        <footer class="terminal-footer"><span>▂▅█▅▂ &nbsp; station control / backend-driven</span><span>{busy() ? 'Executing request…' : 'Ready for your next command.'}</span></footer>
+      </main>
+      <dialog ref={clearDialog!} class="terminal-dialog" aria-labelledby="clear-title" aria-describedby="clear-description">
+        <form method="dialog"><span class="dialog-prompt">[ confirm ]</span><h2 id="clear-title">Clear the queue?</h2><p id="clear-description">Remove all upcoming tracks. The current track keeps playing. Automatic rotation may refill the queue.</p><div class="dialog-actions"><button class="btn" autofocus>Keep queue</button><button class="btn btn-danger" onClick={() => void action('/v1/queue:clear', 'Queue cleared.')}>Clear queue</button></div></form>
+      </dialog>
+      <div role="status" aria-live="polite"><Show when={notification()}><div class="notification" classList={{'notification--error': notificationError()}}>{notification()}</div></Show></div>
     </div>
   );
 }

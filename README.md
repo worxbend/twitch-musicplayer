@@ -317,6 +317,10 @@ cd backend  && go test ./... -race    # queue strategies + hub concurrency
 cd frontend && npm run build          # typecheck + production bundle
 ```
 
+The terminal-inspired UI, screenshots, and browser verification are documented in
+**[Broadcast terminal redesign](docs/ui-redesign/README.md)**. Run its browser checks with
+`cd frontend && npm run test:ui` after installing Playwright's Chromium browser.
+
 Both should be green before you push. The backend tests cover the shuffle guarantees
 (full-cycle coverage, no back-to-back artists, recency weighting) and the WebSocket hub's
 concurrency behaviour. 🧪
