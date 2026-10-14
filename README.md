@@ -21,9 +21,77 @@ tracks, and renders an audio-reactive visualizer you can drop straight into OBS.
 
 <br />
 
-**[⚡ Quick Start](#-quick-start) · [🎬 The Scenes](#-the-scenes) · [🧠 How It Works](#-how-it-works) · [📚 Docs](#-documentation)**
+**[📻 Overview](#-overview) · [🖥️ Screenshots](#-screenshots) · [⚡ Quick Start](#-quick-start) · [🎬 The Scenes](#-the-scenes) · [📚 Docs](#-documentation)**
 
 </div>
+
+---
+
+## 📻 Overview
+
+Twitch Lofi Music Player turns your own MP3 collection into a browser-based radio
+station for streaming, background listening, and late-night coding. You host the
+music and control the rotation; there’s no external music service or database.
+
+The terminal-inspired workspace brings three tools together:
+
+- **Player (`/`)** — listen to your station with an audio-reactive night sky,
+  current-track details, playback progress, and a clock. If your browser blocks
+  playback, choose **Enable audio** to start listening.
+- **Scene picker (`/scenes`)** — explore seven visualizers, choose a colour ramp,
+  and copy a scene or transparent-overlay URL for an OBS browser source.
+- **Station console (`/admin`)** — search your library, queue tracks, play a track
+  immediately, skip the current song, and clear upcoming tracks with confirmation.
+  Keep a player or browser source open so the station can play your selections.
+
+A Go backend indexes files, selects tracks, and sends live updates over WebSocket.
+The SolidJS frontend handles playback, equal-power crossfades, and PixiJS/WebGL
+visuals. Clean overlay routes omit navigation and controls for use in OBS.
+
+Use music you have permission to broadcast. Twitch chat requests and viewer voting
+are planned features, not part of the current tool.
+
+---
+
+## 🖥️ Screenshots
+
+### Ambient player
+
+A broadcast-terminal frame around the original rain scene, with shared navigation,
+live status, and the current-track deck.
+
+![Ambient player with terminal-inspired navigation, an audio-reactive night sky, and current-track details](docs/ui-redesign/player-desktop.png)
+
+<details>
+<summary><strong>Scene picker and station console</strong></summary>
+
+### Scene picker
+
+Waveform diagrams help you choose a visualizer. Pick a colour ramp, then open the
+scene or copy its OBS URL. The oscilloscope keeps its fixed cyan/magenta palette.
+
+![Scene directory with seven waveform previews, a colour-ramp selector, and copyable OBS URLs](docs/ui-redesign/scenes-desktop.png)
+
+### Station console
+
+Search your music library and manage the live queue from a two-panel workspace.
+
+![Station console with the current track, searchable music library, and upcoming queue](docs/ui-redesign/console-desktop.png)
+
+</details>
+
+<details>
+<summary><strong>Mobile player</strong></summary>
+
+Navigation and the track deck adapt to a narrow viewport without hiding the scene.
+
+<img src="docs/ui-redesign/player-mobile.png" alt="Mobile ambient player with compact terminal navigation and a responsive track deck" width="390" />
+
+</details>
+
+Screenshots use generated test audio and sample track metadata, not a bundled music
+collection. See the **[design overview and screenshot gallery](docs/ui-redesign/README.md)**
+for more desktop, tablet, and mobile views, plus verification results.
 
 ---
 
@@ -141,8 +209,9 @@ npm run dev
 Same URLs as above: the visualizer on `:3000`, the admin console at `/admin`, Swagger on
 `:8080`.
 
-The station starts itself. The moment a browser connects, it asks the backend for a
-track and starts playing. 🎶
+The moment a player connects, it asks the backend for a track. If your browser
+requires a user gesture, choose **Enable audio** to start playback. OBS browser
+sources request autoplay automatically, subject to the browser’s playback policy.
 
 ---
 
@@ -171,12 +240,13 @@ size it, done.
 | `/line` | 📈 Sharp polyline with a colour sweep along its length |
 | `/lens` | 💠 Overlapping mirrored diamonds, level-meter coloured |
 
-Recolour any of them with `?ramp=SPECTRUM|AURORA|EMBER|NEON|VU` — for example
-`/bars?ramp=EMBER`.
+Recolour the equaliser, mirror, dots, ribbon, trace, and facets scenes with
+`?ramp=SPECTRUM|AURORA|EMBER|NEON|VU` — for example `/bars?ramp=EMBER`.
+The oscilloscope keeps its fixed cyan/magenta colours.
 
-> 💡 **Pro tip:** append `?transparent=1` to force transparency on any spectrum route, and
-> `?autoplay=1` to bypass the browser's user-gesture requirement. Inside OBS, autoplay is
-> detected and enabled automatically. 🤫
+> 💡 **Pro tip:** append `?transparent=1` to force transparency on any visualizer route.
+> `?autoplay=1` requests autoplay; the browser may still require a user gesture.
+> OBS browser sources are detected and request autoplay automatically.
 
 ---
 
