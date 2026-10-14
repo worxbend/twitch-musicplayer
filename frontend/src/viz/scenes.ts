@@ -21,6 +21,8 @@ export interface SceneBuildOptions {
   transparent: boolean;
   /** Colour ramp name from palette.ts, usually taken from the ?ramp= query. */
   ramp?: string;
+  /** Opaque player canvas is fitted to its available performance area. */
+  fitToViewport?: boolean;
 }
 
 export interface SceneDef {
@@ -41,19 +43,16 @@ export const SCENES: SceneDef[] = [
   {
     slug: 'spectrum',
     label: 'Oscilloscope',
-    description: 'Single glowing trace with a cyan and magenta chromatic split.',
+    description: 'A dual-channel phosphor instrument with a live phase portrait.',
     icon: '〰️',
     pageClass: 'spectrum-page',
     create: (app, audio, o) =>
-      new OscilloscopeVisualizer(app, audio, {
-        showBackground: o.showBackground,
-        transparent: o.transparent,
-      }),
+      new OscilloscopeVisualizer(app, audio, o),
   },
   {
     slug: 'bars',
     label: 'Equaliser',
-    description: 'Rounded columns with peak-hold caps and a mirrored reflection.',
+    description: 'Segmented spectral towers, suspended peaks and a dim afterimage.',
     icon: '📊',
     pageClass: 'scene-page',
     create: (app, audio, o) => new BarSpectrumVisualizer(app, audio, o),
@@ -61,7 +60,7 @@ export const SCENES: SceneDef[] = [
   {
     slug: 'mirror',
     label: 'Mirror Wave',
-    description: 'Dense mirrored bars — the classic audio-editor waveform.',
+    description: 'An interferometer of mirrored threads woven from the waveform.',
     icon: '🌊',
     pageClass: 'scene-page',
     create: (app, audio, o) => new MirrorWaveVisualizer(app, audio, o),
@@ -69,7 +68,7 @@ export const SCENES: SceneDef[] = [
   {
     slug: 'dots',
     label: 'Dot Matrix',
-    description: 'Halftone columns of dots, lit outward from the centre axis.',
+    description: 'A luminous constellation field, lit by logarithmic frequency bands.',
     icon: '⣿',
     pageClass: 'scene-page',
     create: (app, audio, o) => new DotMatrixVisualizer(app, audio, o),
@@ -77,7 +76,7 @@ export const SCENES: SceneDef[] = [
   {
     slug: 'ribbon',
     label: 'Ribbon',
-    description: 'Smooth gradient-filled blob that flows rather than flickers.',
+    description: 'Translucent aurora silk with layered, audio-shaped surfaces.',
     icon: '🎗️',
     pageClass: 'scene-page',
     create: (app, audio, o) => new RibbonVisualizer(app, audio, o),
@@ -85,7 +84,7 @@ export const SCENES: SceneDef[] = [
   {
     slug: 'line',
     label: 'Trace',
-    description: 'Sharp unsmoothed polyline with a colour sweep along its length.',
+    description: 'A topographic signal landscape built from stacked waveform contours.',
     icon: '📈',
     pageClass: 'scene-page',
     create: (app, audio, o) => new LineWaveVisualizer(app, audio, o),
@@ -93,7 +92,7 @@ export const SCENES: SceneDef[] = [
   {
     slug: 'lens',
     label: 'Facets',
-    description: 'Overlapping mirrored diamonds, coloured like a level meter.',
+    description: 'A dimensional prism array with frequency-driven facets and fine edges.',
     icon: '💠',
     pageClass: 'scene-page',
     create: (app, audio, o) => new LensWaveVisualizer(app, audio, o),

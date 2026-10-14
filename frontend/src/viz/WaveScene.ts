@@ -22,6 +22,8 @@ export interface WaveSceneOptions {
   transparent?: boolean;
   /** Colour ramp name, from palette.ts. */
   ramp?: string;
+  /** Canvas already occupies the player's safe performance rectangle. */
+  fitToViewport?: boolean;
 }
 
 interface SceneConfig extends AnalysisOptions {
@@ -58,7 +60,9 @@ export abstract class WaveScene implements Visualizer {
   protected beatPulse = 0;
 
   private readonly bandHeightFraction: number;
+  private readonly fitToViewport: boolean;
   private disposed = false;
+  private bloomFilter: AdvancedBloomFilter | null = null;
   /** onResize() has run at least once with subclass state in place. */
   private primed = false;
 
@@ -73,24 +77,23 @@ export abstract class WaveScene implements Visualizer {
     this.analysis = new AudioAnalysisEngine(config);
     this.showBackground = (options.showBackground ?? true) && !options.transparent;
     this.bandHeightFraction = config.bandHeight ?? 0.30;
+    this.fitToViewport = options.fitToViewport === true;
 
     this.art.addChild(this.gfx);
 
-    const bloom = config.bloom ?? 1.5;
+    const bloom = config.bloom ?? 0.55;
     if (bloom > 0) {
       try {
-        this.art.filters = [
-          new AdvancedBloomFilter({
-            threshold: 0.1,
-            bloomScale: bloom,
-            brightness: 1,
-            blur: 9,
-            quality: 5,
-          }),
-        ];
-        // Additive blending makes overlapping strokes glow where they cross,
-        // which is what sells the neon look.
-        this.art.blendMode = 'add';
+        this.bloomFilter = new AdvancedBloomFilter({
+          threshold: 0.35,
+          bloomScale: bloom,
+          brightness: 1,
+          blur: 5,
+          quality: 3,
+        });
+        this.art.filters = [this.bloomFilter];
+        // Keep translucent surfaces readable instead of bleaching every
+        // intersection with container-wide additive blending.
       } catch {
         // Filters unavailable (old GPU, software renderer). The scene still
         // draws correctly, just without the halo.
@@ -121,9 +124,13 @@ export abstract class WaveScene implements Visualizer {
     this.W = r.width / r.resolution;
     this.H = r.height / r.resolution;
     this.cx = this.W / 2;
-    this.cy = this.H / 2;
-    this.halfBand = this.H * this.bandHeightFraction;
-    this.marginX = Math.max(24, this.W * 0.05);
+    this.cy = this.H * (this.showBackground ? 0.48 : 0.5);
+    // Fitted players use the available rectangle, including room for fixed-size
+    // calibration marks. Standalone sources retain their full-screen framing.
+    this.halfBand = this.fitToViewport
+      ? Math.min(this.H * 0.30, Math.max(2, (this.H * 0.48 - 18) / 1.4))
+      : this.H * Math.min(this.bandHeightFraction, this.showBackground ? 0.22 : 0.30);
+    this.marginX = Math.max(24, this.W * 0.085);
 
     // Pin the filter to the whole display. Left to itself, a filter is applied
     // over the art's bounding box only, so a bloom halo is clipped wherever the
@@ -160,6 +167,8 @@ export abstract class WaveScene implements Visualizer {
     this.disposed = true;
     this.analysis.dispose();
     this.art.filters = [];
+    this.bloomFilter?.destroy();
+    this.bloomFilter = null;
     this.root.destroy({ children: true });
   }
 
@@ -167,7 +176,29 @@ export abstract class WaveScene implements Visualizer {
   protected drawBackground() {
     this.bg.clear();
     if (!this.showBackground) return;
-    this.bg.rect(0, 0, this.W, this.H).fill({ color: 0x121722 });
+    this.bg.rect(0, 0, this.W, this.H).fill({ color: 0x080c18 });
+    // Static instrument graticule: drawn only on resize, never on overlays.
+    const left = this.marginX;
+    const right = this.W - left;
+    const top = this.cy - this.halfBand;
+    const bottom = this.cy + this.halfBand;
+    for (let i = 0; i <= 12; i++) {
+      const x = left + (right - left) * i / 12;
+      this.bg.moveTo(x, top).lineTo(x, bottom);
+    }
+    for (let i = 0; i <= 6; i++) {
+      const y = top + (bottom - top) * i / 6;
+      this.bg.moveTo(left, y).lineTo(right, y);
+    }
+    this.bg.stroke({ color: 0x63768f, alpha: 0.07, width: 1 });
+    // Calibration marks establish scale without decorating the browser source.
+    for (let i = 0; i <= 24; i++) {
+      const x = left + (right - left) * i / 24;
+      this.bg.moveTo(x, bottom + 18).lineTo(x, bottom + (i % 4 === 0 ? 25 : 21));
+    }
+    this.bg.stroke({ color: 0x9ab5c8, alpha: 0.22, width: 1 });
+    this.bg.moveTo(left, this.cy).lineTo(right, this.cy)
+      .stroke({ color: 0x8bdbd5, alpha: 0.12, width: 1 });
   }
 
   /** Hook for subclasses that cache geometry across frames. */

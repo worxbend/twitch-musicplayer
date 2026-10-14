@@ -1,345 +1,187 @@
-/* OscilloscopeVisualizer.ts — glowing audio-spectrum waveform.
- *
- * A single horizontal oscilloscope line rendered from the analyser's
- * time-domain data. Two chromatically-offset strokes (cyan lifted up, magenta
- * dropped down) with a bright white core, wrapped in bloom, over a field of
- * drifting particle dots — matching the reference "audio wave" artwork.
- *
- * Design notes:
- *   - The waveform is edge-tapered with a sine window so it fades to the centre
- *     line at both ends (the calm-to-active-to-calm silhouette).
- *   - Every polyline is drawn with midpoint-quadratic smoothing (no raw edges),
- *     round caps/joins, and multiple stroke passes (wide→crisp) so the bloom
- *     filter has soft energy to spread.
- *   - When the signal is quiet (idle / between tracks) a gentle synthesized
- *     undulation keeps the line alive so the page never looks dead.
+/* Scope — a precise phosphor instrument with triggered dual traces and a phase portrait.
+ * The analyser is mono: the second trace is a quarter-period-delayed view of
+ * that same real signal, not invented stereo or an ornamental oscillator.
  */
 import * as PIXI from 'pixi.js';
-import { AdvancedBloomFilter } from 'pixi-filters';
-import { AudioAnalysisEngine } from '../audio/AudioAnalysisEngine';
 import type { AudioEngine } from '../audio/AudioEngine';
-import type { AudioFrame, Visualizer } from './types';
-import { clamp, lerp, TAU } from './util';
+import type { AudioFrame } from './types';
+import { WaveScene, type WaveSceneOptions } from './WaveScene';
+import { rampByName } from './palette';
 
-interface OscilloscopeOptions {
-  showBackground?: boolean;
-  transparent?: boolean;
-}
+const POINTS = 256;
+const TRAILS = 3;
+const PORTRAIT_POINTS = 160;
 
-// Palette — cyan + magenta chromatic split with a white core, matching the art.
-const CYAN = 0x2ee6f6;
-const MAGENTA = 0xe152ff;
-const WHITE = 0xeafcff;
-const PARTICLE_COLORS = [CYAN, MAGENTA, WHITE, 0x8be9fd, 0xff92e0];
+export class OscilloscopeVisualizer extends WaveScene {
+  private readonly graticule = new PIXI.Graphics();
+  private readonly a = new Float32Array(POINTS);
+  private readonly b = new Float32Array(POINTS);
+  private readonly trailA = new Float32Array(POINTS * TRAILS);
+  private readonly trailB = new Float32Array(POINTS * TRAILS);
+  private readonly xs = new Float32Array(POINTS);
+  private readonly colourA: number;
+  private readonly colourB: number;
+  private gain = 1;
+  private trailHead = 0;
+  private trailClock = 0;
+  private xEnd = 0;
+  private portraitX = 0;
+  private portraitRadius = 1;
 
-const WAVE_POINTS = 240;
-const N_PARTICLES = 96;
-
-interface Point { x: number; y: number }
-
-interface Particle {
-  bx: number; by: number;     // home position (fraction of width / band height)
-  x: number; y: number;       // current pixel position
-  drift: number;              // horizontal drift speed (px/s)
-  bob: number;                // vertical bob amplitude (px)
-  phase: number;
-  r: number;                  // radius
-  color: number;
-  baseAlpha: number;
-  twSpeed: number;            // twinkle speed
-  kick: number;               // transient vertical velocity from beats
-}
-
-// A stroke pass: pixel width + alpha. Wide low-alpha passes feed the bloom;
-// the final crisp pass is the visible line.
-interface Pass { w: number; a: number }
-
-// One colour layer of the waveform. dyDir shifts it vertically (chromatic
-// split): cyan lifts up, magenta drops down, the white core stays centred.
-// Core alphas are deliberately < 1 so the line reads as translucent.
-interface WaveLayer { rgb: [number, number, number]; dyDir: number; passes: Pass[] }
-
-const WAVE_LAYERS: WaveLayer[] = [
-  // Cyan — lifted up.
-  { rgb: [46, 230, 246], dyDir: -1, passes: [
-    { w: 22, a: 0.05 }, { w: 12, a: 0.10 }, { w: 6, a: 0.20 }, { w: 3.2, a: 0.5 },
-  ] },
-  // Magenta — dropped down.
-  { rgb: [225, 82, 255], dyDir: 1, passes: [
-    { w: 22, a: 0.05 }, { w: 12, a: 0.10 }, { w: 6, a: 0.20 }, { w: 3.2, a: 0.5 },
-  ] },
-  // White core — centre line, translucent.
-  { rgb: [234, 252, 255], dyDir: 0, passes: [
-    { w: 4.5, a: 0.14 }, { w: 1.8, a: 0.62 },
-  ] },
-];
-
-function drawSmooth(g: PIXI.Graphics, pts: Point[]) {
-  if (pts.length < 2) return;
-  g.moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length - 1; i++) {
-    const midx = (pts[i].x + pts[i + 1].x) / 2;
-    const midy = (pts[i].y + pts[i + 1].y) / 2;
-    g.quadraticCurveTo(pts[i].x, pts[i].y, midx, midy);
-  }
-  const n = pts.length;
-  g.lineTo(pts[n - 1].x, pts[n - 1].y);
-}
-
-export class OscilloscopeVisualizer implements Visualizer {
-  private app: PIXI.Application;
-  private audio: AudioEngine;
-  private analysis = new AudioAnalysisEngine();
-  private showBackground: boolean;
-
-  private root = new PIXI.Container();
-  private bg = new PIXI.Graphics();
-  private glowLayer = new PIXI.Container();
-  private baselineGfx = new PIXI.Graphics();
-  private waveGfx = new PIXI.Graphics();
-  private particleGfx = new PIXI.Graphics();
-
-  private smooth = new Float32Array(WAVE_POINTS);
-  private disp = new Float32Array(WAVE_POINTS); // spatially-rounded copy of smooth
-  private particles: Particle[] = [];
-  private time = 0;
-  private beatPulse = 0;
-  private ampSmooth = 0;
-
-  // Per-layer, per-pass gradient strokes. Each fades alpha → 0 at both ends
-  // (the "gradient on the edges") and carries the layer colour at pass alpha in
-  // the middle. Rebuilt on resize since the stops are in global pixel space.
-  private gradients: (PIXI.FillGradient | null)[][] = [];
-
-  private W = 1920;
-  private H = 1080;
-  private cx = 960;
-  private cy = 540;
-
-  constructor(app: PIXI.Application, audio: AudioEngine, options: OscilloscopeOptions = {}) {
-    this.app = app;
-    this.audio = audio;
-    this.showBackground = options.showBackground ?? true;
-
-    // Bloom over the reactive layers gives the neon halo.
-    this.glowLayer.addChild(this.baselineGfx, this.particleGfx, this.waveGfx);
-    try {
-      this.glowLayer.filters = [
-        new AdvancedBloomFilter({ threshold: 0.08, bloomScale: 1.7, brightness: 1, blur: 10, quality: 5 }),
-      ];
-      this.glowLayer.blendMode = 'add';
-    } catch { /* filters unsupported — plain render still looks fine */ }
-
-    this.root.addChild(this.bg, this.glowLayer);
-    app.stage.addChild(this.root);
-
-    this.resize();
-    this.initParticles();
+  constructor(app: PIXI.Application, audio: AudioEngine, options: WaveSceneOptions = {}) {
+    super(app, audio, options, { wavePoints: POINTS, bands: 48, bloom: 0.45, bandHeight: 0.30 });
+    const ramp = rampByName(options.ramp ?? 'AURORA');
+    this.colourA = ramp.hex(0);
+    this.colourB = ramp.hex(1);
+    // Static, unfiltered instrument geometry sits beneath the luminous signal.
+    this.root.addChildAt(this.graticule, 1);
   }
 
-  resize() {
-    const r = this.app.renderer;
-    this.W = r.width / r.resolution;
-    this.H = r.height / r.resolution;
-    this.cx = this.W / 2;
-    this.cy = this.H / 2;
-    this.drawBackground();
-    this.buildGradients();
-    // Re-anchor particles to the new band height.
-    for (const p of this.particles) this.repositionParticle(p);
-  }
+  protected onResize() {
+    const span = Math.max(1, this.W - this.marginX * 2);
+    const side = Math.min(span * 0.23, this.halfBand * 1.5);
+    const gap = span * 0.045;
+    this.xEnd = this.W - this.marginX - side - gap;
+    this.portraitX = this.W - this.marginX - side * 0.5;
+    this.portraitRadius = Math.max(1, Math.min(side * 0.44, this.halfBand * 0.64));
+    for (let i = 0; i < POINTS; i++) this.xs[i] = this.marginX + (this.xEnd - this.marginX) * i / (POINTS - 1);
 
-  // (Re)build the horizontal gradient strokes: alpha 0 at the far left/right,
-  // rising to the pass alpha across a soft plateau, so the line fades out at
-  // both ends. On any failure we fall back to flat translucent strokes.
-  private buildGradients() {
-    const marginX = this.W * 0.06;
-    const x0 = marginX;
-    const x1 = this.W - marginX;
-    this.gradients = WAVE_LAYERS.map(layer =>
-      layer.passes.map(pass => {
-        const [r, g, b] = layer.rgb;
-        const col = (a: number) => `rgba(${r},${g},${b},${a})`;
-        try {
-          return new PIXI.FillGradient({
-            type: 'linear',
-            start: { x: x0, y: this.cy },
-            end: { x: x1, y: this.cy },
-            textureSpace: 'global',
-            colorStops: [
-              { offset: 0.00, color: col(0) },
-              { offset: 0.14, color: col(pass.a) },
-              { offset: 0.86, color: col(pass.a) },
-              { offset: 1.00, color: col(0) },
-            ],
-          });
-        } catch {
-          return null; // fall back to a flat stroke for this pass
-        }
-      }),
-    );
-  }
-
-  update(dt: number) {
-    this.time += dt;
-    const frame = this.analysis.update(this.audio);
-
-    // Beat pulse envelope.
-    if (frame.beat) this.beatPulse = Math.min(1.4, this.beatPulse + frame.beatStrength * 0.9);
-    this.beatPulse *= Math.exp(-7 * dt);
-
-    this.drawWaveform(dt, frame);
-    this.updateParticles(dt, frame);
-  }
-
-  dispose() {
-    this.root.destroy({ children: true });
-  }
-
-  // ── Background: subtle dark radial so the neon reads on any display ──────────
-  private drawBackground() {
-    this.bg.clear();
-    if (!this.showBackground) return;
-    // Layered translucent ellipses fake a soft radial glow behind the line.
-    const bands: Pass[] = [
-      { w: 1.0, a: 0.22 },
-      { w: 0.66, a: 0.16 },
-      { w: 0.4, a: 0.14 },
-    ];
-    for (const b of bands) {
-      this.bg.ellipse(this.cx, this.cy, this.W * 0.55 * b.w, this.H * 0.32 * b.w);
-      this.bg.fill({ color: 0x0a0f2a, alpha: b.a });
+    const grid = this.graticule;
+    grid.clear();
+    const top = this.cy - this.halfBand * 0.83;
+    const bottom = this.cy + this.halfBand * 0.83;
+    const width = this.xEnd - this.marginX;
+    for (let col = 0; col <= 10; col++) {
+      const x = this.marginX + width * col / 10;
+      grid.moveTo(x, top).lineTo(x, bottom);
     }
+    for (let row = 0; row <= 6; row++) {
+      const y = top + (bottom - top) * row / 6;
+      grid.moveTo(this.marginX, y).lineTo(this.xEnd, y);
+    }
+    grid.stroke({ color: 0x84b9c9, alpha: 0.075, width: 0.65 });
+    grid.moveTo(this.marginX, this.cy).lineTo(this.xEnd, this.cy);
+    for (let tick = 1; tick < 50; tick++) {
+      const x = this.marginX + width * tick / 50;
+      const h = tick % 5 === 0 ? 3.5 : 1.7;
+      grid.moveTo(x, this.cy - h).lineTo(x, this.cy + h);
+    }
+    grid.stroke({ color: 0xb5d4d9, alpha: 0.18, width: 0.75 });
+
+    // Open registration corners rather than a filled panel or UI frame.
+    const corner = Math.min(12, width * 0.04);
+    for (const x of [this.marginX, this.xEnd]) {
+      const sx = x === this.marginX ? 1 : -1;
+      for (const y of [top, bottom]) {
+        const sy = y === top ? 1 : -1;
+        grid.moveTo(x, y + sy * corner).lineTo(x, y).lineTo(x + sx * corner, y);
+      }
+    }
+    grid.stroke({ color: 0xc5e1df, alpha: 0.25, width: 0.9 });
+
+    const r = this.portraitRadius;
+    grid.circle(this.portraitX, this.cy, r).stroke({ color: 0x84b9c9, alpha: 0.13, width: 0.7 });
+    grid.circle(this.portraitX, this.cy, r * 0.5).stroke({ color: 0x84b9c9, alpha: 0.07, width: 0.65 });
+    grid.moveTo(this.portraitX - r, this.cy).lineTo(this.portraitX + r, this.cy);
+    grid.moveTo(this.portraitX, this.cy - r).lineTo(this.portraitX, this.cy + r);
+    for (let i = 0; i < 16; i++) {
+      const angle = i * Math.PI / 8;
+      const c = Math.cos(angle);
+      const s = Math.sin(angle);
+      grid.moveTo(this.portraitX + c * r * 0.95, this.cy + s * r * 0.95)
+        .lineTo(this.portraitX + c * r, this.cy + s * r);
+    }
+    grid.stroke({ color: 0xc1dde0, alpha: 0.14, width: 0.7 });
   }
 
-  // ── Waveform: two chromatic strokes + white core ────────────────────────────
-  private drawWaveform(dt: number, frame: AudioFrame) {
+  protected draw(frame: AudioFrame, dt: number) {
     const td = frame.timeDomain;
-    const tdLen = td.length;
-    const activity = clamp(frame.rms * 3.4, 0, 1);
-
-    // Overall amplitude reacts to loudness + beats, smoothed for fluid motion.
-    const ampTarget = this.H * (0.10 + activity * 0.20 + this.beatPulse * 0.06);
-    this.ampSmooth = lerp(this.ampSmooth, ampTarget, 0.12);
-    const amp = this.ampSmooth;
-
-    const marginX = this.W * 0.06;
-    const spanX = this.W - marginX * 2;
-
-    // Build target samples with edge taper + idle undulation, then smooth.
-    // A softer idle (less high harmonic) plus the spatial pass below keeps the
-    // line rounded rather than jagged.
-    for (let i = 0; i < WAVE_POINTS; i++) {
-      const t = i / (WAVE_POINTS - 1);
-      const env = Math.pow(Math.sin(Math.PI * t), 0.9); // 0 at ends → 1 mid
-      const sample = td[Math.min(tdLen - 1, Math.floor(t * (tdLen - 1)))] ?? 0;
-      const idle =
-        Math.sin(t * Math.PI * 2.4 - this.time * 1.2) * 0.36 +
-        Math.sin(t * Math.PI * 5.0 + this.time * 0.8) * 0.13;
-      const raw = sample * (0.55 + activity * 0.95) + idle * (1 - activity) * 0.55;
-      const target = raw * env;
-      this.smooth[i] = lerp(this.smooth[i], target, 0.32);
+    const activity = this.audio.playing ? 1 : 0.65;
+    const length = td.length;
+    let start = 0;
+    let period = Math.max(16, Math.floor(length / 12));
+    // Rising-edge triggering reduces arbitrary frame-to-frame phase flicker.
+    if (frame.peak > 0.008) {
+      const limit = Math.floor(length * 0.3);
+      for (let i = 1; i < limit; i++) {
+        if (td[i - 1] <= 0 && td[i] > 0) { start = i; break; }
+      }
+      for (let i = start + 8; i < Math.min(length - 1, start + length * 0.25); i++) {
+        if (td[i - 1] <= 0 && td[i] > 0) { period = i - start; break; }
+      }
+    }
+    const delay = Math.max(2, Math.min(Math.floor(period / 4), Math.floor(length * 0.06)));
+    const span = Math.max(1, Math.min(length - start - delay - 2, Math.max(128, period * 6)));
+    const targetGain = Math.min(2.2, Math.max(1, 0.75 / Math.max(0.05, frame.peak)));
+    this.gain += (targetGain - this.gain) * (1 - Math.exp(-dt / 0.4));
+    const follow = 1 - Math.exp(-dt / 0.022);
+    const idle = Math.max(0, 1 - frame.rms * 80) * 0.004;
+    for (let i = 0; i < POINTS; i++) {
+      const t = i / (POINTS - 1);
+      const index = start + t * span;
+      const rawA = sampleAt(td, index) * this.gain * activity;
+      const rawB = sampleAt(td, index + delay) * this.gain * activity;
+      const drift = Math.sin(t * Math.PI * 2 - this.time * 0.16) * idle;
+      this.a[i] += (Math.max(-1, Math.min(1, rawA)) + drift - this.a[i]) * follow;
+      this.b[i] += (Math.max(-1, Math.min(1, rawB)) - drift - this.b[i]) * follow;
     }
 
-    // Spatial low-pass (rounds peaks: [1 2 3 2 1]/9 over neighbours).
-    for (let i = 0; i < WAVE_POINTS; i++) {
-      const a = this.smooth[Math.max(0, i - 2)];
-      const b = this.smooth[Math.max(0, i - 1)];
-      const c = this.smooth[i];
-      const d = this.smooth[Math.min(WAVE_POINTS - 1, i + 1)];
-      const e = this.smooth[Math.min(WAVE_POINTS - 1, i + 2)];
-      this.disp[i] = (a + 2 * b + 3 * c + 2 * d + e) / 9;
+    this.trailClock += dt;
+    if (this.trailClock >= 0.055) {
+      this.trailClock %= 0.055;
+      this.trailHead = (this.trailHead + 1) % TRAILS;
+      this.trailA.set(this.a, this.trailHead * POINTS);
+      this.trailB.set(this.b, this.trailHead * POINTS);
     }
-
-    // Assemble the base polyline (centre positions).
-    const base: Point[] = new Array(WAVE_POINTS);
-    for (let i = 0; i < WAVE_POINTS; i++) {
-      const t = i / (WAVE_POINTS - 1);
-      base[i] = { x: marginX + t * spanX, y: this.cy - this.disp[i] * amp };
+    const g = this.gfx;
+    const amp = this.halfBand * 0.56;
+    const centreA = this.cy - this.halfBand * 0.17;
+    const centreB = this.cy + this.halfBand * 0.17;
+    for (let age = TRAILS - 1; age >= 0; age--) {
+      const slot = (this.trailHead - age + TRAILS) % TRAILS;
+      this.trace(this.trailA, slot * POINTS, centreA, amp);
+      g.stroke({ color: this.colourA, alpha: 0.025 + (TRAILS - age) * 0.018, width: 0.8 });
+      this.trace(this.trailB, slot * POINTS, centreB, amp);
+      g.stroke({ color: this.colourB, alpha: 0.02 + (TRAILS - age) * 0.014, width: 0.8 });
     }
+    this.trace(this.a, 0, centreA, amp);
+    g.stroke({ color: this.colourA, width: 3.2, alpha: 0.13, join: 'round' });
+    this.trace(this.b, 0, centreB, amp);
+    g.stroke({ color: this.colourB, width: 2.8, alpha: 0.1, join: 'round' });
+    this.trace(this.b, 0, centreB, amp);
+    g.stroke({ color: this.colourB, width: 1.05, alpha: 0.78, join: 'round' });
+    this.trace(this.a, 0, centreA, amp);
+    g.stroke({ color: this.colourA, width: 1.3, alpha: 0.95, join: 'round' });
+    this.trace(this.a, 0, centreA, amp);
+    g.stroke({ color: 0xeaf9f0, width: 0.55, alpha: 0.72, join: 'round' });
 
-    // Chromatic split widens slightly with energy.
-    const split = 2.4 + activity * 4.5 + this.beatPulse * 3.0;
-
-    const g = this.waveGfx;
-    g.clear();
-
-    WAVE_LAYERS.forEach((layer, li) => {
-      const dy = layer.dyDir * split;
-      const pts: Point[] = dy === 0 ? base : base.map(p => ({ x: p.x, y: p.y + dy }));
-      layer.passes.forEach((pass, pi) => {
-        drawSmooth(g, pts);
-        const grad = this.gradients[li]?.[pi] ?? null;
-        if (grad) {
-          // Gradient carries the colour + edge-alpha fade; no flat colour.
-          g.stroke({ width: pass.w, fill: grad, cap: 'round', join: 'round' });
-        } else {
-          const [r, gg, b] = layer.rgb;
-          const color = (r << 16) | (gg << 8) | b;
-          g.stroke({ color, width: pass.w, alpha: pass.a, cap: 'round', join: 'round' });
-        }
-      });
-    });
+    // A delay-derived Lissajous/phase portrait is plotted from the same samples.
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < PORTRAIT_POINTS; i++) {
+        const p = Math.floor(i / (PORTRAIT_POINTS - 1) * (POINTS - 1));
+        const x = this.portraitX + this.a[p] * this.portraitRadius * 0.87;
+        const y = this.cy - this.b[p] * this.portraitRadius * 0.87;
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke({ color: this.colourA, alpha: pass === 0 ? 0.12 : 0.64,
+        width: pass === 0 ? 2.8 : 0.85, join: 'round' });
+    }
+    // A small, crisp acquisition point — no drifting particle cloud.
+    const p = Math.floor(POINTS * 0.72);
+    g.circle(this.xs[p], centreA - this.a[p] * amp, 1.6)
+      .fill({ color: 0xf4f8e9, alpha: 0.85 });
   }
 
-  // ── Particles: drifting neon dots around the waveform band ───────────────────
-  private initParticles() {
-    this.particles = [];
-    for (let i = 0; i < N_PARTICLES; i++) {
-      const p: Particle = {
-        bx: Math.random(),
-        by: (Math.random() * 2 - 1) * (0.35 + Math.random() * 0.65),
-        x: 0, y: 0,
-        drift: (Math.random() * 0.5 + 0.15) * (Math.random() < 0.5 ? -1 : 1) * 26,
-        bob: 6 + Math.random() * 18,
-        phase: Math.random() * TAU,
-        r: 1.1 + Math.random() * 2.6,
-        color: PARTICLE_COLORS[Math.floor(Math.random() * PARTICLE_COLORS.length)],
-        baseAlpha: 0.3 + Math.random() * 0.5,
-        twSpeed: 0.6 + Math.random() * 2.4,
-        kick: 0,
-      };
-      this.repositionParticle(p);
-      this.particles.push(p);
-    }
+  private trace(values: Float32Array, offset: number, centre: number, amp: number) {
+    this.gfx.moveTo(this.xs[0], centre - values[offset] * amp);
+    for (let i = 1; i < POINTS; i++) this.gfx.lineTo(this.xs[i], centre - values[offset + i] * amp);
   }
+}
 
-  private repositionParticle(p: Particle) {
-    const bandH = this.H * 0.26;
-    p.x = p.bx * this.W;
-    p.y = this.cy + p.by * bandH;
-  }
-
-  private updateParticles(dt: number, frame: AudioFrame) {
-    const t = this.time;
-    const bandH = this.H * 0.26;
-    const g = this.particleGfx;
-    g.clear();
-
-    for (const p of this.particles) {
-      // Horizontal drift with wrap-around.
-      p.bx += (p.drift / this.W) * dt * (1 + frame.rms * 0.6);
-      if (p.bx > 1.05) p.bx -= 1.1;
-      if (p.bx < -0.05) p.bx += 1.1;
-
-      // Beats give particles a soft outward vertical kick.
-      if (frame.beat) p.kick += frame.beatStrength * (p.by >= 0 ? 1 : -1) * 34;
-      p.kick *= Math.exp(-4 * dt);
-
-      const bob = Math.sin(t * (0.6 + p.twSpeed * 0.4) + p.phase) * p.bob;
-      p.x = p.bx * this.W;
-      p.y = this.cy + p.by * bandH + bob + p.kick;
-
-      // Twinkle.
-      const tw = 0.55 + 0.45 * Math.sin(t * p.twSpeed + p.phase);
-      const alpha = clamp(p.baseAlpha * tw * (0.7 + frame.rms * 0.8), 0, 1);
-      const r = p.r * (1 + this.beatPulse * 0.25);
-
-      // Soft halo + crisp core.
-      g.circle(p.x, p.y, r * 2.4);
-      g.fill({ color: p.color, alpha: alpha * 0.12 });
-      g.circle(p.x, p.y, r);
-      g.fill({ color: p.color, alpha });
-    }
-  }
+function sampleAt(values: Float32Array, index: number): number {
+  if (!values.length) return 0;
+  const p = Math.max(0, Math.min(values.length - 1, index));
+  const i = Math.floor(p);
+  const a = values[i];
+  return a + ((values[Math.min(values.length - 1, i + 1)] ?? a) - a) * (p - i);
 }

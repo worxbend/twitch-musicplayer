@@ -33,9 +33,10 @@ Twitch Lofi Music Player turns your own MP3 collection into a browser-based radi
 station for streaming, background listening, and late-night coding. You host the
 music and control the rotation; there’s no external music service or database.
 
-The terminal-inspired workspace brings three tools together:
+The Signal Observatory brings three tools together: a midnight-blue listening
+room with luminous audio instruments, a scene collection, and a broadcast console.
 
-- **Player (`/`)** — listen to your station with an audio-reactive night sky,
+- **Player (`/`)** — listen to your station with an audio-reactive orbital record,
   current-track details, playback progress, and a clock. If your browser blocks
   playback, choose **Enable audio** to start listening.
 - **Scene picker (`/scenes`)** — explore seven visualizers, choose a colour ramp,
@@ -57,26 +58,27 @@ are planned features, not part of the current tool.
 
 ### Ambient player
 
-A broadcast-terminal frame around the original rain scene, with shared navigation,
-live status, and the current-track deck.
+An orbital record, fine rain, spectral needles, and waveform ribbons. The floating
+track deck and scene switcher leave the performance open.
 
-![Ambient player with terminal-inspired navigation, an audio-reactive night sky, and current-track details](docs/ui-redesign/player-desktop.png)
+![Signal Observatory player with an orbital audio-reactive record and floating playback deck](docs/signal-observatory/player-desktop.png)
 
 <details>
 <summary><strong>Scene picker and station console</strong></summary>
 
 ### Scene picker
 
-Waveform diagrams help you choose a visualizer. Pick a colour ramp, then open the
-scene or copy its OBS URL. The oscilloscope keeps its fixed cyan/magenta palette.
+Explore spectral towers, woven waveforms, a constellation matrix, aurora silk,
+topographic traces, dimensional prisms, and a phosphor scope. Every instrument,
+including the ambient player and oscilloscope, supports the colour ramps.
 
-![Scene directory with seven waveform previews, a colour-ramp selector, and copyable OBS URLs](docs/ui-redesign/scenes-desktop.png)
+![Instrument collection with distinctive scene previews and copyable OBS URLs](docs/signal-observatory/scenes-desktop.png)
 
 ### Station console
 
 Search your music library and manage the live queue from a two-panel workspace.
 
-![Station console with the current track, searchable music library, and upcoming queue](docs/ui-redesign/console-desktop.png)
+![Broadcast console with the current track, searchable music library, and upcoming queue](docs/signal-observatory/console-desktop.png)
 
 </details>
 
@@ -85,12 +87,12 @@ Search your music library and manage the live queue from a two-panel workspace.
 
 Navigation and the track deck adapt to a narrow viewport without hiding the scene.
 
-<img src="docs/ui-redesign/player-mobile.png" alt="Mobile ambient player with compact terminal navigation and a responsive track deck" width="390" />
+<img src="docs/signal-observatory/player-mobile.png" alt="Mobile observatory player with orbital artwork, scene selection, and a compact track deck" width="390" />
 
 </details>
 
 Screenshots use generated test audio and sample track metadata, not a bundled music
-collection. See the **[design overview and screenshot gallery](docs/ui-redesign/README.md)**
+collection. See the **[design overview and screenshot gallery](docs/signal-observatory/README.md)**
 for more desktop, tablet, and mobile views, plus verification results.
 
 ---
@@ -223,28 +225,28 @@ size it, done.
 | Route | Vibe |
 |:--|:--|
 | `/scenes` | 🎨 **Scene picker** — every visualizer with copyable OBS links |
-| `/` | 🌧️ Full lofi rain scene, now-playing card, progress bar, clock |
+| `/` | 🌧️ Orbital record, spectral needles, fine rain, and a floating track deck |
 | `/overlay` | 🪟 Same scene, chrome stripped out |
-| `/logo-overlay` | ✨ Logo only, for corner placement |
+| `/logo-overlay` | ✨ Transparent orbital composition, with no controls |
 | `/admin` | 🎚️ Library browser, live queue, skip & play-now |
 
 **Seven audio-reactive scenes**, each with a transparent `-overlay` twin:
 
 | Route | Look |
 |:--|:--|
-| `/spectrum` | 〰️ Glowing oscilloscope trace, cyan and magenta split |
-| `/bars` | 📊 Rounded equaliser columns with peak-hold caps |
-| `/mirror` | 🌊 Dense mirrored bars — the audio-editor waveform |
-| `/dots` | ⣿ Halftone dot columns lit outward from the axis |
-| `/ribbon` | 🎗️ Smooth gradient blob that flows rather than flickers |
-| `/line` | 📈 Sharp polyline with a colour sweep along its length |
-| `/lens` | 💠 Overlapping mirrored diamonds, level-meter coloured |
+| `/spectrum` | 〰️ Triggered phosphor traces and a delay-derived phase portrait |
+| `/bars` | 📊 Segmented spectral towers, peak markers, and a dim reflection |
+| `/mirror` | 🌊 Mirrored filaments woven inside the measured waveform envelope |
+| `/dots` | ⣿ A curved constellation matrix with frequency-lit dots |
+| `/ribbon` | 🎗️ Five translucent, audio-shaped aurora-silk surfaces |
+| `/line` | 📈 A receding topographic landscape of recent audio |
+| `/lens` | 💠 Glass prisms with frequency-driven height and refracted seams |
 
-Recolour the equaliser, mirror, dots, ribbon, trace, and facets scenes with
-`?ramp=SPECTRUM|AURORA|EMBER|NEON|VU` — for example `/bars?ramp=EMBER`.
-The oscilloscope keeps its fixed cyan/magenta colours.
+Recolour any instrument, including the ambient scene, with
+`?ramp=SPECTRUM|AURORA|EMBER|NEON|VU` — for example `/bars?ramp=EMBER` or
+`/spectrum-overlay?ramp=NEON`. Scene switching preserves the selected ramp.
 
-> 💡 **Pro tip:** append `?transparent=1` to force transparency on any visualizer route.
+> 💡 **Pro tip:** append `?transparent=1` to force transparency on any of the seven scene routes.
 > `?autoplay=1` requests autoplay; the browser may still require a user gesture.
 > OBS browser sources are detected and request autoplay automatically.
 
@@ -387,8 +389,8 @@ cd backend  && go test ./... -race    # queue strategies + hub concurrency
 cd frontend && npm run build          # typecheck + production bundle
 ```
 
-The terminal-inspired UI, screenshots, and browser verification are documented in
-**[Broadcast terminal redesign](docs/ui-redesign/README.md)**. Run its browser checks with
+The redesigned instruments, UI, screenshots, and browser verification are documented in
+**[Signal Observatory](docs/signal-observatory/README.md)**. Run its browser checks with
 `cd frontend && npm run test:ui` after installing Playwright's Chromium browser.
 
 Both should be green before you push. The backend tests cover the shuffle guarantees

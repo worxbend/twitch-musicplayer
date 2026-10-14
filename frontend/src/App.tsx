@@ -48,7 +48,7 @@ export function App() {
 
   return (
     <>
-      <Stage onReady={onReady} />
+      <Stage onReady={onReady} ramp={new URLSearchParams(window.location.search).get('ramp') ?? undefined} />
       <PlayerUI
         trackName={trackName}
         trackArtist={trackArtist}

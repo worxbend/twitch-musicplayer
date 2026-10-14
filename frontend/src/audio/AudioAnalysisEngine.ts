@@ -138,6 +138,7 @@ export class AudioAnalysisEngine {
     const source = audio.analyser;
     if (!source || !audio.ctx) return false;
     if (this.node && this.nodeSource === source) return true;
+    this.dispose();
 
     try {
       const node = audio.ctx.createAnalyser();
@@ -275,6 +276,10 @@ export class AudioAnalysisEngine {
 
   /** Detaches the analyser tap. Safe to call more than once. */
   dispose() {
+    // Disconnect only our tap, never the engine's playback destination.
+    if (this.node && this.nodeSource) {
+      try { this.nodeSource.disconnect(this.node); } catch { /* already detached */ }
+    }
     try { this.node?.disconnect(); } catch { /* already torn down */ }
     this.node = null;
     this.nodeSource = null;

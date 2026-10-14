@@ -4,6 +4,16 @@ import { RAMPS, type RampName } from './viz/palette';
 import { TerminalHeader } from './components/TerminalHeader';
 import { SignalPreview } from './components/SignalPreview';
 
+const studies: Record<string, { medium: string; description: string }> = {
+  spectrum: { medium: 'Phosphor / phase', description: 'A luminous laboratory trace, paired with a dancing Lissajous orbit. An intimate view inside the signal.' },
+  bars: { medium: 'Frequency / architecture', description: 'Spectral towers rise from a luminous floor. Every frequency finds its own place in the skyline.' },
+  mirror: { medium: 'Waveform / interference', description: 'Fine strands weave a mirrored interferometer, folding sound into a weightless fabric.' },
+  dots: { medium: 'Particles / constellation', description: 'A constellation of light, gathering and scattering with the energy of your music.' },
+  ribbon: { medium: 'Waveform / silk', description: 'Layers of aurora silk curl through the dark. Slow movement, vivid colour, soft edges.' },
+  line: { medium: 'Waveform / topography', description: 'Stacked contours map an imaginary landscape, redrawn by every passing phrase.' },
+  lens: { medium: 'Frequency / refraction', description: 'A dimensional array of prisms catches the signal in translucent, colour-shifting planes.' },
+};
+
 export function ScenesIndex() {
   const [ramp, setRamp] = createSignal<RampName>('SPECTRUM');
   const [notice, setNotice] = createSignal('');
@@ -12,14 +22,14 @@ export function ScenesIndex() {
   let timer = 0;
   onMount(() => {
     document.documentElement.classList.add('scenes-index-page');
-    document.title = 'lofi.radio — Scene directory';
+    document.title = 'lofi.radio — Signal collection';
   });
   onCleanup(() => {
     document.documentElement.classList.remove('scenes-index-page');
     window.clearTimeout(timer);
   });
   const sceneURL = (slug: string, overlay = false) =>
-    `/${slug}${overlay ? '-overlay' : ''}${slug === 'spectrum' ? '' : `?ramp=${ramp()}`}`;
+    `/${slug}${overlay ? '-overlay' : ''}?ramp=${ramp()}`;
   async function copy(path: string) {
     const url = `${window.location.origin}${path}`;
     window.clearTimeout(timer);
@@ -42,12 +52,12 @@ export function ScenesIndex() {
       <main id="main" class="scenes-shell" tabIndex={-1}>
         <section class="scenes-intro">
           <div>
-            <div class="command-line"><span>streamer@lofi</span>:~$ ls ./scenes</div>
-            <h1>Good sound.<br />Great signal<span class="terminal-cursor" aria-hidden="true">_</span></h1>
-            <p>Give your radio a visual frequency. Seven audio-reactive scenes, ready for your next stream.</p>
+            <p class="collection-caption">The visual instrument collection</p>
+            <h1>A different way<br />to see sound.</h1>
+            <p>Seven signal studies and a place to watch the rain. Find the atmosphere for your next listening session or live broadcast.</p>
           </div>
           <aside class="setup-note" aria-label="OBS setup">
-            <div class="setup-note-title"><span aria-hidden="true">[ i ]</span> Plug into your stream</div>
+            <div class="setup-note-title">From the observatory to your stream</div>
             <ol>
               <li>Choose a scene and a colour ramp.</li>
               <li>Copy its browser-source URL.</li>
@@ -57,7 +67,7 @@ export function ScenesIndex() {
           </aside>
         </section>
         <div class="scene-toolbar">
-          <h2 class="panel-title"><span aria-hidden="true">~/</span>Scene directory <span class="directory-count">{SCENES.length} available</span></h2>
+          <h2 class="panel-title">Choose your atmosphere <span class="directory-count">{SCENES.length} instruments + ambient</span></h2>
           <label class="ramp-control">Colour ramp
             <select value={ramp()} onChange={e => setRamp(e.currentTarget.value as RampName)}>
               <For each={Object.keys(RAMPS) as RampName[]}>{name => <option value={name}>{name.toLowerCase()}</option>}</For>
@@ -66,11 +76,11 @@ export function ScenesIndex() {
         </div>
         <div class="scenes-grid">
           <For each={SCENES}>{scene => (
-            <article class="scene-card">
-              <div class="scene-preview"><SignalPreview slug={scene.slug} ramp={ramp()} /><span class="scene-preview-label">{scene.slug === 'spectrum' ? 'fixed / cyan + magenta' : `${ramp().toLowerCase()} / signal study`}</span></div>
+            <article class="scene-card" classList={{'scene-card--featured': scene.slug === 'spectrum'}}>
+              <div class="scene-preview"><SignalPreview slug={scene.slug} ramp={ramp()} /><span class="scene-preview-label">{studies[scene.slug]?.medium}</span></div>
               <div class="scene-card-body">
-                <div class="scene-card-heading"><h2>{scene.label}</h2><span class="scene-format">WebGL</span></div>
-                <p>{scene.description}</p>
+                <div class="scene-card-heading"><h2>{scene.label}</h2><span class="scene-format">Reactive</span></div>
+                <p>{studies[scene.slug]?.description || scene.description}</p>
                 <div class="scene-links">
                   <a class="btn btn-primary" href={sceneURL(scene.slug)}>Open scene <span aria-hidden="true">↗</span></a>
                   <a class="btn" href={sceneURL(scene.slug, true)}>Overlay <span aria-hidden="true">↗</span></a>
@@ -83,16 +93,20 @@ export function ScenesIndex() {
             </article>
           )}</For>
           <aside class="scene-card scene-extra">
-            <span class="extra-symbol" aria-hidden="true">&gt;_</span>
-            <h2>Prefer a little rain?</h2>
-            <p>The original lofi scene. A night sky, soft rain, and a frequency of your own.</p>
-            <a class="btn" href="/">Open ambient player ↗</a>
-            <button class="scene-url" onClick={() => void copy('/overlay')}><span>/overlay</span><span class="copy-hint">copy ⧉</span></button>
-            <button class="scene-url" onClick={() => void copy('/logo-overlay')}><span>/logo-overlay</span><span class="copy-hint">copy ⧉</span></button>
+            <div class="scene-preview"><SignalPreview slug="ambient" ramp={ramp()} /><span class="scene-preview-label">Vinyl / rain / orbit</span></div>
+            <div class="scene-card-body">
+              <div class="scene-card-heading"><h2>Ambient frequency</h2><span class="scene-format">Signature</span></div>
+              <p>A record in orbit. Rain on the window. Settle into the station’s after-hours listening room.</p>
+              <a class="btn" href={`/?ramp=${ramp()}`}>Open ambient player ↗</a>
+              <div class="scene-urls">
+                <button class="scene-url" onClick={() => void copy(`/overlay?ramp=${ramp()}`)}><span>/overlay</span><span class="copy-hint">copy ⧉</span></button>
+                <button class="scene-url" onClick={() => void copy(`/logo-overlay?ramp=${ramp()}`)}><span>/logo-overlay</span><span class="copy-hint">copy ⧉</span></button>
+              </div>
+            </div>
           </aside>
         </div>
         <Show when={manualURL()}><label class="manual-copy">Browser-source URL<input readonly value={manualURL()} onFocus={e => e.currentTarget.select()} /></label></Show>
-        <footer class="terminal-footer"><span>▂▅█▅▂ &nbsp; your music. your frequency.</span><span>WebGL visuals / backend-driven audio / OBS-ready</span></footer>
+        <footer class="terminal-footer"><span>Your music. Your frequency.</span><span>Audio-reactive instruments. Ready for OBS.</span></footer>
       </main>
       <div role="status" aria-live="polite"><Show when={notice()}><div class="notification" classList={{'notification--error': copyError()}}>{notice()}</div></Show></div>
     </>

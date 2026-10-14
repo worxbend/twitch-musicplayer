@@ -135,11 +135,11 @@ export function AdminApp() {
       <TerminalHeader active="console" />
       <main id="main" class="admin-content" tabIndex={-1}>
         <header class="console-intro">
-          <div><div class="command-line"><span>streamer@lofi</span>:~$ radio --manage</div><h1>Station control<span aria-hidden="true">_</span></h1><p>Keep the music moving. You’re at the controls.</p></div>
-          <div class="connection-box"><span class="status" classList={{'status--live': connected()}}><span class="status-dot" />{connected() ? 'Backend connected' : 'Reconnecting to backend'}</span><span>WebSocket / live updates</span></div>
+          <div><p class="console-caption">The broadcast studio</p><h1>Station control</h1><p>Keep the music moving. You’re at the controls.</p></div>
+          <div class="connection-box"><span class="status" classList={{'status--live': connected()}}><span class="status-dot" />{connected() ? 'Backend connected' : 'Reconnecting to backend'}</span><span>Live library &amp; queue sync</span></div>
         </header>
         <section class="now-playing-bar" aria-labelledby="now-playing-heading">
-          <div class="broadcast-mark" aria-hidden="true">▂▅█▅▂</div>
+          <div class="broadcast-mark" aria-hidden="true"><span /></div>
           <div class="now-playing-info">
             <h2 id="now-playing-heading" class="now-playing-label">{currentSong() ? 'Now playing / current track' : 'Now playing / standby'}</h2>
             <Show when={currentSong()} fallback={<><div class="now-playing-title">{playerError() ? 'Player status unavailable' : 'Waiting for a listener'}</div><div class="now-playing-artist">{playerError() ? 'Check the backend connection.' : 'Open the player to start the station.'}</div></>}>
@@ -151,13 +151,13 @@ export function AdminApp() {
         </section>
         <div class="admin-main">
           <section class="song-panel" aria-labelledby="library-heading">
-            <div class="panel-header"><h2 id="library-heading" class="panel-title"><span aria-hidden="true">~/</span>Music library</h2><span class="panel-meta">{songs().length} {searchQuery() ? 'matches' : 'tracks'}</span></div>
-            <div class="search-row"><span aria-hidden="true">&gt;</span><input class="search-box" aria-label="Search music library" type="search" placeholder="Search title, artist, album…" value={searchQuery()} onInput={e => setSearchQuery(e.currentTarget.value)} /><Show when={searchQuery()}><button class="btn" onClick={() => setSearchQuery('')}>Reset</button></Show></div>
+            <div class="panel-header"><h2 id="library-heading" class="panel-title">Music library</h2><span class="panel-meta">{songs().length} {searchQuery() ? 'matches' : 'tracks'}</span></div>
+            <div class="search-row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="6" stroke="currentColor" stroke-width="1.5" /><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg><input class="search-box" aria-label="Search music library" type="search" placeholder="Search title, artist, album…" value={searchQuery()} onInput={e => setSearchQuery(e.currentTarget.value)} /><Show when={searchQuery()}><button class="btn" onClick={() => setSearchQuery('')}>Reset</button></Show></div>
             <div class="list-column-labels" aria-hidden="true"><span>Track / artist / album</span><span>Time</span><span>Actions</span></div>
             <div class="song-list" aria-busy={loading()}>
-              <Show when={!loading()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">[ … ]</span><h3>Reading your library</h3><p>Fetching tracks from the backend.</p></div>}>
-                <Show when={!libraryError()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">[ ! ]</span><h3>Library unavailable</h3><p>Check the backend connection, then try again.</p><button class="btn" onClick={() => void fetchSongs()}>Retry connection</button></div>}>
-                  <For each={songs()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">[ ∅ ]</span><h3>{searchQuery() ? 'No matching tracks' : 'Your library is quiet'}</h3><p>{searchQuery() ? 'Try a different title, artist, or album.' : 'Add MP3 files to your configured music folder.'}</p></div>}>
+              <Show when={!loading()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--loading" aria-hidden="true">◌</span><h3>Reading your library</h3><p>Fetching tracks from the backend.</p></div>}>
+                <Show when={!libraryError()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--error" aria-hidden="true">!</span><h3>Library unavailable</h3><p>Check the backend connection, then try again.</p><button class="btn" onClick={() => void fetchSongs()}>Retry connection</button></div>}>
+                  <For each={songs()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">♫</span><h3>{searchQuery() ? 'No matching tracks' : 'Your library is quiet'}</h3><p>{searchQuery() ? 'Try a different title, artist, or album.' : 'Add MP3 files to your configured music folder.'}</p></div>}>
                     {(song, idx) => <div class="song-item" classList={{'song-item--playing': currentSong()?.id === song.id}}>
                       <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
                       <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta">{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
@@ -171,11 +171,11 @@ export function AdminApp() {
             <div class="panel-footnote"><span class="key-hint">+</span> queue it <span class="key-hint">▶</span> play it now</div>
           </section>
           <section class="queue-panel" aria-labelledby="queue-heading">
-            <div class="panel-header"><h2 id="queue-heading" class="panel-title"><span aria-hidden="true">≡</span>Up next <span class="queue-count">{queue().length}</span></h2><button class="btn btn-danger" disabled={!!busy() || !queue().length} onClick={() => clearDialog.showModal()}>Clear queue</button></div>
+            <div class="panel-header"><h2 id="queue-heading" class="panel-title">Up next <span class="queue-count">{queue().length}</span></h2><button class="btn btn-danger" disabled={!!busy() || !queue().length} onClick={() => clearDialog.showModal()}>Clear queue</button></div>
             <div class="queue-legend"><span><i class="queue-source manual" />manual</span><span><i class="queue-source auto" />auto rotation</span></div>
             <div class="queue-list">
               <Show when={!queueError()} fallback={<div class="empty-state"><h3>Queue unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => void fetchQueue()}>Retry</button></div>}>
-                <For each={queue()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">[ + ]</span><h3>Make the next move</h3><p>Add a track from the library. Automatic rotation keeps things moving when the player is listening.</p></div>}>
+                <For each={queue()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">+</span><h3>Make the next move</h3><p>Add a track from the library. Automatic rotation keeps things moving when the player is listening.</p></div>}>
                   {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{item.song?.title || item.song?.filename || item.song_id}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><button class="btn btn-danger btn-icon" aria-label={`Remove ${item.song?.title || 'track'} from queue`} title="Remove from queue" disabled={!!busy()} onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</button></div>}
                 </For>
               </Show>
@@ -183,10 +183,10 @@ export function AdminApp() {
             <div class="panel-footnote">Queue changes sync with every listener.</div>
           </section>
         </div>
-        <footer class="terminal-footer"><span>▂▅█▅▂ &nbsp; station control / backend-driven</span><span>{busy() ? 'Executing request…' : 'Ready for your next command.'}</span></footer>
+        <footer class="terminal-footer"><span>Your station. Your selection.</span><span>{busy() ? 'Executing request…' : 'All controls in sync with your station.'}</span></footer>
       </main>
       <dialog ref={clearDialog!} class="terminal-dialog" aria-labelledby="clear-title" aria-describedby="clear-description">
-        <form method="dialog"><span class="dialog-prompt">[ confirm ]</span><h2 id="clear-title">Clear the queue?</h2><p id="clear-description">Remove all upcoming tracks. The current track keeps playing. Automatic rotation may refill the queue.</p><div class="dialog-actions"><button class="btn" autofocus>Keep queue</button><button class="btn btn-danger" onClick={() => void action('/v1/queue:clear', 'Queue cleared.')}>Clear queue</button></div></form>
+        <form method="dialog"><h2 id="clear-title">Clear the queue?</h2><p id="clear-description">Remove all upcoming tracks. The current track keeps playing. Automatic rotation may refill the queue.</p><div class="dialog-actions"><button class="btn" autofocus>Keep queue</button><button class="btn btn-danger" onClick={() => void action('/v1/queue:clear', 'Queue cleared.')}>Clear queue</button></div></form>
       </dialog>
       <div role="status" aria-live="polite"><Show when={notification()}><div class="notification" classList={{'notification--error': notificationError()}}>{notification()}</div></Show></div>
     </div>

@@ -1,0 +1,144 @@
+{
+  "errors": [],
+  "streams": [
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    },
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    },
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    },
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    },
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    },
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    },
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    },
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    },
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    },
+    {
+      "url": "http://127.0.0.1:18089/v1/songs/7477a405-9e33-5976-864c-2084cf9f3d67/content",
+      "status": 206
+    }
+  ],
+  "routes": [
+    {
+      "route": "/",
+      "title": "Orbital test transmission",
+      "playback": "On air",
+      "unlock": "trusted keyboard Enter"
+    },
+    {
+      "route": "/bars",
+      "title": "Orbital test transmission",
+      "playback": "On air",
+      "unlock": "trusted keyboard Enter"
+    },
+    {
+      "route": "/mirror",
+      "title": "Orbital test transmission",
+      "playback": "On air",
+      "unlock": "trusted keyboard Enter"
+    },
+    {
+      "route": "/dots",
+      "title": "Orbital test transmission",
+      "playback": "On air",
+      "unlock": "trusted keyboard Enter"
+    },
+    {
+      "route": "/ribbon",
+      "title": "Orbital test transmission",
+      "playback": "On air",
+      "unlock": "trusted keyboard Enter"
+    },
+    {
+      "route": "/line",
+      "title": "Orbital test transmission",
+      "playback": "On air",
+      "unlock": "trusted keyboard Enter"
+    },
+    {
+      "route": "/lens",
+      "title": "Orbital test transmission",
+      "playback": "On air",
+      "unlock": "trusted keyboard Enter"
+    },
+    {
+      "route": "/spectrum",
+      "title": "Orbital test transmission",
+      "playback": "On air",
+      "unlock": "trusted keyboard Enter"
+    }
+  ],
+  "frontend": "http://127.0.0.1:3200",
+  "backend": "http://127.0.0.1:18089",
+  "production_smoke": {
+    "errors": [],
+    "routes": [
+      {
+        "route": "/",
+        "status": 200,
+        "canvas": 1,
+        "navigation": 1
+      },
+      {
+        "route": "/bars",
+        "status": 200,
+        "canvas": 1,
+        "navigation": 1
+      },
+      {
+        "route": "/spectrum",
+        "status": 200,
+        "canvas": 1,
+        "navigation": 1
+      },
+      {
+        "route": "/scenes",
+        "status": 200,
+        "canvas": 0,
+        "navigation": 1
+      },
+      {
+        "route": "/admin",
+        "status": 200,
+        "canvas": 0,
+        "navigation": 1
+      },
+      {
+        "route": "/ribbon-overlay",
+        "status": 200,
+        "canvas": 1,
+        "navigation": 0
+      },
+      {
+        "route": "/logo-overlay",
+        "status": 200,
+        "canvas": 1,
+        "navigation": 0
+      }
+    ]
+  }
+}

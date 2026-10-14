@@ -73,8 +73,7 @@ export function SceneApp(props: Props) {
         showBackground={!props.transparent}
         createVisualizer={(app, audio, opts) =>
           props.scene.create(app, audio, {
-            showBackground: opts.showBackground,
-            transparent: opts.transparent,
+            ...opts,
             ramp: props.ramp,
           })
         }

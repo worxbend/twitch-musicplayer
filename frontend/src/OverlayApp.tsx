@@ -35,6 +35,7 @@ export function OverlayApp(props: Props = {}) {
     <Stage
       onReady={onReady}
       transparent={props.transparent}
+      ramp={new URLSearchParams(window.location.search).get('ramp') ?? undefined}
       showBackground={props.showBackground ?? true}
     />
   );

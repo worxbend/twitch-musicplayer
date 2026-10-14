@@ -75,7 +75,8 @@ The frontend starts at `http://localhost:3000`.
 
 - `src/App.tsx`: main scene, wires the playback client to the UI.
 - `src/OverlayApp.tsx`: chrome-free scene for OBS browser sources.
-- `src/SpectrumApp.tsx`: oscilloscope page, opaque or transparent.
+- `src/SceneApp.tsx`: shared player and transparent source for all catalogue scenes.
+- `src/ScenesIndex.tsx`: instrument collection, ramp selection, and OBS URLs.
 - `src/AdminApp.tsx` / `src/admin.tsx`: admin console (separate `admin.html` bundle).
 
 **Audio**
@@ -90,13 +91,15 @@ The frontend starts at `http://localhost:3000`.
 - `src/components/Stage.tsx`: Pixi application lifecycle and the ticker; takes a
   visualizer factory so each page can mount a different scene.
 - `src/components/PlayerUI.tsx`: now-playing card, progress bar, clock, live badge.
-- `src/viz/scenes.ts`: the scene catalogue. Adding a row here routes the scene,
-  lists it on `/scenes` and documents it — there is no second place to update.
+- `src/viz/scenes.ts`: the scene catalogue. Adding a row routes the scene and
+  lists it on `/scenes`; update the documentation and SVG study separately.
 - `src/viz/WaveScene.ts`: shared base for the waveform and spectrum scenes.
   Owns the Pixi lifecycle, the backdrop and the bloom layer; subclasses only
   implement `draw()`.
 - `src/viz/palette.ts`: the colour ramps, selectable per page with `?ramp=`.
-- `src/viz/LofiRainVisualizer.ts`: the default rain scene.
+- `src/viz/LofiRainVisualizer.ts`: the signature orbital record and fine-rain composition.
+- [Signal Observatory](signal-observatory/README.md): current designs, safe canvas placement,
+  lifecycle contracts, screenshots, and browser verification.
 - `src/viz/OscilloscopeVisualizer.ts`, `BarSpectrumVisualizer.ts`,
   `MirrorWaveVisualizer.ts`, `DotMatrixVisualizer.ts`, `RibbonVisualizer.ts`,
   `LineWaveVisualizer.ts`, `LensWaveVisualizer.ts`: the individual scenes.
@@ -198,10 +201,12 @@ cd frontend
 npm test                # analysis maths, via node --test
 npx tsc --noEmit        # typecheck only
 npm run build           # typecheck + production bundle
+npm run test:ui         # Chromium artwork, accessibility, playback and interaction checks
 ```
 
-Frontend tests run in plain Node with no test framework and no browser: Node
-executes the TypeScript directly, and the functions under test are pure.
+Frontend unit tests run in plain Node, which executes the TypeScript directly.
+Browser tests use Playwright and a separate Vite server on port 3100; install
+Chromium with `npx playwright install chromium` before running them.
 
 > [!NOTE]
 > Run the backend tests with `-race`. Both of the concurrency bugs the hub tests cover were

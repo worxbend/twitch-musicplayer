@@ -1,5 +1,7 @@
 # Broadcast terminal redesign
 
+Historical first-pass screenshots and verification. For the current instruments and interface, see [Signal Observatory](../signal-observatory/README.md).
+
 A terminal-inspired identity for a self-hosted radio: JetBrains Mono, charcoal surfaces, phosphor-mint controls, amber status signals, violet queue accents, and a repeating `▂▅█▅▂` mark. The UI borrows the precision of a command-line workspace without making you learn commands.
 
 ## What changed
