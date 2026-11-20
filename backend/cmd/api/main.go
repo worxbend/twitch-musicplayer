@@ -23,7 +23,10 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
 
 	// ── In-memory repositories ────────────────────────────────────────────────
 	songRepo := repository.NewMemSongRepo()

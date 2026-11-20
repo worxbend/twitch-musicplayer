@@ -140,3 +140,26 @@ func TestNextSongEmptyLibrary(t *testing.T) {
 		t.Fatal("expected error selecting from empty library")
 	}
 }
+
+// TestNewKeepsFillConfigWhenShuffleEmpty guards against New replacing the whole
+// config with defaults when only the shuffle strategy is unset.
+func TestNewKeepsFillConfigWhenShuffleEmpty(t *testing.T) {
+	ctx := context.Background()
+	m := buildManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, []*models.Song{
+		song("a1", "A One", "Artist A"),
+		song("b1", "B One", "Artist B"),
+	})
+	if m.cfg.Shuffle.Strategy != ShuffleRoundRobin {
+		t.Errorf("shuffle = %q, want default %q", m.cfg.Shuffle.Strategy, ShuffleRoundRobin)
+	}
+	if got := m.InitialQueueTarget(); got != 0 {
+		t.Errorf("InitialQueueTarget = %d, want 0 for manual_only", got)
+	}
+	added, err := m.PrepareInitialQueue(ctx)
+	if err != nil || added != 0 {
+		t.Fatalf("PrepareInitialQueue = %d, %v; want 0, nil", added, err)
+	}
+	if _, err := m.NextSong(ctx); err != ErrQueueEmpty {
+		t.Errorf("NextSong err = %v, want ErrQueueEmpty (manual_only must not auto-select)", err)
+	}
+}

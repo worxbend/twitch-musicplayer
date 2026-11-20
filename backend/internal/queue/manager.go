@@ -114,10 +114,21 @@ type Manager struct {
 // maxRecentHistory bounds the recent-play ring buffer regardless of window size.
 const maxRecentHistory = 256
 
-// New constructs a Manager. Pass a zero-value ManagerConfig to use defaults.
+// New constructs a Manager. Empty strategies fall back to their defaults
+// individually; a zero-value ManagerConfig yields the full default config.
 func New(songs SongRepository, tracker PlayedTracker, queue QueueRepository, cfg ManagerConfig) *Manager {
+	def := defaultConfig()
 	if cfg.Shuffle.Strategy == "" {
-		cfg = defaultConfig()
+		cfg.Shuffle.Strategy = def.Shuffle.Strategy
+	}
+	if cfg.Fill.Strategy == "" {
+		cfg.Fill.Strategy = def.Fill.Strategy
+		if cfg.Fill.MinAhead == 0 {
+			cfg.Fill.MinAhead = def.Fill.MinAhead
+		}
+		if cfg.Fill.PreloadSize == 0 {
+			cfg.Fill.PreloadSize = def.Fill.PreloadSize
+		}
 	}
 	return &Manager{songs: songs, tracker: tracker, queue: queue, cfg: cfg}
 }

@@ -69,6 +69,21 @@ Environment variables override TOML values:
 `APP_ENV` appears in `.env.example` for convention but is not read by the service.
 Shuffle and queue settings are TOML-only — there is no environment override for them.
 
+## ✅ Validation
+
+The backend checks its config at startup. If anything is wrong, it exits non-zero
+and prints every problem it found, each one naming its TOML key. A missing TOML
+file is fine: defaults are used. These fail startup:
+
+- A TOML file that does not parse.
+- A `PORT` that is not an integer, or a `server.port` outside `1..65535`.
+- An unknown `shuffle.strategy`. Allowed: `random`, `weighted_history`, `round_robin`, `least_played`.
+- An unknown `queue.strategy`. Allowed: `manual_only`, `auto_refill`, `preload`.
+- A negative `shuffle.recent_window`, `queue.min_ahead` or `queue.preload_size`.
+- An empty `music.dir`, or an empty or blank-entry `music.extensions` list.
+
+Extensions without a leading dot are accepted and normalized (`"mp3"` becomes `".mp3"`).
+
 ## 🖼️ Frontend Environment
 
 Example: `frontend/.env.example`.

@@ -1,9 +1,12 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -64,41 +67,69 @@ func defaults() *Config {
 	}
 }
 
-// Load reads config.toml (or the path in LOFI_CONFIG), then overlays env vars.
-func Load() *Config {
-	cfg := defaults()
+// Allowed values for the strategy keys. Kept local so config does not import
+// queue; they must match the queue package's strategy constants.
+var (
+	shuffleStrategies = []string{"random", "weighted_history", "round_robin", "least_played"}
+	queueStrategies   = []string{"manual_only", "auto_refill", "preload"}
+)
 
+// Load reads config.toml (or the path in LOFI_CONFIG), overlays env vars,
+// validates the result and ensures the music directory exists.
+func Load() (*Config, error) {
 	configPath := os.Getenv("LOFI_CONFIG")
 	if configPath == "" {
 		configPath = "config.toml"
 	}
 
-	if _, err := os.Stat(configPath); err == nil {
-		if _, err := toml.DecodeFile(configPath, cfg); err != nil {
-			log.Printf("warning: could not parse %s: %v", configPath, err)
-		} else {
-			log.Printf("config loaded from %s", configPath)
+	cfg, err := loadFrom(configPath, os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(cfg.Music.Dir, 0o755); err != nil {
+		log.Printf("warning: could not create music dir %s: %v", cfg.Music.Dir, err)
+	}
+	return cfg, nil
+}
+
+// loadFrom builds a validated Config from the TOML file at path (a missing
+// file is not an error) overlaid with environment values read via getenv.
+func loadFrom(path string, getenv func(string) string) (*Config, error) {
+	cfg := defaults()
+
+	if _, err := os.Stat(path); err == nil {
+		if _, err := toml.DecodeFile(path, cfg); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
+		log.Printf("config loaded from %s", path)
 	}
 
 	// Env vars take precedence (container-friendly overrides).
-	if v := os.Getenv("PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.Server.Port = n
+	if v := getenv("PORT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("PORT: invalid value %q: not an integer", v)
 		}
+		cfg.Server.Port = n
 	}
-	if v := os.Getenv("MUSIC_DIR"); v != "" {
+	if v := getenv("MUSIC_DIR"); v != "" {
 		cfg.Music.Dir = v
 	}
-	if v := os.Getenv("BASE_URL"); v != "" {
+	if v := getenv("BASE_URL"); v != "" {
 		cfg.Server.BaseURL = v
 	}
-	if v := os.Getenv("BLOOM_PATH"); v != "" {
+	if v := getenv("BLOOM_PATH"); v != "" {
 		cfg.Bloom.Path = v
 	}
 
 	cfg.Music.Dir = expandHomePath(cfg.Music.Dir)
 	cfg.Bloom.Path = expandHomePath(cfg.Bloom.Path)
+	cfg.Music.Extensions = normalizeExtensions(cfg.Music.Extensions)
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 
 	// Populate flat fields.
 	cfg.Port = cfg.Server.Port
@@ -106,11 +137,60 @@ func Load() *Config {
 	cfg.BloomPath = cfg.Bloom.Path
 	cfg.BaseURL = cfg.Server.BaseURL
 
-	if err := os.MkdirAll(cfg.Music.Dir, 0o755); err != nil {
-		log.Printf("warning: could not create music dir %s: %v", cfg.Music.Dir, err)
-	}
+	return cfg, nil
+}
 
-	return cfg
+// Validate reports every invalid setting at once, each message naming its TOML key.
+func (c *Config) Validate() error {
+	var errs []error
+	if c.Server.Port < 1 || c.Server.Port > 65535 {
+		errs = append(errs, fmt.Errorf("server.port: %d out of range (want 1..65535)", c.Server.Port))
+	}
+	if strings.TrimSpace(c.Music.Dir) == "" {
+		errs = append(errs, errors.New("music.dir: must not be empty"))
+	}
+	if len(c.Music.Extensions) == 0 {
+		errs = append(errs, errors.New("music.extensions: must list at least one extension"))
+	}
+	if slices.Contains(c.Music.Extensions, "") {
+		errs = append(errs, errors.New("music.extensions: must not contain an empty entry"))
+	}
+	errs = append(errs,
+		checkOneOf("shuffle.strategy", c.Shuffle.Strategy, shuffleStrategies),
+		checkOneOf("queue.strategy", c.Queue.Strategy, queueStrategies),
+		checkNonNegative("shuffle.recent_window", c.Shuffle.RecentWindow),
+		checkNonNegative("queue.min_ahead", c.Queue.MinAhead),
+		checkNonNegative("queue.preload_size", c.Queue.PreloadSize),
+	)
+	return errors.Join(errs...)
+}
+
+func checkOneOf(key, value string, allowed []string) error {
+	if slices.Contains(allowed, value) {
+		return nil
+	}
+	return fmt.Errorf("%s: unknown value %q (want one of %s)", key, value, strings.Join(allowed, ", "))
+}
+
+func checkNonNegative(key string, value int) error {
+	if value >= 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: %d must not be negative", key, value)
+}
+
+// normalizeExtensions trims each extension and ensures it starts with '.',
+// so "mp3" becomes ".mp3". Blank entries stay blank for Validate to report.
+func normalizeExtensions(exts []string) []string {
+	out := make([]string, 0, len(exts))
+	for _, ext := range exts {
+		ext = strings.TrimSpace(ext)
+		if ext != "" && !strings.HasPrefix(ext, ".") {
+			ext = "." + ext
+		}
+		out = append(out, ext)
+	}
+	return out
 }
 
 // expandHomePath rewrites a leading "~" into the user's home directory, e.g.
