@@ -1,0 +1,6 @@
+/music/
+.env
+.env.local
+*.bloom
+.DS_Store
+coverage.out

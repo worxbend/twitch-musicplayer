@@ -36,3 +36,7 @@ main
 
 # OS X generated file
 .DS_Store
+
+# Runtime state and local music library
+*.bloom
+music/
