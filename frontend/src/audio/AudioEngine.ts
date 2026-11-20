@@ -68,6 +68,9 @@ export class AudioEngine {
   private _t = 0;
   private _disposed = false;
   private _allowAutoplay: boolean;
+  // Bumped by every playStream call; an older call that sees a newer value
+  // leaves the channels alone, since the newer call now owns them.
+  private _transition = 0;
 
   constructor(options: AudioEngineOptions = {}) {
     this._allowAutoplay = options.allowAutoplay === true;
@@ -103,7 +106,9 @@ export class AudioEngine {
     if (this.ctx && this.ctx.state !== 'suspended') return;
     if (this._allowAutoplay) return;
     if (this._hasUserActivation()) return;
-    throw new Error(userGestureRequiredMessage);
+    // Same name as the browser's own autoplay rejection, so callers can tell
+    // "needs a click" apart from a broken stream with one check.
+    throw new DOMException(userGestureRequiredMessage, 'NotAllowedError');
   }
 
   private _hasUserActivation() {
@@ -239,8 +244,12 @@ export class AudioEngine {
     await this.resume();
     const outgoing = this._activeChannel;
     const incoming = this._nextChannel();
+    const token = ++this._transition;
+    const superseded = () => token !== this._transition;
     const wasPlaying = !!(outgoing && this.playing && !outgoing.audioEl.paused);
-    const hadSource = this.mode === 'backend' && !!outgoing?.audioEl.src;
+    // Checked even when paused: an older, superseded call may still resolve play() on it.
+    const outgoingHasSource = !!outgoing?.audioEl.src;
+    const hadSource = this.mode === 'backend' && outgoingHasSource;
 
     // Clean up any stale near-end listener on the incoming channel.
     incoming._nearEndCleanup?.();
@@ -266,6 +275,7 @@ export class AudioEngine {
     this._activeChannel = incoming;
     try {
       await incoming.audioEl.play();
+      if (superseded()) return;
       this.playing = true;
 
       // Wire up near-end monitoring (prefetch + crossfade triggers).
@@ -294,13 +304,18 @@ export class AudioEngine {
       }
 
       const fadeIn = this._fadeChannelTo(incoming, 1, DEFAULT_FADE_IN_MS);
-      const fadeOut = wasPlaying ? this._fadeChannelTo(outgoing, 0, DEFAULT_FADE_OUT_MS) : Promise.resolve();
+      const fadeOut = outgoingHasSource ? this._fadeChannelTo(outgoing, 0, DEFAULT_FADE_OUT_MS) : Promise.resolve();
       await Promise.all([fadeIn, fadeOut]);
+      if (superseded()) return;
 
-      if (wasPlaying) {
+      if (outgoingHasSource) {
         this._stopChannel(outgoing);
       }
     } catch (error) {
+      if (superseded()) {
+        if (incoming !== this._activeChannel) this._stopChannel(incoming);
+        throw error;
+      }
       this._stopChannel(incoming);
       this._activeChannel = outgoing;
       if (outgoing && wasPlaying) {

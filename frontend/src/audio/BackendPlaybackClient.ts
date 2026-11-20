@@ -1,5 +1,5 @@
 import type { AudioEngine } from './AudioEngine';
-import { getWebSocketURL, resolveStreamURL } from '../config/backend';
+import { getWebSocketURL, resolveStreamURL } from '../config/backend.ts';
 
 type MessageType =
   | 'need_song'
@@ -102,6 +102,9 @@ export class BackendPlaybackClient {
   private errorRetryTimer = 0;
   private connection: ConnectionStatus = 'disconnected';
   private playback: PlaybackStatus = 'idle';
+  // Bumped by every play(); a play that settles after a newer one started is ignored.
+  private playToken = 0;
+  private playInFlight = false;
 
   constructor(options: BackendPlaybackOptions) {
     this.audio = options.audio;
@@ -136,10 +139,7 @@ export class BackendPlaybackClient {
     window.removeEventListener('online', this.handleOnline);
     window.removeEventListener('offline', this.handleOffline);
     if (this.socket) {
-      this.socket.onopen = null;
-      this.socket.onmessage = null;
-      this.socket.onclose = null;
-      this.socket.onerror = null;
+      detachSocket(this.socket);
       this.socket.close();
     }
     this.socket = null;
@@ -148,8 +148,9 @@ export class BackendPlaybackClient {
     this.onSongChange?.(null);
   }
 
+  /** Retries a play the browser blocked; called from a user gesture. */
   retryPendingPlay() {
-    if (!this.pendingPlay) return;
+    if (this.playback !== 'blocked' || this.playInFlight || !this.pendingPlay) return;
     return this.play(this.pendingPlay);
   }
 
@@ -187,9 +188,13 @@ export class BackendPlaybackClient {
     };
 
     socket.onclose = () => {
+      if (this.socket !== socket) {
+        detachSocket(socket);
+        return;
+      }
       this.connecting = false;
       window.clearInterval(this.heartbeatTimer);
-      if (this.socket === socket) this.socket = null;
+      this.socket = null;
       if (this.shouldRun) {
         this.report({ connection: 'reconnecting' }, 'radio disconnected');
         this.scheduleReconnect();
@@ -199,7 +204,10 @@ export class BackendPlaybackClient {
     };
 
     socket.onerror = () => {
-      this.connecting = false;
+      if (this.socket !== socket) {
+        detachSocket(socket);
+        return;
+      }
       this.reconnectNow('radio connection error');
     };
   }
@@ -250,6 +258,8 @@ export class BackendPlaybackClient {
   private async play(payload: PlaySongPayload) {
     if (!payload?.song || !payload.stream_url || !payload.history_id) return;
 
+    const token = ++this.playToken;
+    this.playInFlight = true;
     this.pendingPlay = payload;
     const songName = payload.song.title || payload.song.filename;
 
@@ -260,17 +270,32 @@ export class BackendPlaybackClient {
         onPrefetch: () => this.handlePrefetch(payload),
         onNearEnd: () => this.handleNearEnd(payload),
       });
-      this.current = payload;
-      this.pendingPlay = null;
-      window.clearTimeout(this.streamRetryTimer);
-      this.onSongChange?.({ title: songName, artist: payload.song.artist });
-      this.report({ playback: 'playing' }, 'playing');
-    } catch {
-      this.report(
-        { playback: 'blocked' },
-        this.audio.allowAutoplay ? 'audio autoplay blocked' : 'click anywhere to start audio',
-      );
+    } catch (error) {
+      if (token !== this.playToken) return;
+      this.playInFlight = false;
+      this.handlePlayFailure(payload, error);
+      return;
     }
+    if (token !== this.playToken) return;
+    this.playInFlight = false;
+    this.current = payload;
+    this.pendingPlay = null;
+    window.clearTimeout(this.streamRetryTimer);
+    this.onSongChange?.({ title: songName, artist: payload.song.artist });
+    this.report({ playback: 'playing' }, 'playing');
+  }
+
+  // Only an autoplay refusal waits for a click; anything else (404, undecodable
+  // stream, disposed engine) is a stream error that retries on its own timer.
+  private handlePlayFailure(payload: PlaySongPayload, error: unknown) {
+    if (!isAutoplayBlocked(error)) {
+      this.retryStream(payload);
+      return;
+    }
+    this.report(
+      { playback: 'blocked' },
+      this.audio.allowAutoplay ? 'audio autoplay blocked' : 'click anywhere to start audio',
+    );
   }
 
   // Called ~15s before end: request the next song URL for prebuffering (no dequeue).
@@ -351,8 +376,10 @@ export class BackendPlaybackClient {
     this.report({ connection: 'reconnecting' }, reason);
     window.clearInterval(this.heartbeatTimer);
     window.clearTimeout(this.reconnectTimer);
-    if (this.socket && this.socket.readyState !== WebSocket.CLOSED) {
-      this.socket.close();
+    if (this.socket) {
+      // Detach first so this socket's own close/error events cannot schedule a second reconnect.
+      detachSocket(this.socket);
+      if (this.socket.readyState !== WebSocket.CLOSED) this.socket.close();
     }
     this.socket = null;
     this.connecting = false;
@@ -376,6 +403,18 @@ export class BackendPlaybackClient {
     this.awaitingSong = false;
     this.onSongChange?.(null);
   }
+}
+
+function detachSocket(socket: WebSocket) {
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onclose = null;
+  socket.onerror = null;
+}
+
+/** Browsers reject play() with NotAllowedError under autoplay policy; AudioEngine mirrors that name. */
+function isAutoplayBlocked(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'NotAllowedError';
 }
 
 function parseMessage(data: unknown): SocketMessage | null {
