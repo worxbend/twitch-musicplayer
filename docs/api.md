@@ -71,6 +71,10 @@ Content-Type: application/json
 
 Adds a song manually. Manual additions may repeat the same song.
 
+Returns `400` for malformed JSON or a missing `song_id`, and `404` for an unknown song.
+JSON bodies for this endpoint and `POST /v1/queue:play-next` are capped at 4 KiB; a larger
+body gets `413 {"error":"request body too large"}`.
+
 ```http
 DELETE /v1/queue/{queue_item_id}
 ```
@@ -81,7 +85,8 @@ Removes a queued item.
 POST /v1/queue:skip
 ```
 
-Advances to the next song and returns it as `{"song": {...}}`.
+Advances to the next song and returns it as `{"song": {...}}`. Returns
+`409 {"error":"queue is empty"}` when nothing is queued under the `manual_only` strategy.
 
 ```http
 POST /v1/queue:clear

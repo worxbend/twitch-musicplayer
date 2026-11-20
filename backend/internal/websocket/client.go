@@ -20,6 +20,10 @@ const (
 	pongWait    = 60 * time.Second
 	pingPeriod  = 30 * time.Second
 	sendBufSize = 16
+
+	// maxMessageSize caps inbound frames. Client messages (need_song,
+	// song_finished, peek_next, heartbeat) are a few hundred bytes at most.
+	maxMessageSize = 4096
 )
 
 var upgrader = ws.Upgrader{
@@ -143,6 +147,7 @@ func (c *Client) readPump() {
 		c.conn.Close()
 	}()
 
+	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))

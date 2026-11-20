@@ -29,6 +29,9 @@ type queueBroadcaster interface {
 	Broadcast(msg websocket.Message)
 }
 
+// maxJSONBody caps queue request bodies. A song_id payload is under 100 bytes.
+const maxJSONBody = 4 << 10
+
 type addToQueueRequest struct {
 	SongID string `json:"song_id"`
 }
@@ -67,8 +70,7 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 // Add handles POST /v1/queue.
 func (h *QueueHandler) Add(w http.ResponseWriter, r *http.Request) {
 	var req addToQueueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.SongID == "" {
@@ -108,6 +110,11 @@ func (h *QueueHandler) Remove(w http.ResponseWriter, r *http.Request) {
 func (h *QueueHandler) Skip(w http.ResponseWriter, r *http.Request) {
 	song, err := h.mgr.NextSong(r.Context())
 	if err != nil {
+		// An empty queue is an expected state under manual_only, not a fault.
+		if errors.Is(err, queuemgr.ErrQueueEmpty) {
+			writeError(w, http.StatusConflict, "queue is empty")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to skip current song")
 		return
 	}
@@ -130,8 +137,7 @@ func (h *QueueHandler) Clear(w http.ResponseWriter, r *http.Request) {
 // skip_now so connected audio clients interrupt their current track.
 func (h *QueueHandler) PlayNext(w http.ResponseWriter, r *http.Request) {
 	var req playNextRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.SongID == "" {
@@ -174,4 +180,21 @@ func (h *QueueHandler) broadcastQueueUpdated(ctx context.Context, reason string)
 	if err == nil {
 		h.broadcaster.Broadcast(msg)
 	}
+}
+
+// decodeJSONBody decodes a size-capped JSON body into dst. On failure it writes
+// 413 for an oversize body, 400 otherwise, and reports false.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	err := json.NewDecoder(r.Body).Decode(dst)
+	if err == nil {
+		return true
+	}
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return false
+	}
+	writeError(w, http.StatusBadRequest, "invalid request body")
+	return false
 }

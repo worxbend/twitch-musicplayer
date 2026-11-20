@@ -155,8 +155,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QueueItem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
 
   /v1/queue/{id}:
     delete:
@@ -192,6 +196,12 @@ paths:
                 properties:
                   song:
                     $ref: "#/components/schemas/Song"
+        "409":
+          description: Queue is empty (manual_only strategy)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/queue:clear:
     post:
@@ -242,8 +252,12 @@ paths:
                   message:
                     type: string
                     example: song queued for immediate play
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
 
   /v1/player:
     get:
@@ -294,6 +308,18 @@ components:
   responses:
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BadRequest:
+      description: Malformed JSON or missing song_id
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: Request body exceeds 4 KiB
       content:
         application/json:
           schema:
