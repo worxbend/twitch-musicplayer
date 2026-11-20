@@ -19,15 +19,22 @@ import (
 type SongRepository interface {
 	ExistsByPath(ctx context.Context, path string) (bool, error)
 	Create(ctx context.Context, song *models.Song) error
+	DeleteByPath(ctx context.Context, path string) (*models.Song, bool, error)
+	DeleteUnderDir(ctx context.Context, dir string) ([]*models.Song, error)
 }
 
 // QueueManager is the subset needed by the watcher.
 type QueueManager interface {
 	AddToQueue(ctx context.Context, songID string, source models.QueueSource) (*models.QueueItem, error)
+	RemoveSong(ctx context.Context, songID string) (int, error)
 }
 
 // OnNewSong is called after a newly discovered song is registered.
 type OnNewSong func(song *models.Song)
+
+// OnSongsRemoved is called once per filesystem event that dropped songs
+// from the library (file deleted, renamed away, or directory removed).
+type OnSongsRemoved func(songs []*models.Song)
 
 // ScanSummary describes the startup folder scan.
 type ScanSummary struct {
@@ -46,6 +53,9 @@ type Watcher struct {
 	fsWatcher  *fsnotify.Watcher
 	onNewSong  OnNewSong
 	logger     *log.Logger
+
+	// OnRemoved, when set before Start, is notified after songs are dropped.
+	OnRemoved OnSongsRemoved
 }
 
 // New creates a Watcher. extensions is the list of file suffixes to index (e.g. [".mp3"]).
@@ -116,7 +126,7 @@ func (w *Watcher) ScanExisting(ctx context.Context) (*ScanSummary, error) {
 	return summary, err
 }
 
-// Start watches the directory tree for new files. Blocks until ctx is done.
+// Start watches the directory tree for new and removed files. Blocks until ctx is done.
 func (w *Watcher) Start(ctx context.Context) error {
 	defer w.fsWatcher.Close()
 
@@ -125,6 +135,11 @@ func (w *Watcher) Start(ctx context.Context) error {
 		case event, ok := <-w.fsWatcher.Events:
 			if !ok {
 				return nil
+			}
+			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+				// A rename's new path arrives separately as a Create event.
+				w.unregisterPath(ctx, event.Name)
+				continue
 			}
 			if !event.Has(fsnotify.Create) {
 				continue
@@ -232,6 +247,41 @@ func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool
 	}
 
 	return song, true, nil
+}
+
+// unregisterPath drops songs for a path that no longer exists, purges them
+// from the queue so they are never handed to clients, and notifies OnRemoved.
+func (w *Watcher) unregisterPath(ctx context.Context, path string) {
+	removed, err := w.removeFromLibrary(ctx, path)
+	if err != nil {
+		w.logger.Printf("unregister %s: %v", path, err)
+		return
+	}
+	if len(removed) == 0 {
+		return
+	}
+	for _, song := range removed {
+		if _, err := w.queueMgr.RemoveSong(ctx, song.ID); err != nil {
+			w.logger.Printf("dequeue %s: %v", song.Filename, err)
+		}
+		w.logger.Printf("removed: %s", song.Path)
+	}
+	if w.OnRemoved != nil {
+		w.OnRemoved(removed)
+	}
+}
+
+// removeFromLibrary deletes the song at path, or every song under path when it
+// is not a music file (a removed directory). The path is gone, so no Stat.
+func (w *Watcher) removeFromLibrary(ctx context.Context, path string) ([]*models.Song, error) {
+	if !w.isMusicFile(path) {
+		return w.songRepo.DeleteUnderDir(ctx, path)
+	}
+	song, found, err := w.songRepo.DeleteByPath(ctx, path)
+	if err != nil || !found {
+		return nil, err
+	}
+	return []*models.Song{song}, nil
 }
 
 func (w *Watcher) isMusicFile(path string) bool {

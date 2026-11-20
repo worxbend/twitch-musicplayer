@@ -14,4 +14,6 @@ type SongRepository interface {
 	Search(ctx context.Context, query string) ([]*models.Song, error)
 	ExistsByPath(ctx context.Context, path string) (bool, error)
 	Count(ctx context.Context) (int, error)
+	DeleteByPath(ctx context.Context, path string) (*models.Song, bool, error)
+	DeleteUnderDir(ctx context.Context, dir string) ([]*models.Song, error)
 }

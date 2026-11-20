@@ -82,6 +82,23 @@ func (r *MemQueueRepo) Remove(_ context.Context, id string) error {
 	return sql.ErrNoRows
 }
 
+// RemoveBySongID drops every queued entry for songID and reports how many
+// were removed.
+func (r *MemQueueRepo) RemoveBySongID(_ context.Context, songID string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := r.items[:0]
+	for _, item := range r.items {
+		if item.SongID != songID {
+			kept = append(kept, item)
+		}
+	}
+	removed := len(r.items) - len(kept)
+	clear(r.items[len(kept):])
+	r.items = kept
+	return removed, nil
+}
+
 func (r *MemQueueRepo) Clear(_ context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

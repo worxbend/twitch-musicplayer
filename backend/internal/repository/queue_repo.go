@@ -15,4 +15,5 @@ type QueueRepository interface {
 	Remove(ctx context.Context, id string) error
 	Clear(ctx context.Context) error
 	Count(ctx context.Context) (int, error)
+	RemoveBySongID(ctx context.Context, songID string) (int, error)
 }

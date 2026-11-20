@@ -109,6 +109,7 @@ Known reasons:
 - `skipped`
 - `cleared`
 - `new_file`
+- `file_removed` (a library file or directory was deleted or renamed away)
 
 ### `error`
 

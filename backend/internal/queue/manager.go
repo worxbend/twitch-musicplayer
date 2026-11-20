@@ -91,6 +91,7 @@ type QueueRepository interface {
 	Remove(ctx context.Context, id string) error
 	Clear(ctx context.Context) error
 	Count(ctx context.Context) (int, error)
+	RemoveBySongID(ctx context.Context, songID string) (int, error)
 }
 
 // Manager is the brain of the service — decides which song plays next.
@@ -545,6 +546,14 @@ func (m *Manager) ClearQueue(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.queue.Clear(ctx)
+}
+
+// RemoveSong purges every queued entry for songID, e.g. after its file was
+// deleted from disk, and reports how many entries were removed.
+func (m *Manager) RemoveSong(ctx context.Context, songID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.queue.RemoveBySongID(ctx, songID)
 }
 
 // PlayNext inserts the given song at the front of the queue so it plays

@@ -66,18 +66,12 @@ func main() {
 		cfg.Music.Extensions,
 		songRepo,
 		queueMgr,
-		func(_ *models.Song) {
-			msg, encErr := websocket.Encode(websocket.MsgQueueUpdated, websocket.QueueUpdatedPayload{
-				Reason: "new_file",
-			})
-			if encErr == nil {
-				hub.Broadcast(msg)
-			}
-		},
+		func(_ *models.Song) { broadcastQueueUpdated(hub, "new_file") },
 	)
 	if err != nil {
 		log.Fatalf("watcher init failed: %v", err)
 	}
+	fsWatcher.OnRemoved = func(_ []*models.Song) { broadcastQueueUpdated(hub, "file_removed") }
 
 	// ── HTTP API handlers ─────────────────────────────────────────────────────
 	songsH := api.NewSongsHandler(songRepo, cfg.MusicDir)
@@ -152,6 +146,16 @@ func main() {
 	}
 	<-done
 	fmt.Println("shutdown complete.")
+}
+
+// broadcastQueueUpdated tells every client the queue changed for reason.
+func broadcastQueueUpdated(hub *websocket.Hub, reason string) {
+	msg, err := websocket.Encode(websocket.MsgQueueUpdated, websocket.QueueUpdatedPayload{Reason: reason})
+	if err != nil {
+		log.Printf("encode queue_updated (%s): %v", reason, err)
+		return
+	}
+	hub.Broadcast(msg)
 }
 
 func logStartupInventory(
