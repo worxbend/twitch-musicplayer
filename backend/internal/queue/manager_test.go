@@ -346,3 +346,121 @@ func TestPrepareInitialQueue(t *testing.T) {
 		}
 	})
 }
+
+// TestFullCycleCoverageWithLookahead verifies that the rotation cycle keeps
+// resetting when the queue always holds look-ahead entries, so every block of
+// n plays covers the whole library exactly once.
+func TestFullCycleCoverageWithLookahead(t *testing.T) {
+	fills := map[string]FillConfig{
+		"auto_refill": {Strategy: FillAutoRefill, MinAhead: 1},
+		"preload":     {Strategy: FillPreload, PreloadSize: 3},
+	}
+	strategies := []ShuffleStrategy{ShuffleRoundRobin, ShuffleWeightedHistory, ShuffleLeastPlayed}
+	for fillName, fill := range fills {
+		for _, strat := range strategies {
+			t.Run(fillName+"/"+string(strat), func(t *testing.T) {
+				for run := 0; run < 20; run++ {
+					assertCyclesCoverLibrary(t, ManagerConfig{Shuffle: ShuffleConfig{Strategy: strat}, Fill: fill}, 7, 4)
+				}
+			})
+		}
+	}
+}
+
+// assertCyclesCoverLibrary plays cycles*n songs and fails unless each block of
+// n consecutive plays contains every song ID exactly once.
+func assertCyclesCoverLibrary(t *testing.T, cfg ManagerConfig, n, cycles int) {
+	t.Helper()
+	ctx := context.Background()
+	m := buildManager(t, cfg, library(n))
+	if _, err := m.PrepareInitialQueue(ctx); err != nil {
+		t.Fatalf("PrepareInitialQueue: %v", err)
+	}
+	for cycle := 0; cycle < cycles; cycle++ {
+		seen := make(map[string]bool, n)
+		for i := 0; i < n; i++ {
+			s, err := m.NextSong(ctx)
+			if err != nil {
+				t.Fatalf("NextSong[cycle %d, %d]: %v", cycle, i, err)
+			}
+			if seen[s.ID] {
+				t.Fatalf("cycle %d repeated song %s before covering the library", cycle, s.ID)
+			}
+			seen[s.ID] = true
+		}
+	}
+}
+
+// autoQueuedManager builds a 3-song auto_refill manager with one auto-queued
+// look-ahead entry and returns that entry's song ID.
+func autoQueuedManager(t *testing.T) (*Manager, string) {
+	t.Helper()
+	cfg := ManagerConfig{Fill: FillConfig{Strategy: FillAutoRefill, MinAhead: 1}}
+	m := buildManager(t, cfg, library(3))
+	if _, err := m.PrepareInitialQueue(context.Background()); err != nil {
+		t.Fatalf("PrepareInitialQueue: %v", err)
+	}
+	items := listQueue(t, m)
+	if len(items) != 1 || items[0].Source != models.QueueSourceAuto {
+		t.Fatalf("queue = %+v, want one auto entry", items)
+	}
+	return m, items[0].SongID
+}
+
+func entriesForSong(items []*models.QueueItem, songID string) []*models.QueueItem {
+	var out []*models.QueueItem
+	for _, item := range items {
+		if item.SongID == songID {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func TestPlayNextDropsAutoDuplicate(t *testing.T) {
+	ctx := context.Background()
+	m, songID := autoQueuedManager(t)
+
+	if err := m.PlayNext(ctx, songID); err != nil {
+		t.Fatalf("PlayNext: %v", err)
+	}
+	if got := entriesForSong(listQueue(t, m), songID); len(got) != 1 {
+		t.Fatalf("queue holds %d entries for %s, want 1", len(got), songID)
+	}
+	first, err := m.NextSong(ctx)
+	if err != nil {
+		t.Fatalf("NextSong[0]: %v", err)
+	}
+	second, err := m.NextSong(ctx)
+	if err != nil {
+		t.Fatalf("NextSong[1]: %v", err)
+	}
+	if first.ID != songID || second.ID == first.ID {
+		t.Fatalf("plays = %s, %s; want %s then a different song", first.ID, second.ID, songID)
+	}
+}
+
+func TestPlayNextKeepsManualDuplicate(t *testing.T) {
+	ctx := context.Background()
+	m, songID := autoQueuedManager(t)
+	manual, err := m.AddToQueue(ctx, songID, models.QueueSourceManual)
+	if err != nil {
+		t.Fatalf("AddToQueue: %v", err)
+	}
+
+	if err := m.PlayNext(ctx, songID); err != nil {
+		t.Fatalf("PlayNext: %v", err)
+	}
+	got := entriesForSong(listQueue(t, m), songID)
+	if len(got) != 2 {
+		t.Fatalf("queue holds %d entries for %s, want 2 (play-next + manual)", len(got), songID)
+	}
+	for _, item := range got {
+		if item.Source != models.QueueSourceManual {
+			t.Fatalf("auto entry %s survived PlayNext", item.ID)
+		}
+	}
+	if got[1].ID != manual.ID {
+		t.Fatalf("manual entry %s missing after PlayNext, queue = %+v", manual.ID, got)
+	}
+}

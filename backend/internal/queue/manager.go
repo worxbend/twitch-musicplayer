@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"math/rand"
 	"strings"
 	"sync"
@@ -111,6 +112,10 @@ type Manager struct {
 	// lastArtist is the artist of the most recently played song, used to
 	// avoid playing two songs by the same artist back-to-back.
 	lastArtist string
+	// carryover holds songs that were already queued or playing when the
+	// previous rotation cycle completed. They belong to that cycle, so playing
+	// them must not mark them played in the new one.
+	carryover map[string]struct{}
 }
 
 // maxRecentHistory bounds the recent-play ring buffer regardless of window size.
@@ -132,7 +137,7 @@ func New(songs SongRepository, tracker PlayedTracker, queue QueueRepository, cfg
 			cfg.Fill.PreloadSize = def.Fill.PreloadSize
 		}
 	}
-	return &Manager{songs: songs, tracker: tracker, queue: queue, cfg: cfg}
+	return &Manager{songs: songs, tracker: tracker, queue: queue, cfg: cfg, carryover: map[string]struct{}{}}
 }
 
 // InitialQueueTarget returns the configured queue depth to prepare before playback starts.
@@ -229,9 +234,19 @@ func (m *Manager) NextSong(ctx context.Context) (*models.Song, error) {
 		}
 	}
 
-	m.tracker.MarkPlayed(song.ID)
+	m.markPlayed(song.ID)
 	m.recordPlay(song)
 	return song, nil
+}
+
+// markPlayed records songID in the current rotation cycle, unless it was
+// picked in the previous cycle and carried over. Must be called with m.mu held.
+func (m *Manager) markPlayed(songID string) {
+	if _, carried := m.carryover[songID]; carried {
+		delete(m.carryover, songID)
+		return
+	}
+	m.tracker.MarkPlayed(songID)
 }
 
 // dequeueLive pops queue entries until one still points at an indexed song.
@@ -362,7 +377,6 @@ func (m *Manager) weightedPick(candidates []*models.Song, total int) *models.Son
 }
 
 // autoSelect picks the next song according to the shuffle strategy.
-// Resets the tracker if all songs have been played (round-robin cycle complete).
 // Must be called with m.mu held.
 func (m *Manager) autoSelect(ctx context.Context) (*models.Song, error) {
 	allSongs, err := m.songs.List(ctx)
@@ -373,21 +387,25 @@ func (m *Manager) autoSelect(ctx context.Context) (*models.Song, error) {
 		return nil, fmt.Errorf("no songs available")
 	}
 
-	// For non-random strategies, reset the tracker when all songs have been played.
-	if m.cfg.Shuffle.Strategy != ShuffleRandom {
-		allPlayed := true
-		for _, s := range allSongs {
-			if !m.tracker.HasPlayed(s.ID) {
-				allPlayed = false
-				break
-			}
-		}
-		if allPlayed {
-			m.tracker.Reset()
+	m.resetCycleIfComplete(allSongs, nil)
+	return m.pickByStrategy(allSongs, m.lastArtist, len(allSongs))
+}
+
+// resetCycleIfComplete starts a new rotation cycle once every song is either
+// played or in flight (queued, or playing now). In-flight songs were picked in
+// the finished cycle but are marked played only later, so they are carried
+// over instead of counting against the new cycle. Must be called with m.mu held.
+func (m *Manager) resetCycleIfComplete(allSongs []*models.Song, inFlight map[string]struct{}) {
+	if m.cfg.Shuffle.Strategy == ShuffleRandom {
+		return
+	}
+	for _, s := range allSongs {
+		if _, queued := inFlight[s.ID]; !queued && !m.tracker.HasPlayed(s.ID) {
+			return
 		}
 	}
-
-	return m.pickByStrategy(allSongs, m.lastArtist, len(allSongs))
+	m.tracker.Reset()
+	m.carryover = maps.Clone(inFlight)
 }
 
 // pickByStrategy narrows songs to the strategy's candidate pool, then delegates
@@ -487,6 +505,7 @@ func (m *Manager) autoSelectExcluding(ctx context.Context, queued map[string]str
 	if len(allSongs) == 0 {
 		return nil, fmt.Errorf("no songs available")
 	}
+	m.resetCycleIfComplete(allSongs, queued)
 
 	filtered := make([]*models.Song, 0, len(allSongs))
 	for _, song := range allSongs {
@@ -557,7 +576,11 @@ func (m *Manager) ListQueue(ctx context.Context) ([]*models.QueueItem, error) {
 func (m *Manager) ClearQueue(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.queue.Clear(ctx)
+	if err := m.queue.Clear(ctx); err != nil {
+		return err
+	}
+	clear(m.carryover)
+	return nil
 }
 
 // RemoveSong purges every queued entry for songID, e.g. after its file was
@@ -570,6 +593,8 @@ func (m *Manager) RemoveSong(ctx context.Context, songID string) (int, error) {
 
 // PlayNext inserts the given song at the front of the queue so it plays
 // immediately after the current track ends (or when a skip_now is broadcast).
+// Auto-queued entries for the same song are dropped so it does not play twice
+// in a row; manual entries are kept.
 func (m *Manager) PlayNext(ctx context.Context, songID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -577,5 +602,26 @@ func (m *Manager) PlayNext(ctx context.Context, songID string) error {
 	if _, err := m.requireSong(ctx, songID); err != nil {
 		return err
 	}
+	if err := m.removeAutoEntries(ctx, songID); err != nil {
+		return err
+	}
 	return m.queue.EnqueueFront(ctx, newQueueItem(songID, models.QueueSourceManual))
+}
+
+// removeAutoEntries drops every auto-queued entry for songID.
+// Must be called with m.mu held.
+func (m *Manager) removeAutoEntries(ctx context.Context, songID string) error {
+	items, err := m.queue.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list queue: %w", err)
+	}
+	for _, item := range items {
+		if item.SongID != songID || item.Source != models.QueueSourceAuto {
+			continue
+		}
+		if err := m.queue.Remove(ctx, item.ID); err != nil {
+			return fmt.Errorf("remove auto entry %s: %w", item.ID, err)
+		}
+	}
+	return nil
 }

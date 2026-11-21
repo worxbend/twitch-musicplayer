@@ -104,7 +104,8 @@ Content-Type: application/json
 ```
 
 Inserts a song at the front of the queue and broadcasts `skip_now`, so connected audio
-clients abandon the current track and pull this one immediately.
+clients abandon the current track and pull this one immediately. Auto-queued entries for
+the same song are removed so it does not play twice; manually queued entries stay.
 
 Queue mutations broadcast `queue_updated` to connected WebSocket clients.
 
