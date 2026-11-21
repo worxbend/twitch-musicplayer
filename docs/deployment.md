@@ -177,6 +177,18 @@ server {
   root /srv/lofi/frontend;
   index index.html;
 
+  # HTML must revalidate, or a cached page after a redeploy points at
+  # hashed /assets/ files that no longer exist.
+  location = /index.html {
+    add_header Cache-Control "no-cache";
+    try_files $uri =404;
+  }
+
+  location = /admin {
+    add_header Cache-Control "no-cache";
+    try_files /admin.html =404;
+  }
+
   location / {
     try_files $uri /index.html;
   }
@@ -219,7 +231,7 @@ The current backend CORS and WebSocket origin handling are permissive for local 
 
 ## 🛠️ Operational Notes
 
-- The backend scans the music folder on startup.
-- New files are added on create events.
-- File deletion is not currently reconciled.
-- Large file copies should be staged outside the watched folder, then moved into place when complete.
+- The backend scans the music folder, including nested folders, on startup.
+- New files are indexed and queued once their size stops changing, so a slow copy straight into the folder is safe.
+- Deleted or renamed files are dropped from the library and the queue.
+- Symlinks that resolve outside `music_dir` are skipped.

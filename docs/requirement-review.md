@@ -34,10 +34,11 @@ Implemented under `/v1`:
 
 - Songs.
 - Queue.
-- Player state and skip.
-
-History was specified but is not implemented as a resource: play history is kept in a Bloom
-filter for selection purposes only, so there are no history records to expose.
+- Player state and skip. `GET /v1/player` includes the current song, held by
+  `player.StateTracker` (`backend/internal/player/state.go`).
+- History. `GET /v1/history` returns recent song starts, newest first, from a bounded
+  in-memory ring of `player.MaxHistory` (50) entries in `player.StateTracker`. It resets on
+  restart. The Bloom filter is separate and only steers automatic selection.
 
 Streaming endpoints use resource/action style:
 
@@ -74,7 +75,14 @@ Implemented. `POST /v1/queue` can manually add the same song multiple times.
 
 ### New file monitoring
 
-Implemented for create events. Newly created files are indexed and added to the queue.
+Implemented in `backend/internal/watcher/watcher.go`. New files, including files in nested
+folders, are indexed once their size stops changing and then added to the queue.
+
+### File deletion and rename reconciliation
+
+Implemented in `backend/internal/watcher/watcher.go`. Remove and rename events drop the
+song from the library and the queue; a rename's new path is indexed as a new file. An
+fsnotify overflow triggers a full resync with the disk.
 
 ### Backend-only frontend mode
 
@@ -104,8 +112,7 @@ Partially implemented. `/health` exists, but the response is minimal and should 
 
 ## Not Implemented Yet
 
-- File deletion reconciliation.
 - Authentication/authorization for queue mutation.
-- Production-grade WebSocket origin restrictions.
-- Full test coverage for queue/history/protocol behavior.
-- Global current-song state exposed by `/v1/player`.
+- Production-grade WebSocket origin restrictions (`CheckOrigin` accepts every origin).
+- An end-to-end WebSocket protocol test over a real socket (see the
+  [Contributor Guide](contributor-guide.md#-testing-gaps-to-close)).

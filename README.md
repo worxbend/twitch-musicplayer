@@ -392,16 +392,18 @@ back-to-back — as long as an alternative exists.
 
 ```bash
 cd backend
-gofmt -l .              # should print nothing
-go vet ./...
-go test -race ./...     # queue strategies + hub concurrency
+make check              # gofmt, go mod tidy -diff, go vet, staticcheck,
+                        # go test -race, govulncheck, go build
 
 cd ../frontend
+npm ci
+npm run typecheck       # typecheck src, tests and configs
 npm test                # unit tests, via node --test
 npm run build           # typecheck + production bundle
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same gates on every push to `main` and every pull request.
+CI (`.github/workflows/ci.yml`) runs these gates on every push to `main` and every pull request,
+plus the Playwright browser suite (`ui` job) and Docker image builds with smoke tests (`docker` job).
 
 The redesigned instruments, UI, screenshots, and browser verification are documented in
 **[Signal Observatory](docs/signal-observatory/README.md)**. Run its browser checks with

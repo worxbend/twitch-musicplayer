@@ -25,14 +25,15 @@
 
 1. Create a feature branch.
 2. Keep backend and frontend changes scoped.
-3. Run backend tests and frontend build.
+3. Run the checks in the PR checklist below.
 4. Update docs when behavior or configuration changes.
 5. Include known limitations in the PR description if a requirement is partially implemented.
 
 ## ✅ Suggested PR Checklist
 
-- `go test ./...` passes in `backend/`.
-- `npm run build` passes in `frontend/`.
+- `make -C backend check` passes (gofmt, go mod tidy -diff, go vet, staticcheck, go test -race, govulncheck, go build).
+- `npm run typecheck`, `npm test` and `npm run build` pass in `frontend/`.
+- `npm run test:ui` passes in `frontend/` (run `npx playwright install chromium` once first).
 - New configuration has examples in `backend/config.example.toml`, `backend/.env.example`, or `frontend/.env.example`.
 - WebSocket payload shape changes are reflected in `docs/websocket-protocol.md`.
 - HTTP endpoint changes are reflected in `docs/api.md`.
@@ -42,12 +43,8 @@
 
 High-value tests to add:
 
-- Queue manager: `round_robin` cycle behavior.
-- Queue repository: missing row delete returns `sql.ErrNoRows`.
-- History repository: mark finished behavior and row counts.
-- Watcher: create event indexing and duplicate path handling.
-- WebSocket: `need_song -> play_song -> song_finished -> play_song`.
-- Frontend: WebSocket controller message handling with mocked `AudioEngine`.
+- In-memory queue repository: `Remove` of a missing id returns `sql.ErrNoRows` (only the API handler tests cover the 404 today, with a fake repository).
+- WebSocket: one end-to-end loop over a real socket, `need_song -> play_song -> song_finished -> play_song` (client tests cover each step separately).
 
 ## 🔊 Supported Playback Model
 

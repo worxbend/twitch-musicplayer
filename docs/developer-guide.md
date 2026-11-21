@@ -26,8 +26,8 @@ editing code — the containers do not hot-reload.
 
 ## 📦 Prerequisites
 
-- Go 1.26 or compatible with `backend/go.mod`.
-- Node.js 20+.
+- Go 1.26 (`backend/go.mod` pins `toolchain go1.26.11`).
+- Node.js 22.18+ (`engines` in `frontend/package.json`; `frontend/.nvmrc` selects 22).
 - npm.
 - No CGO toolchain required: the service uses no database driver.
 - MP3 files for local playback.
@@ -190,23 +190,25 @@ single-page session does not leave styling behind.
 ## ✅ Verification
 
 ```bash
-cd backend
-go test ./... -race     # queue strategies + websocket hub concurrency
-go vet ./...
-gofmt -l internal cmd   # should print nothing
+make -C backend check   # gofmt, go mod tidy -diff, go vet, staticcheck,
+                        # go test -race, govulncheck, go build
 ```
 
 ```bash
 cd frontend
-npm test                # analysis maths, via node --test
+npm ci
 npm run typecheck       # typecheck src, tests and configs
+npm test                # unit tests, via node --test
 npm run build           # typecheck + production bundle
+npx playwright install chromium
 npm run test:ui         # Chromium artwork, accessibility, playback and interaction checks
 ```
 
+CI (`.github/workflows/ci.yml`) runs the same gates in four jobs: `backend`, `frontend`,
+`ui` (Playwright) and `docker` (compose validation, image builds and smoke tests).
+
 Frontend unit tests run in plain Node, which executes the TypeScript directly.
-Browser tests use Playwright and a separate Vite server on port 3100; install
-Chromium with `npx playwright install chromium` before running them.
+Browser tests use Playwright and a separate Vite server on port 3100.
 
 > [!NOTE]
 > Run the backend tests with `-race`. Both of the concurrency bugs the hub tests cover were
