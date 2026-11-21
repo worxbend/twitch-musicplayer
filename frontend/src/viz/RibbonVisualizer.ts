@@ -20,6 +20,10 @@ export class RibbonVisualizer extends WaveScene {
     Math.pow(Math.sin(Math.PI * i / (POINTS - 1)), 0.8));
   private readonly colours: number[];
   private gradient: PIXI.FillGradient | null = null;
+  // The gradient gfx still draws with after a resize. A render can land between
+  // onResize and the next draw (Pixi re-renders on window resize), so it is
+  // destroyed only once draw has rebuilt gfx without it.
+  private drawnGradient: PIXI.FillGradient | null = null;
   private gain = 1;
 
   constructor(app: PIXI.Application, audio: AudioEngine, options: WaveSceneOptions = {}) {
@@ -39,10 +43,15 @@ export class RibbonVisualizer extends WaveScene {
       textureSpace: 'global',
       colorStops: this.ramp.cssStops(9),
     });
-    old?.destroy();
+    // A gradient replaced before any draw used it is safe to destroy now.
+    if (this.drawnGradient) old?.destroy();
+    else this.drawnGradient = old;
   }
 
   protected draw(frame: AudioFrame, dt: number) {
+    // gfx was cleared before draw, so nothing references the old gradient now.
+    this.drawnGradient?.destroy();
+    this.drawnGradient = null;
     const g = this.gfx;
     const activity = this.audio.playing ? 1 : 0.65;
     const follow = 1 - Math.exp(-dt / 0.11);
@@ -127,5 +136,7 @@ export class RibbonVisualizer extends WaveScene {
     super.dispose();
     this.gradient?.destroy();
     this.gradient = null;
+    this.drawnGradient?.destroy();
+    this.drawnGradient = null;
   }
 }
