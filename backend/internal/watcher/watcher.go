@@ -49,7 +49,12 @@ type ScanSummary struct {
 	NewlyIndexed   int
 	AlreadyIndexed int
 	WatchedDirs    int
+	Skipped        int
 }
+
+// errOutsideLibrary marks a music file that is unreadable or a symlink whose
+// target lies outside music_dir; streaming would refuse it with 403 anyway.
+var errOutsideLibrary = errors.New("resolves outside music_dir or is unreadable")
 
 // settleWorkers caps how many new files are polled for settling at once, so
 // dropping a large folder does not start one stat loop per file.
@@ -57,13 +62,16 @@ const settleWorkers = 4
 
 // Watcher monitors a directory tree for new audio files and registers them.
 type Watcher struct {
-	dir        string
-	extensions map[string]struct{}
-	songRepo   SongRepository
-	queueMgr   QueueManager
-	fsWatcher  *fsnotify.Watcher
-	onNewSong  OnNewSong
-	logger     *log.Logger
+	dir string
+	// resolvedDir is dir with symlinks resolved, used only for containment
+	// checks; song paths and IDs stay derived from dir.
+	resolvedDir string
+	extensions  map[string]struct{}
+	songRepo    SongRepository
+	queueMgr    QueueManager
+	fsWatcher   *fsnotify.Watcher
+	onNewSong   OnNewSong
+	logger      *log.Logger
 
 	// A new file is indexed once its size and modtime hold still for one
 	// settlePoll, so half-copied files are not indexed or queued truncated.
@@ -91,6 +99,10 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 	if err != nil {
 		return nil, err
 	}
+	resolvedDir, err := filepath.EvalSymlinks(absDir)
+	if err != nil {
+		return nil, err
+	}
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -109,13 +121,14 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 	}
 
 	w := &Watcher{
-		dir:        absDir,
-		extensions: extSet,
-		songRepo:   songRepo,
-		queueMgr:   queueMgr,
-		fsWatcher:  fsw,
-		onNewSong:  onNewSong,
-		logger:     log.New(log.Writer(), "[watcher] ", log.LstdFlags),
+		dir:         absDir,
+		resolvedDir: resolvedDir,
+		extensions:  extSet,
+		songRepo:    songRepo,
+		queueMgr:    queueMgr,
+		fsWatcher:   fsw,
+		onNewSong:   onNewSong,
+		logger:      log.New(log.Writer(), "[watcher] ", log.LstdFlags),
 
 		settlePoll: 250 * time.Millisecond,
 		inflight:   make(map[string]struct{}),
@@ -126,15 +139,22 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 }
 
 // ScanExisting walks the entire music directory tree and inserts any audio files
-// not yet tracked in the DB. Does NOT add songs to the queue.
+// not yet tracked in the DB. Does NOT add songs to the queue. A file that fails
+// to register is logged and counted in Skipped, not MusicFiles, so one bad
+// entry cannot leave the rest of the library unindexed.
 func (w *Watcher) ScanExisting(ctx context.Context) (*ScanSummary, error) {
 	summary := &ScanSummary{}
 	watched, err := w.walkTree(ctx, w.dir, func(path string) error {
-		summary.MusicFiles++
 		_, created, err := w.registerFile(ctx, path, false)
 		if err != nil {
-			return err
+			if ctx.Err() != nil {
+				return err
+			}
+			w.logger.Printf("skip %s: %v", path, err)
+			summary.Skipped++
+			return nil
 		}
+		summary.MusicFiles++
 		if created {
 			summary.NewlyIndexed++
 		} else {
@@ -151,10 +171,16 @@ func (w *Watcher) ScanExisting(ctx context.Context) (*ScanSummary, error) {
 // An unreadable entry below root (lost+found, NAS #recycle) is logged and
 // skipped so it cannot leave the library half indexed; root itself still fails.
 func (w *Watcher) walkTree(ctx context.Context, root string, onMusicFile func(path string) error) (int, error) {
+	walkRoot := root
+	if root == w.dir {
+		// WalkDir does not follow a symlinked root; the trailing separator
+		// makes it follow music_dir when that is a link to the real folder.
+		walkRoot = root + string(filepath.Separator)
+	}
 	watched := 0
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if path == root {
+			if path == walkRoot {
 				return err
 			}
 			w.logger.Printf("skip %s: %v", path, err)
@@ -167,7 +193,7 @@ func (w *Watcher) walkTree(ctx context.Context, root string, onMusicFile func(pa
 			return err
 		}
 		if d.IsDir() {
-			if path != w.dir {
+			if filepath.Clean(path) != w.dir {
 				if err := w.fsWatcher.Add(path); err == nil {
 					watched++
 				}
@@ -405,6 +431,9 @@ func withFileMetadata(song models.Song, path string) (models.Song, error) {
 // registerFile inserts a new song record and optionally queues it. A path
 // already indexed is refreshed instead and reported as not created.
 func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool) (*models.Song, bool, error) {
+	if !w.insideLibrary(path) {
+		return nil, false, errOutsideLibrary
+	}
 	exists, err := w.songRepo.ExistsByPath(ctx, path)
 	if err != nil {
 		return nil, false, err
@@ -518,6 +547,20 @@ func (w *Watcher) removeFromLibrary(ctx context.Context, path string) ([]*models
 		return nil, err
 	}
 	return []*models.Song{song}, nil
+}
+
+// insideLibrary reports whether path, with symlinks resolved, exists under
+// music_dir. It mirrors streamPathUnderMusicDir in the songs API.
+func (w *Watcher) insideLibrary(path string) bool {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(w.resolvedDir, resolved)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (w *Watcher) isMusicFile(path string) bool {

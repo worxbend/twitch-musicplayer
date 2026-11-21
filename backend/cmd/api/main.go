@@ -221,9 +221,9 @@ func logStartupInventory(
 	}
 	totalDuration, totalSize := summarizeSongs(songs)
 	log.Printf(
-		"library: dir=%q ext=%s found=%d indexed=%d new=%d dirs=%d duration=%s size=%s",
+		"library: dir=%q ext=%s found=%d indexed=%d new=%d skipped=%d dirs=%d duration=%s size=%s",
 		cfg.MusicDir, formatExtensions(cfg.Music.Extensions),
-		scan.MusicFiles, len(songs), scan.NewlyIndexed, scan.WatchedDirs,
+		scan.MusicFiles, len(songs), scan.NewlyIndexed, scan.Skipped, scan.WatchedDirs,
 		formatDuration(totalDuration), formatBytes(totalSize),
 	)
 	log.Printf(

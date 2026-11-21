@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -731,5 +732,118 @@ func TestNonOverflowErrorNoResync(t *testing.T) {
 	}
 	if n := h.removals.Load(); n != 0 {
 		t.Errorf("OnRemoved fired %d times, want 0", n)
+	}
+}
+
+// symlinkOrSkip creates link -> target, skipping where symlinks are unavailable.
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need extra privileges on windows")
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+}
+
+// scanWatcher builds an unstarted watcher over dir and runs ScanExisting.
+func scanWatcher(t *testing.T, dir string) (*harness, *ScanSummary) {
+	t.Helper()
+	h := &harness{dir: dir, songs: repository.NewMemSongRepo()}
+	w, err := New(dir, []string{".mp3"}, h.songs, nil, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { w.fsWatcher.Close() }) // Start, which owns the close, never runs.
+	h.w = w
+	summary, err := w.ScanExisting(context.Background())
+	if err != nil {
+		t.Fatalf("ScanExisting: %v", err)
+	}
+	return h, summary
+}
+
+func TestScanExistingSkipsDanglingSymlinkAndKeepsScanning(t *testing.T) {
+	dir := t.TempDir()
+	symlinkOrSkip(t, filepath.Join(dir, "missing.mp3"), filepath.Join(dir, "a.mp3"))
+	writeFile(t, filepath.Join(dir, "b.mp3"))
+
+	h, summary := scanWatcher(t, dir)
+
+	if !h.indexed(t, "b.mp3") {
+		t.Error("b.mp3 after a dangling symlink was not indexed")
+	}
+	if h.indexed(t, "a.mp3") {
+		t.Error("dangling a.mp3 was indexed")
+	}
+	if summary.Skipped != 1 || summary.MusicFiles != 1 {
+		t.Errorf("Skipped=%d MusicFiles=%d, want 1 and 1", summary.Skipped, summary.MusicFiles)
+	}
+}
+
+func TestScanExistingSkipsSymlinkOutsideLibrary(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "x.mp3")
+	writeFile(t, outside)
+	symlinkOrSkip(t, outside, filepath.Join(dir, "out.mp3"))
+
+	h, summary := scanWatcher(t, dir)
+
+	if h.indexed(t, "out.mp3") {
+		t.Error("out.mp3 pointing outside the library was indexed")
+	}
+	if summary.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", summary.Skipped)
+	}
+}
+
+func TestScanExistingIndexesSymlinkInsideLibrary(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "sub", "real.mp3")
+	writeFile(t, target)
+	symlinkOrSkip(t, target, filepath.Join(dir, "in.mp3"))
+
+	h, summary := scanWatcher(t, dir)
+
+	if !h.indexed(t, "in.mp3") {
+		t.Error("in.mp3 pointing inside the library was not indexed")
+	}
+	if summary.Skipped != 0 {
+		t.Errorf("Skipped = %d, want 0", summary.Skipped)
+	}
+}
+
+func TestScanExistingIndexesSymlinkedRoot(t *testing.T) {
+	realDir := t.TempDir()
+	writeFile(t, filepath.Join(realDir, "a.mp3"))
+	link := filepath.Join(t.TempDir(), "music")
+	symlinkOrSkip(t, realDir, link)
+
+	h, _ := scanWatcher(t, link)
+
+	if !h.indexed(t, "a.mp3") {
+		t.Error("a.mp3 under a symlinked music root was not indexed at its link path")
+	}
+}
+
+func TestWatcherIgnoresNewSymlinkOutsideLibrary(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "x.mp3")
+	writeFile(t, outside)
+	h := startWatcher(t, dir)
+
+	symlinkOrSkip(t, outside, filepath.Join(dir, "out.mp3"))
+	writeFile(t, filepath.Join(dir, "z.mp3"))
+
+	waitFor(t, 3*time.Second, "z.mp3 indexed", func() bool { return h.indexed(t, "z.mp3") })
+	time.Sleep(3 * h.w.settlePoll)
+	if h.indexed(t, "out.mp3") {
+		t.Error("new out.mp3 pointing outside the library was indexed")
+	}
+	if n := h.queueDepth(t); n != 1 {
+		t.Errorf("queue depth = %d, want 1 (only z.mp3)", n)
 	}
 }
