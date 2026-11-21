@@ -59,12 +59,17 @@ type Watcher struct {
 }
 
 // New creates a Watcher. extensions is the list of file suffixes to index (e.g. [".mp3"]).
+// dir is made absolute so song paths and IDs do not depend on the working directory.
 func New(dir string, extensions []string, songRepo SongRepository, queueMgr QueueManager, onNewSong OnNewSong) (*Watcher, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
-	if err := fsw.Add(dir); err != nil {
+	if err := fsw.Add(absDir); err != nil {
 		fsw.Close()
 		return nil, err
 	}
@@ -78,7 +83,7 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 	}
 
 	return &Watcher{
-		dir:        dir,
+		dir:        absDir,
 		extensions: extSet,
 		songRepo:   songRepo,
 		queueMgr:   queueMgr,

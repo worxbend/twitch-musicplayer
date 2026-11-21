@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"lofi-radio-backend/internal/models"
 	"lofi-radio-backend/internal/played"
 	"lofi-radio-backend/internal/queue"
@@ -158,4 +159,50 @@ func TestWatcherDropsRemovedDirectory(t *testing.T) {
 	if ok, _ := h.songs.ExistsByPath(context.Background(), filepath.Join(dir, "keep.mp3")); !ok {
 		t.Fatal("keep.mp3 was dropped with the removed directory")
 	}
+}
+
+// chdirMusic switches into a fresh temp dir holding an empty "music" folder,
+// matching the default relative config dir.
+func chdirMusic(t *testing.T) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	if err := os.Mkdir("music", 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertAbsoluteSong(t *testing.T, h *harness, rel string) {
+	t.Helper()
+	want, err := filepath.Abs(rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantID := uuid.NewSHA1(uuid.NameSpaceURL, []byte(want)).String()
+	song, err := h.songs.GetByID(context.Background(), wantID)
+	if err != nil {
+		list, _ := h.songs.List(context.Background())
+		t.Fatalf("no song with UUIDv5 of %s: %v (indexed: %d)", want, err, len(list))
+	}
+	if song.Path != want || !filepath.IsAbs(song.Path) {
+		t.Fatalf("Path = %q, want absolute %q", song.Path, want)
+	}
+}
+
+func TestWatcherStoresAbsolutePaths(t *testing.T) {
+	chdirMusic(t)
+	writeFile(t, filepath.Join("music", "a.mp3"))
+
+	h := startWatcher(t, "./music")
+
+	assertAbsoluteSong(t, h, filepath.Join("music", "a.mp3"))
+}
+
+func TestWatcherStoresAbsolutePathsForNewFiles(t *testing.T) {
+	chdirMusic(t)
+	h := startWatcher(t, "./music")
+
+	writeFile(t, filepath.Join("music", "b.mp3"))
+
+	waitFor(t, 2*time.Second, "b.mp3 indexed", func() bool { return h.count(t) == 1 })
+	assertAbsoluteSong(t, h, filepath.Join("music", "b.mp3"))
 }
