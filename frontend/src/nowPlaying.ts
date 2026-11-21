@@ -7,7 +7,8 @@
  * are `{type, payload}` envelopes (backend/internal/websocket/protocol.go).
  */
 
-export type NowPlayingSong = { title: string; artist: string };
+/** `startId` is now_playing's history_id: set on a real song start, absent on a retag or `state` frame. */
+export type NowPlayingSong = { title: string; artist: string; startId?: string };
 export type NowPlayingAlign = 'left' | 'center' | 'right';
 /** `hold` is seconds the title stays visible after each change; 0 keeps it visible. */
 export type NowPlayingOptions = { align: NowPlayingAlign; size: number; hold: number };
@@ -49,8 +50,34 @@ export function reduceNowPlaying(prev: NowPlayingSong | null, raw: string): NowP
   if (!msg || !isObject(msg.payload)) return prev;
 
   if (msg.type === 'state') return toSong(msg.payload.current_song);
-  if (msg.type === 'now_playing') return toSong(msg.payload.song) ?? prev;
+  if (msg.type === 'now_playing') return withStartId(toSong(msg.payload.song), asText(msg.payload.history_id)) ?? prev;
   return prev;
+}
+
+function withStartId(song: NowPlayingSong | null, startId: string): NowPlayingSong | null {
+  return song && startId ? { ...song, startId } : song;
+}
+
+/** What the overlay last showed: `key` is the start id, or the title when the frame had none. */
+export interface ShownKey { key: string; title: string }
+
+const noneShown: ShownKey = { key: '', title: '' };
+
+/**
+ * Decides whether the overlay re-shows the title for `song`. A new start id always
+ * shows, so a repeated title re-appears under ?hold. Without one (a retag re-announce
+ * or a reconnect `state` frame) only a changed title shows, so a hidden title stays
+ * hidden. No song resets `shown`, which re-arms the next start after an idle clear.
+ */
+export function nextShown(shown: ShownKey, song: NowPlayingSong | null): { show: boolean; shown: ShownKey } {
+  const title = song?.title ?? '';
+  if (!title) return { show: false, shown: noneShown };
+  const startId = song?.startId;
+  if (startId) {
+    return { show: startId !== shown.key, shown: { key: startId, title } };
+  }
+  if (title !== shown.title) return { show: true, shown: { key: title, title } };
+  return { show: false, shown };
 }
 
 export const nowPlayingAlignments: readonly NowPlayingAlign[] = ['left', 'center', 'right'];

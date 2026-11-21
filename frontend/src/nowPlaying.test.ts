@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nowPlayingPath, parseNowPlayingOptions, reduceNowPlaying, type NowPlayingSong } from './nowPlaying.ts';
+import { nextShown, nowPlayingPath, parseNowPlayingOptions, reduceNowPlaying, type NowPlayingSong, type ShownKey } from './nowPlaying.ts';
 
 const prev: NowPlayingSong = { title: 'Old Song', artist: 'Old Artist' };
 
@@ -28,6 +28,49 @@ test('state without a current song returns null', () => {
 test('now_playing replaces the previous song', () => {
   const raw = frame('now_playing', { song: song({ title: 'Next', artist: 'Someone' }), queue_depth: 1 });
   assert.deepEqual(reduceNowPlaying(prev, raw), { title: 'Next', artist: 'Someone' });
+});
+
+test('now_playing copies history_id into startId', () => {
+  const raw = frame('now_playing', { song: song({}), queue_depth: 0, history_id: ' h1 ' });
+  assert.deepEqual(reduceNowPlaying(null, raw), { title: 'Rainy Day', artist: 'Lofi Cat', startId: 'h1' });
+});
+
+test('a state frame gives no startId', () => {
+  const started: NowPlayingSong = { title: 'Rainy Day', artist: 'Lofi Cat', startId: 'h1' };
+  const raw = frame('state', { current_song: song({}), queue_length: 0, total_songs: 1 });
+  assert.equal(reduceNowPlaying(started, raw)?.startId, undefined);
+});
+
+const shownRain: ShownKey = { key: 'h1', title: 'Rainy Day' };
+
+test('nextShown re-shows the same title on a new start id', () => {
+  const next = nextShown(shownRain, { title: 'Rainy Day', artist: '', startId: 'h2' });
+  assert.deepEqual(next, { show: true, shown: { key: 'h2', title: 'Rainy Day' } });
+});
+
+test('nextShown keeps the same start id hidden and takes its new title', () => {
+  const next = nextShown(shownRain, { title: 'Rainy Day (Remaster)', artist: '', startId: 'h1' });
+  assert.deepEqual(next, { show: false, shown: { key: 'h1', title: 'Rainy Day (Remaster)' } });
+});
+
+test('nextShown keeps a same-title retag hidden', () => {
+  assert.deepEqual(nextShown(shownRain, { title: 'Rainy Day', artist: 'New Artist' }), { show: false, shown: shownRain });
+});
+
+test('nextShown shows a retag that changes the title', () => {
+  const next = nextShown(shownRain, { title: 'Sunny Day', artist: '' });
+  assert.deepEqual(next, { show: true, shown: { key: 'Sunny Day', title: 'Sunny Day' } });
+});
+
+test('nextShown re-arms after an idle clear', () => {
+  const cleared = nextShown(shownRain, null);
+  assert.deepEqual(cleared, { show: false, shown: { key: '', title: '' } });
+  assert.equal(nextShown(cleared.shown, { title: 'Rainy Day', artist: '' }).show, true);
+});
+
+test('nextShown keeps a hidden title hidden on a reconnect state frame', () => {
+  const raw = frame('state', { current_song: song({}), queue_length: 0, total_songs: 1 });
+  assert.equal(nextShown(shownRain, reduceNowPlaying(null, raw)).show, false);
 });
 
 test('an unknown message type keeps the previous song', () => {

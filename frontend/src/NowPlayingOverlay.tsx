@@ -1,7 +1,7 @@
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { getWebSocketURL } from './config/backend';
 import { HEARTBEAT_MS, isStale, reconnectDelay } from './config/reconnect';
-import { reduceNowPlaying, type NowPlayingOptions, type NowPlayingSong } from './nowPlaying';
+import { nextShown, reduceNowPlaying, type NowPlayingOptions, type NowPlayingSong, type ShownKey } from './nowPlaying';
 
 type Props = NowPlayingOptions;
 
@@ -12,12 +12,12 @@ const heartbeatFrame = JSON.stringify({ type: 'heartbeat' });
  * need_song or song_finished, and this socket sends nothing but heartbeat, so
  * it can never advance the queue. Silence past STALE_AFTER_MS (no heartbeat_ack)
  * means a half-open socket, so it reconnects. With `hold` > 0 the text fades out
- * that many seconds after each title change.
+ * that many seconds after each new song start or title change.
  */
 export function NowPlayingOverlay(props: Props) {
   const [song, setSong] = createSignal<NowPlayingSong | null>(null);
   const [visible, setVisible] = createSignal(true);
-  let shownTitle = '';
+  let shown: ShownKey = { key: '', title: '' };
   let hideTimer = 0;
   let lastMessageAt = 0;
   let socket: WebSocket | null = null;
@@ -69,11 +69,12 @@ export function NowPlayingOverlay(props: Props) {
     };
   }
 
-  // Acts only on a new title, so a repeated `state` frame after reconnect keeps a hidden title hidden.
+  // Shows on a new song start (history_id), even with a repeated title, or on a changed
+  // title. A reconnect `state` frame or same-title retag keeps a hidden title hidden.
   createEffect(() => {
-    const title = song()?.title ?? '';
-    if (!title || title === shownTitle) return;
-    shownTitle = title;
+    const next = nextShown(shown, song());
+    shown = next.shown;
+    if (!next.show) return;
     setVisible(true);
     window.clearTimeout(hideTimer);
     if (props.hold > 0) hideTimer = window.setTimeout(() => setVisible(false), props.hold * 1000);

@@ -239,9 +239,25 @@ func TestSendNextSongDeliversAndPublishes(t *testing.T) {
 			if got.Type != want {
 				t.Fatalf("broadcast = %s, want %s", got.Type, want)
 			}
+			if want == MsgNowPlaying {
+				assertNowPlayingHistoryID(t, got, payload.HistoryID)
+			}
 		default:
 			t.Fatalf("broadcast missing %s", want)
 		}
+	}
+}
+
+// assertNowPlayingHistoryID checks that a now_playing broadcast carries the
+// play_song history_id, so overlays can tell a new start from a retag.
+func assertNowPlayingHistoryID(t *testing.T, msg Message, want string) {
+	t.Helper()
+	var now NowPlayingPayload
+	if err := json.Unmarshal(msg.Payload, &now); err != nil {
+		t.Fatalf("decode now_playing: %v", err)
+	}
+	if want == "" || now.HistoryID != want {
+		t.Fatalf("now_playing history_id = %q, want play_song's %q (non-empty)", now.HistoryID, want)
 	}
 }
 

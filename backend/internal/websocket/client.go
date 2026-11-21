@@ -272,7 +272,7 @@ func (c *Client) sendNextSong(ctx context.Context) error {
 	}
 
 	// Broadcast to all peers so management UIs get live updates.
-	if nowMsg, encErr := Encode(MsgNowPlaying, NowPlayingPayload{Song: *song, QueueDepth: queueDepth}); encErr == nil {
+	if nowMsg, encErr := Encode(MsgNowPlaying, NowPlayingPayload{Song: *song, QueueDepth: queueDepth, HistoryID: payload.HistoryID}); encErr == nil {
 		c.hub.Broadcast(nowMsg)
 	}
 	if queueMsg, encErr := Encode(MsgQueueUpdated, QueueUpdatedPayload{QueueDepth: queueDepth, Reason: "song_started"}); encErr == nil {

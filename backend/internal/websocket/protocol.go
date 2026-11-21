@@ -57,6 +57,10 @@ type QueueUpdatedPayload struct {
 type NowPlayingPayload struct {
 	Song       models.Song `json:"song"`
 	QueueDepth int         `json:"queue_depth"`
+	// HistoryID matches play_song's history_id. It is set on a real song start
+	// and absent when the current song is re-announced after a retag, so
+	// overlays can tell a repeat play of the same title from a tag refresh.
+	HistoryID string `json:"history_id,omitempty"`
 }
 
 // ErrorPayload carries an error description to the client.

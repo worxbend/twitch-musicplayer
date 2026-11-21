@@ -91,6 +91,25 @@ Instructs the frontend to stream a song.
 }
 ```
 
+### `now_playing`
+
+Broadcast to every client when a song starts, after its `play_song` was delivered.
+
+```json
+{
+  "type": "now_playing",
+  "payload": {
+    "song": { "id": "song-id", "title": "track", "artist": "" },
+    "queue_depth": 0,
+    "history_id": "history-id"
+  }
+}
+```
+
+`history_id` matches the `play_song.history_id` of that start. It is absent when the server
+re-announces the current song after its tags change, so the `/now-playing` overlay can
+re-show a repeated title on a new start (`?hold=N`) without re-showing it on a retag.
+
 ### `queue_updated`
 
 Broadcast when queue state changes.
