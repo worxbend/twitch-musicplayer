@@ -2,11 +2,13 @@ package watcher
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -54,6 +56,14 @@ type Watcher struct {
 	onNewSong  OnNewSong
 	logger     *log.Logger
 
+	// A new file is indexed once its size and modtime hold still for one
+	// settlePoll, so half-copied files are not indexed or queued truncated.
+	settlePoll    time.Duration
+	settleTimeout time.Duration
+	settling      sync.WaitGroup
+	inflightMu    sync.Mutex
+	inflight      map[string]struct{}
+
 	// OnRemoved, when set before Start, is notified after songs are dropped.
 	OnRemoved OnSongsRemoved
 }
@@ -90,6 +100,10 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 		fsWatcher:  fsw,
 		onNewSong:  onNewSong,
 		logger:     log.New(log.Writer(), "[watcher] ", log.LstdFlags),
+
+		settlePoll:    250 * time.Millisecond,
+		settleTimeout: 30 * time.Second,
+		inflight:      make(map[string]struct{}),
 	}, nil
 }
 
@@ -97,25 +111,7 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 // not yet tracked in the DB. Does NOT add songs to the queue.
 func (w *Watcher) ScanExisting(ctx context.Context) (*ScanSummary, error) {
 	summary := &ScanSummary{}
-	err := filepath.WalkDir(w.dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if path != w.dir {
-				// Watch every subdirectory so we catch new files in nested dirs.
-				if err := w.fsWatcher.Add(path); err == nil {
-					summary.WatchedDirs++
-				}
-			}
-			return nil
-		}
-		if !w.isMusicFile(path) {
-			return nil
-		}
+	watched, err := w.walkTree(ctx, w.dir, func(path string) error {
 		summary.MusicFiles++
 		_, created, err := w.registerFile(ctx, path, false)
 		if err != nil {
@@ -128,12 +124,43 @@ func (w *Watcher) ScanExisting(ctx context.Context) (*ScanSummary, error) {
 		}
 		return nil
 	})
+	summary.WatchedDirs = watched
 	return summary, err
+}
+
+// walkTree watches every directory under root and calls onMusicFile for each
+// music file. The library root is skipped because New already watches it.
+func (w *Watcher) walkTree(ctx context.Context, root string, onMusicFile func(path string) error) (int, error) {
+	watched := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != w.dir {
+				if err := w.fsWatcher.Add(path); err == nil {
+					watched++
+				}
+			}
+			return nil
+		}
+		if !w.isMusicFile(path) {
+			return nil
+		}
+		return onMusicFile(path)
+	})
+	return watched, err
 }
 
 // Start watches the directory tree for new and removed files. Blocks until ctx is done.
 func (w *Watcher) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
 	defer w.fsWatcher.Close()
+	defer w.settling.Wait()
+	defer cancel()
 
 	for {
 		select {
@@ -149,29 +176,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 			if !event.Has(fsnotify.Create) {
 				continue
 			}
-
-			// Give the OS a moment to finish writing.
-			time.Sleep(200 * time.Millisecond)
-
-			info, err := os.Stat(event.Name)
-			if err != nil {
-				continue
-			}
-
-			if info.IsDir() {
-				// New subdirectory: watch it and scan for any files already inside.
-				_ = w.fsWatcher.Add(event.Name)
-				_ = w.scanDir(ctx, event.Name, true)
-				continue
-			}
-
-			if !w.isMusicFile(event.Name) {
-				continue
-			}
-
-			if _, _, err := w.registerFile(ctx, event.Name, true); err != nil {
-				w.logger.Printf("register %s: %v", event.Name, err)
-			}
+			w.handleCreate(ctx, event.Name)
 
 		case err, ok := <-w.fsWatcher.Errors:
 			if !ok {
@@ -185,25 +190,94 @@ func (w *Watcher) Start(ctx context.Context) error {
 	}
 }
 
-// scanDir walks a single directory (non-recursive) and registers music files.
-func (w *Watcher) scanDir(ctx context.Context, dir string, addToQueue bool) error {
-	entries, err := os.ReadDir(dir)
+// handleCreate queues a new music file for indexing, or, for a new directory
+// (possibly a whole moved tree), watches it and every folder inside.
+func (w *Watcher) handleCreate(ctx context.Context, path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	if !info.IsDir() {
+		if w.isMusicFile(path) {
+			w.registerWhenSettled(ctx, path)
+		}
+		return
+	}
+	_, err = w.walkTree(ctx, path, func(file string) error {
+		w.registerWhenSettled(ctx, file)
+		return nil
+	})
+	if err != nil {
+		w.logger.Printf("scan %s: %v", path, err)
+	}
+}
+
+// registerWhenSettled indexes and queues path in the background once it stops
+// changing. A path already settling is skipped, so a directory scan racing the
+// file's own Create event registers it once.
+func (w *Watcher) registerWhenSettled(ctx context.Context, path string) {
+	if !w.claim(path) {
+		return
+	}
+	w.settling.Go(func() {
+		defer w.release(path)
+		if err := w.waitSettled(ctx, path); err != nil {
+			if ctx.Err() == nil {
+				w.logger.Printf("skip %s: %v", path, err)
+			}
+			return
+		}
+		if _, _, err := w.registerFile(ctx, path, true); err != nil {
+			w.logger.Printf("register %s: %v", path, err)
+		}
+	})
+}
+
+func (w *Watcher) claim(path string) bool {
+	w.inflightMu.Lock()
+	defer w.inflightMu.Unlock()
+	if _, busy := w.inflight[path]; busy {
+		return false
+	}
+	w.inflight[path] = struct{}{}
+	return true
+}
+
+func (w *Watcher) release(path string) {
+	w.inflightMu.Lock()
+	defer w.inflightMu.Unlock()
+	delete(w.inflight, path)
+}
+
+// waitSettled returns nil once path's size and modtime are unchanged across
+// two consecutive polls. It fails if path disappears, ctx ends, or the file
+// is still changing after settleTimeout.
+func (w *Watcher) waitSettled(ctx context.Context, path string) error {
+	prev, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
+	deadline := time.NewTimer(w.settleTimeout)
+	defer deadline.Stop()
+	poll := time.NewTicker(w.settlePoll)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("still changing after %s", w.settleTimeout)
+		case <-poll.C:
 		}
-		path := filepath.Join(dir, e.Name())
-		if !w.isMusicFile(path) {
-			continue
+		cur, err := os.Stat(path)
+		if err != nil {
+			return err
 		}
-		if _, _, err := w.registerFile(ctx, path, addToQueue); err != nil {
-			w.logger.Printf("register %s: %v", path, err)
+		if cur.Size() == prev.Size() && cur.ModTime().Equal(prev.ModTime()) {
+			return nil
 		}
+		prev = cur
 	}
-	return nil
 }
 
 // registerFile inserts a new song record and optionally queues it.

@@ -38,6 +38,8 @@ func startWatcher(t *testing.T, dir string) *harness {
 		t.Fatalf("New: %v", err)
 	}
 	w.OnRemoved = func(_ []*models.Song) { h.removals.Add(1) }
+	w.settlePoll = 300 * time.Millisecond
+	w.settleTimeout = 5 * time.Second
 	h.w = w
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -205,4 +207,58 @@ func TestWatcherStoresAbsolutePathsForNewFiles(t *testing.T) {
 
 	waitFor(t, 2*time.Second, "b.mp3 indexed", func() bool { return h.count(t) == 1 })
 	assertAbsoluteSong(t, h, filepath.Join("music", "b.mp3"))
+}
+
+func TestWatcherIndexesMovedNestedDirectory(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	nested := filepath.Join(outside, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(nested, "c.mp3"))
+	h := startWatcher(t, dir)
+
+	if err := os.Rename(filepath.Join(outside, "a"), filepath.Join(dir, "a")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, "a/b/c.mp3 indexed", func() bool { return h.count(t) == 1 })
+
+	writeFile(t, filepath.Join(dir, "a", "b", "d.mp3"))
+	waitFor(t, 3*time.Second, "a/b/d.mp3 indexed", func() bool { return h.count(t) == 2 })
+}
+
+func TestWatcherWaitsForFileToSettle(t *testing.T) {
+	const chunk = 64 << 10
+	dir := t.TempDir()
+	h := startWatcher(t, dir)
+	path := filepath.Join(dir, "slow.mp3")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, chunk)
+	for i := range 4 {
+		if i > 0 {
+			time.Sleep(150 * time.Millisecond)
+		}
+		if _, err := f.Write(buf); err != nil {
+			f.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 3*time.Second, "slow.mp3 indexed", func() bool { return h.count(t) == 1 })
+	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(path)).String()
+	song, err := h.songs.GetByID(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if song.SizeBytes != 4*chunk {
+		t.Fatalf("SizeBytes = %d, want %d", song.SizeBytes, 4*chunk)
+	}
 }
