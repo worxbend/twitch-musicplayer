@@ -342,3 +342,22 @@ test('dispose disconnects the master gain', async () => {
   assert.equal(node.disconnected, true);
   assert.equal(engine['_master'], null);
 });
+
+test('play and pause are idempotent and togglePlay still flips state', async () => {
+  const el = await playFirstTrack();
+  const play = mock.method(el, 'play');
+  const pause = mock.method(el, 'pause');
+
+  assert.equal(engine.pause(), false);
+  assert.equal(engine.pause(), false);
+  assert.equal(pause.mock.callCount(), 1);
+
+  assert.equal(engine.play(), true);
+  assert.equal(engine.play(), true);
+  assert.equal(play.mock.callCount(), 1);
+
+  assert.equal(engine.togglePlay(), false);
+  assert.equal(el.paused, true);
+  assert.equal(engine.togglePlay(), true);
+  assert.equal(el.paused, false);
+});

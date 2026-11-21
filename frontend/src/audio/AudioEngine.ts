@@ -353,19 +353,28 @@ export class AudioEngine {
     }
   }
 
-  togglePlay(): boolean {
+  // Resumes the active track. Does nothing when no track is loaded or it is already playing.
+  play(): boolean {
     const active = this._activeAudioElement();
-    if (this.mode === 'backend' && active) {
-      if (active.paused) {
-        void active.play().catch(() => { this.playing = false; });
-        this.playing = true;
-      }
-      else {
-        active.pause();
-        this.playing = false;
-      }
+    if (this.mode === 'backend' && active?.paused) {
+      void active.play().catch(() => { this.playing = false; });
+      this.playing = true;
     }
     return this.playing;
+  }
+
+  // Pauses the active track. Does nothing when no track is loaded or it is already paused.
+  pause(): boolean {
+    const active = this._activeAudioElement();
+    if (this.mode === 'backend' && active && !active.paused) {
+      active.pause();
+      this.playing = false;
+    }
+    return this.playing;
+  }
+
+  togglePlay(): boolean {
+    return this._activeAudioElement()?.paused ? this.play() : this.pause();
   }
 
   // Returns the active track's playback position, or null when nothing is loaded.

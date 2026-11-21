@@ -5,6 +5,7 @@ import { BackendPlaybackClient } from './audio/BackendPlaybackClient';
 import type { ConnectionStatus, PlaybackStatus } from './audio/BackendPlaybackClient';
 import type { AudioEngine } from './audio/AudioEngine';
 import type { SceneDef } from './viz/scenes';
+import { bindMediaSession, getMediaSession, setMediaPlaybackState, updateMediaMetadata } from './audio/mediaSession';
 
 interface Props {
   scene: SceneDef;
@@ -29,6 +30,7 @@ export function SceneApp(props: Props) {
   const [wsStatus, setWsStatus] = createSignal<ConnectionStatus>('disconnected');
   const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
   let backendClient: BackendPlaybackClient | null = null;
+  let unbindMediaSession = () => {};
 
   onMount(() => {
     document.title = `lofi.radio — ${props.scene.label}${props.transparent ? ' overlay' : ''}`;
@@ -52,18 +54,30 @@ export function SceneApp(props: Props) {
   const onReady = (audio: AudioEngine) => {
     setAudio(audio);
     backendClient?.dispose();
+    unbindMediaSession();
+    // OBS overlay sources must never claim the OS media session.
+    const session = props.transparent ? null : getMediaSession();
     backendClient = new BackendPlaybackClient({
       audio,
-      onStatus: (status) => { setWsStatus(status.connection); setPlaybackStatus(status.playback); },
+      onStatus: (status) => {
+        setWsStatus(status.connection);
+        setPlaybackStatus(status.playback);
+        setMediaPlaybackState(session, status.playback);
+      },
       onSongChange: (song) => {
         setTrackName(song?.title || 'Waiting for a track…');
         setTrackArtist(song?.artist || 'lofi radio · 24/7');
+        updateMediaMetadata(session, song);
       },
+    });
+    unbindMediaSession = bindMediaSession(session, {
+      onPlay: () => playbackStatus() === 'blocked' ? backendClient?.retryPendingPlay() : audio.play(),
+      onPause: () => audio.pause(),
     });
     backendClient.start();
   };
 
-  onCleanup(() => backendClient?.dispose());
+  onCleanup(() => { unbindMediaSession(); backendClient?.dispose(); });
 
   return (
     <>
