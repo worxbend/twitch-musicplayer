@@ -174,7 +174,7 @@ func (m *Manager) PrepareInitialQueue(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	if err := m.fillQueue(ctx, targetDepth); err != nil {
+	if err := m.fillQueue(ctx, targetDepth, m.lastArtist); err != nil {
 		return 0, err
 	}
 
@@ -228,11 +228,11 @@ func (m *Manager) NextSong(ctx context.Context) (*models.Song, error) {
 
 	switch m.cfg.Fill.Strategy {
 	case FillPreload:
-		if err := m.fillQueue(ctx, m.cfg.Fill.PreloadSize, song.ID); err != nil {
+		if err := m.fillQueue(ctx, m.cfg.Fill.PreloadSize, song.Artist, song.ID); err != nil {
 			return nil, fmt.Errorf("preload queue: %w", err)
 		}
 	case FillAutoRefill:
-		if err := m.fillQueue(ctx, m.cfg.Fill.MinAhead, song.ID); err != nil {
+		if err := m.fillQueue(ctx, m.cfg.Fill.MinAhead, song.Artist, song.ID); err != nil {
 			return nil, fmt.Errorf("auto-refill queue: %w", err)
 		}
 	}
@@ -457,8 +457,9 @@ func filterUnplayed(songs []*models.Song, t PlayedTracker) []*models.Song {
 }
 
 // fillQueue refills the queue up to targetDepth using the shuffle strategy.
-// Must be called with m.mu held.
-func (m *Manager) fillQueue(ctx context.Context, targetDepth int, excludeSongIDs ...string) error {
+// prevArtist is the artist of the song that plays just before the queue, used
+// when the queue is empty. Must be called with m.mu held.
+func (m *Manager) fillQueue(ctx context.Context, targetDepth int, prevArtist string, excludeSongIDs ...string) error {
 	if targetDepth <= 0 {
 		return nil
 	}
@@ -478,9 +479,9 @@ func (m *Manager) fillQueue(ctx context.Context, targetDepth int, excludeSongIDs
 		}
 	}
 
-	// Seed adjacency avoidance with the last played artist so the first queued
-	// song differs from what is currently playing, then chain through the batch.
-	avoidArtist := m.lastArtist
+	// Seed adjacency avoidance with the song that plays just before the first
+	// new entry (the queue tail, else prevArtist), then chain through the batch.
+	avoidArtist := m.tailArtist(ctx, items, prevArtist)
 	for len(items) < targetDepth {
 		song, err := m.autoSelectExcluding(ctx, queued, avoidArtist)
 		if err != nil {
@@ -498,6 +499,19 @@ func (m *Manager) fillQueue(ctx context.Context, targetDepth int, excludeSongIDs
 		avoidArtist = song.Artist
 	}
 	return nil
+}
+
+// tailArtist returns the artist of the last queued song, or fallback when the
+// queue is empty or its tail no longer resolves to a song.
+func (m *Manager) tailArtist(ctx context.Context, items []*models.QueueItem, fallback string) string {
+	if len(items) == 0 {
+		return fallback
+	}
+	tail, err := m.songs.GetByID(ctx, items[len(items)-1].SongID)
+	if err != nil || tail == nil {
+		return fallback
+	}
+	return tail.Artist
 }
 
 func (m *Manager) autoSelectExcluding(ctx context.Context, queued map[string]struct{}, avoidArtist string) (*models.Song, error) {

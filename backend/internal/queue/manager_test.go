@@ -76,6 +76,52 @@ func TestNoSameArtistBackToBack(t *testing.T) {
 	}
 }
 
+// TestNoSameArtistBackToBackWithLookahead covers the refill path: each queued
+// song must avoid the artist of the song that plays just before it, not the
+// artist of the song before the current one. Four artists with two songs each
+// always leave an alternative within the first seven plays of a cycle.
+func TestNoSameArtistBackToBackWithLookahead(t *testing.T) {
+	fills := map[string]FillConfig{
+		"auto_refill": {Strategy: FillAutoRefill, MinAhead: 1},
+		"preload":     {Strategy: FillPreload, PreloadSize: 3},
+	}
+	strategies := []ShuffleStrategy{ShuffleRoundRobin, ShuffleWeightedHistory, ShuffleLeastPlayed}
+	for fillName, fill := range fills {
+		for _, strat := range strategies {
+			t.Run(fillName+"/"+string(strat), func(t *testing.T) {
+				for run := 0; run < 100; run++ {
+					assertNoArtistRepeat(t, ManagerConfig{Shuffle: ShuffleConfig{Strategy: strat}, Fill: fill}, 7)
+				}
+			})
+		}
+	}
+}
+
+func assertNoArtistRepeat(t *testing.T, cfg ManagerConfig, plays int) {
+	t.Helper()
+	ctx := context.Background()
+	m := buildManager(t, cfg, []*models.Song{
+		song("a1", "A1", "A"), song("a2", "A2", "A"),
+		song("b1", "B1", "B"), song("b2", "B2", "B"),
+		song("c1", "C1", "C"), song("c2", "C2", "C"),
+		song("d1", "D1", "D"), song("d2", "D2", "D"),
+	})
+	if _, err := m.PrepareInitialQueue(ctx); err != nil {
+		t.Fatalf("PrepareInitialQueue: %v", err)
+	}
+	var prev *models.Song
+	for i := 0; i < plays; i++ {
+		s, err := m.NextSong(ctx)
+		if err != nil {
+			t.Fatalf("NextSong[%d]: %v", i, err)
+		}
+		if prev != nil && s.Artist == prev.Artist {
+			t.Fatalf("play %d: %s followed %s, same artist %q", i, s.ID, prev.ID, s.Artist)
+		}
+		prev = s
+	}
+}
+
 // TestFullCycleCoverage verifies that non-random strategies play every song
 // exactly once before repeating any (the bloom-filter cycle).
 func TestFullCycleCoverage(t *testing.T) {
