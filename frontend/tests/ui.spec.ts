@@ -196,6 +196,18 @@ test('admin refetches the library when the socket reconnects', async ({ page }) 
   await expect(page.getByText('Rescanned lullaby')).toBeVisible();
 });
 
+test('admin drops a silent socket and reconnects', async ({ page }) => {
+  await mockStation(page);
+  await page.clock.install();
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket('**/ws', ws => { sockets.push(ws); });
+  await page.goto('/admin');
+  await expect.poll(() => sockets.length).toBe(1);
+  // No heartbeat_ack: stale after STALE_AFTER_MS, checked on the next heartbeat tick, then backoff.
+  await page.clock.runFor(62_500 + 25_000 + 1_000);
+  await expect.poll(() => sockets.length).toBe(2);
+});
+
 test('untitled queue song is labelled by its filename', async ({ page }) => {
   await mockStation(page);
   const untitled = { id: 'c', title: '', artist: '', album: '', filename: 'c.mp3', duration_secs: 0, size_bytes: 1024 };
@@ -506,7 +518,6 @@ test('now-playing hold re-shows a repeated title on a new history_id; a dry-queu
     expect(await overlay.getAttribute('class')).toMatch(/np-hidden/);
   }
 
-
   // Dry queue: state without current_song clears the title.
   send({ type: 'state', payload: {} });
   await expect(title).not.toBeAttached();
@@ -515,4 +526,38 @@ test('now-playing hold re-shows a repeated title on a new history_id; a dry-queu
   send({ type: 'now_playing', payload: { song: songs[0], history_id: 'h3', queue_depth: 1 } });
   await expect(title).toBeAttached();
   await expect(overlay).not.toHaveClass(/np-hidden/);
+});
+
+// A half-open socket delivers nothing. Without heartbeat_ack the overlay must reconnect,
+// and with acks it must keep the healthy socket (6df6ecb).
+test('now-playing overlay reconnects a silent socket', async ({ page }) => {
+  await page.clock.install();
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket('**/ws', ws => { sockets.push(ws); });
+  await page.goto('/now-playing');
+  await expect.poll(() => sockets.length).toBe(1);
+  await page.clock.runFor(62_500 + 25_000 + 1_000);
+  await expect.poll(() => sockets.length).toBe(2);
+});
+
+test('now-playing overlay keeps a socket that answers heartbeats', async ({ page }) => {
+  await page.clock.install();
+  const sockets: WebSocketRoute[] = [];
+  let acks = 0;
+  await page.routeWebSocket('**/ws', ws => {
+    sockets.push(ws);
+    ws.onMessage(message => {
+      if (JSON.parse(String(message)).type !== 'heartbeat') return;
+      acks++;
+      ws.send(JSON.stringify({ type: 'heartbeat_ack' }));
+    });
+  });
+  await page.goto('/now-playing');
+  await expect.poll(() => sockets.length).toBe(1);
+  // Advance one heartbeat at a time so each ack lands before the next stale check.
+  for (let i = 0; i < 7; i++) {
+    await page.clock.runFor(25_000);
+    await expect.poll(() => acks).toBe(i + 1);
+  }
+  expect(sockets.length).toBe(1);
 });
