@@ -498,9 +498,14 @@ test('now-playing hold re-shows a repeated title on a new history_id; a dry-queu
   await expect(overlay).toHaveClass(/np-hidden/, { timeout: 5000 });
 
   // A reconnect state frame carries no history_id and must not re-show.
+  // One-shot reads across more than hold=2: a retrying expect would wait out
+  // a wrong re-show until the hold timer hid the title again.
   send({ type: 'state', payload: { current_song: songs[0] } });
-  await page.waitForTimeout(1000);
-  await expect(overlay).toHaveClass(/np-hidden/);
+  for (let i = 0; i < 10; i++) {
+    await page.waitForTimeout(250);
+    expect(await overlay.getAttribute('class')).toMatch(/np-hidden/);
+  }
+
 
   // Dry queue: state without current_song clears the title.
   send({ type: 'state', payload: {} });
