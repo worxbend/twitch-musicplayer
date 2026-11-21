@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,7 +24,11 @@ func Extract(path string) Info {
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	info := Info{Title: name}
 
-	tag, err := id3.Open(path, id3.Options{Parse: true})
+	// Parse only the frames read below so cover art is not loaded during scans.
+	tag, err := id3.Open(path, id3.Options{
+		Parse:       true,
+		ParseFrames: []string{"Title", "Artist", "Album/Movie/Show title", "Length"},
+	})
 	if err != nil {
 		return withDurationEstimate(info, path)
 	}
@@ -49,9 +54,39 @@ func Extract(path string) Info {
 }
 
 // withDurationEstimate fills DurationSecs using a rough 128 kbps CBR assumption.
+// The ID3v2 tag is excluded so embedded cover art does not inflate the estimate.
 func withDurationEstimate(info Info, path string) Info {
-	if stat, err := os.Stat(path); err == nil && stat.Size() > 0 {
-		info.DurationSecs = float64(stat.Size()) / 16_000 // 128 kbps = 16 000 B/s
+	stat, err := os.Stat(path)
+	if err != nil {
+		return info
+	}
+	if audioBytes := stat.Size() - id3v2Size(path); audioBytes > 0 {
+		info.DurationSecs = float64(audioBytes) / 16_000 // 128 kbps = 16 000 B/s
 	}
 	return info
+}
+
+// id3v2Size returns the on-disk length of a leading ID3v2 tag (header, frames,
+// padding and footer), or 0 when the file has none or cannot be read.
+// tag.Size() is not used: it reflects re-serialized frames and omits padding.
+func id3v2Size(path string) int64 {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	var header [10]byte
+	if _, err := io.ReadFull(f, header[:]); err != nil || string(header[:3]) != "ID3" {
+		return 0
+	}
+	var bodySize int64
+	for _, b := range header[6:] { // syncsafe: 7 significant bits per byte
+		bodySize = bodySize<<7 | int64(b&0x7f)
+	}
+	total := int64(len(header)) + bodySize
+	if header[5]&0x10 != 0 { // footer present
+		total += int64(len(header))
+	}
+	return total
 }
