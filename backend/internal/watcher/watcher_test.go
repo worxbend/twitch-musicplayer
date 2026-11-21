@@ -2,15 +2,18 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	id3 "github.com/bogem/id3v2/v2"
+	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
 	"lofi-radio-backend/internal/models"
 	"lofi-radio-backend/internal/played"
@@ -558,5 +561,92 @@ func TestWatcherRefreshDoesNotReviveSongDeletedMidRefresh(t *testing.T) {
 	}
 	if n := updates.Load(); n != 0 {
 		t.Fatalf("OnUpdated fired %d times, want 0", n)
+	}
+}
+
+// overflowHarness indexes a.mp3 and b.mp3 with a watcher that is never
+// started, so no fsnotify event is consumed, then deletes b.mp3, adds c.mp3
+// and adds sub/d.mp3 behind its back.
+func overflowHarness(t *testing.T) *harness {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.mp3"))
+	writeFile(t, filepath.Join(dir, "b.mp3"))
+	h := &harness{dir: dir, songs: repository.NewMemSongRepo()}
+	h.queue = repository.NewMemQueueRepo(h.songs)
+	h.mgr = queue.New(h.songs, played.New(100, 0.01), h.queue, queue.ManagerConfig{
+		Fill: queue.FillConfig{Strategy: queue.FillManualOnly},
+	})
+	w, err := New(dir, []string{".mp3"}, h.songs, h.mgr, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { w.fsWatcher.Close() }) // Start, which owns the close, never runs.
+	w.OnRemoved = func(_ []*models.Song) { h.removals.Add(1) }
+	w.settleWait = func(context.Context, string) error { return nil }
+	h.w = w
+	if _, err := w.ScanExisting(context.Background()); err != nil {
+		t.Fatalf("ScanExisting: %v", err)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "b.mp3")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "c.mp3"))
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "sub", "d.mp3"))
+	return h
+}
+
+func (h *harness) indexed(t *testing.T, rel string) bool {
+	t.Helper()
+	ok, err := h.songs.ExistsByPath(context.Background(), filepath.Join(h.dir, rel))
+	if err != nil {
+		t.Fatalf("ExistsByPath %s: %v", rel, err)
+	}
+	return ok
+}
+
+func TestOverflowResync(t *testing.T) {
+	h := overflowHarness(t)
+	ctx := context.Background()
+
+	// A second overflow while the first resync runs must not double-remove b.
+	h.w.handleError(ctx, fsnotify.ErrEventOverflow)
+	h.w.handleError(ctx, fsnotify.ErrEventOverflow)
+	h.w.settling.Wait()
+
+	for _, rel := range []string{"a.mp3", "c.mp3", filepath.Join("sub", "d.mp3")} {
+		if !h.indexed(t, rel) {
+			t.Errorf("%s not indexed after resync", rel)
+		}
+	}
+	if h.indexed(t, "b.mp3") {
+		t.Error("deleted b.mp3 still indexed after resync")
+	}
+	if n := h.removals.Load(); n != 1 {
+		t.Errorf("OnRemoved fired %d times, want 1", n)
+	}
+	if sub := filepath.Join(h.dir, "sub"); !slices.Contains(h.w.fsWatcher.WatchList(), sub) {
+		t.Errorf("%s not watched after resync", sub)
+	}
+}
+
+func TestNonOverflowErrorNoResync(t *testing.T) {
+	h := overflowHarness(t)
+
+	h.w.handleError(context.Background(), errors.New("boom"))
+	h.w.settling.Wait()
+
+	if !h.indexed(t, "b.mp3") {
+		t.Error("b.mp3 dropped without an overflow")
+	}
+	if h.indexed(t, "c.mp3") {
+		t.Error("c.mp3 indexed without an overflow")
+	}
+	if n := h.removals.Load(); n != 0 {
+		t.Errorf("OnRemoved fired %d times, want 0", n)
 	}
 }

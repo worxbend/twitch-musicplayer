@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -26,6 +27,7 @@ type SongRepository interface {
 	Update(ctx context.Context, song *models.Song) error
 	DeleteByPath(ctx context.Context, path string) (*models.Song, bool, error)
 	DeleteUnderDir(ctx context.Context, dir string) ([]*models.Song, error)
+	List(ctx context.Context) ([]*models.Song, error)
 }
 
 // QueueManager is the subset needed by the watcher.
@@ -72,6 +74,8 @@ type Watcher struct {
 	settleSem  chan struct{}
 	// settleWait is w.waitSettled; it is a field only as a test seam.
 	settleWait func(ctx context.Context, path string) error
+	// resyncing collapses back-to-back event overflows into one resync.
+	resyncing atomic.Bool
 
 	// OnRemoved, when set before Start, is notified after songs are dropped.
 	OnRemoved OnSongsRemoved
@@ -208,12 +212,68 @@ func (w *Watcher) Start(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			w.logger.Printf("fsnotify error: %v", err)
+			w.handleError(ctx, err)
 
 		case <-ctx.Done():
 			return nil
 		}
 	}
+}
+
+// handleError logs a watcher error. After an event-queue overflow, Create,
+// Remove and Write events were lost, so the library is resynced with the disk.
+func (w *Watcher) handleError(ctx context.Context, err error) {
+	w.logger.Printf("fsnotify error: %v", err)
+	if errors.Is(err, fsnotify.ErrEventOverflow) {
+		w.resync(ctx)
+	}
+}
+
+// resync re-walks the tree in the background to watch every folder and index
+// new files, then drops songs whose files are gone. It runs in w.settling so
+// Start waits for it, and an overflow during a running resync is ignored.
+// Retags lost in the overflow are not re-read.
+func (w *Watcher) resync(ctx context.Context) {
+	if !w.resyncing.CompareAndSwap(false, true) {
+		return
+	}
+	w.settling.Go(func() {
+		defer w.resyncing.Store(false)
+		_, err := w.walkTree(ctx, w.dir, func(path string) error {
+			if ok, err := w.songRepo.ExistsByPath(ctx, path); err == nil && !ok {
+				w.registerWhenSettled(ctx, path)
+			}
+			return nil
+		})
+		if err != nil {
+			w.logger.Printf("resync scan: %v", err)
+		}
+		removed, err := w.sweepMissing(ctx)
+		if err != nil {
+			w.logger.Printf("resync sweep: %v", err)
+		}
+		w.logger.Printf("resync after event overflow: removed %d", removed)
+	})
+}
+
+// sweepMissing unregisters every indexed song whose file no longer exists and
+// returns how many it found.
+func (w *Watcher) sweepMissing(ctx context.Context) (int, error) {
+	songs, err := w.songRepo.List(ctx)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, song := range songs {
+		if err := ctx.Err(); err != nil {
+			return removed, err
+		}
+		if _, err := os.Stat(song.Path); errors.Is(err, fs.ErrNotExist) {
+			w.unregisterPath(ctx, song.Path)
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 // handleCreate queues a new music file for indexing, or, for a new directory
