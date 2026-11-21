@@ -94,7 +94,7 @@ func (h *PlayerHandler) Skip(w http.ResponseWriter, r *http.Request) {
 func (h *PlayerHandler) NowPlayingText(w http.ResponseWriter, r *http.Request) {
 	idle := strings.TrimSpace(idleLineBreaks.Replace(r.URL.Query().Get("idle")))
 	if utf8.RuneCountInString(idle) > maxIdleTextRunes {
-		writeError(w, http.StatusBadRequest, "idle must be at most 200 characters")
+		writeError(w, http.StatusBadRequest, "idle must be at most "+strconv.Itoa(maxIdleTextRunes)+" characters")
 		return
 	}
 
