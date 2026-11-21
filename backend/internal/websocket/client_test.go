@@ -43,6 +43,13 @@ func (m listedQueueManager) ListQueue(context.Context) ([]*models.QueueItem, err
 // whose initial state frame has already been consumed.
 func dialTestServer(t *testing.T, queueMgr QueueManager) *ws.Conn {
 	t.Helper()
+	_, conn := dialTestHub(t, queueMgr)
+	return conn
+}
+
+// dialTestHub is dialTestServer that also returns the server's hub.
+func dialTestHub(t *testing.T, queueMgr QueueManager) (*Hub, *ws.Conn) {
+	t.Helper()
 	hub := NewHub()
 	go hub.Run()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +68,7 @@ func dialTestServer(t *testing.T, queueMgr QueueManager) *ws.Conn {
 	if err := conn.ReadJSON(&first); err != nil || first.Type != MsgState {
 		t.Fatalf("first frame = %+v, %v; want %s", first, err, MsgState)
 	}
-	return conn
+	return hub, conn
 }
 
 func TestReadPumpAnswersSmallMessages(t *testing.T) {

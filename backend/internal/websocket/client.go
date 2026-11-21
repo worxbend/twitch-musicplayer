@@ -58,6 +58,11 @@ type Client struct {
 	// default. Signalling through a separate channel lets senders bail safely.
 	closed    chan struct{}
 	closeOnce sync.Once
+	// closeCode and closeText go into the close frame writePump sends. They
+	// are written before closed is closed, so writePump reads them safely
+	// after <-closed.
+	closeCode int
+	closeText string
 }
 
 // NewClient constructs a Client. Call ServeWS instead of this directly.
@@ -73,10 +78,20 @@ func NewClient(hub *Hub, conn *ws.Conn, queueMgr QueueManager, baseURL string, s
 	}
 }
 
-// close marks the client as gone and wakes its write pump. Safe to call
-// repeatedly and from any goroutine.
+// close marks the client as gone with 1000 Normal Closure and wakes its write
+// pump. Safe to call repeatedly and from any goroutine.
 func (c *Client) close() {
-	c.closeOnce.Do(func() { close(c.closed) })
+	c.closeWith(ws.CloseNormalClosure, "")
+}
+
+// closeWith is close with an explicit close code and reason. The first call
+// wins; later calls do nothing.
+func (c *Client) closeWith(code int, text string) {
+	c.closeOnce.Do(func() {
+		c.closeCode = code
+		c.closeText = text
+		close(c.closed)
+	})
 }
 
 // trySend queues msg for delivery without ever blocking the caller. It reports
@@ -118,7 +133,7 @@ func ServeWS(hub *Hub, queueMgr QueueManager, baseURL string, st *player.StateTr
 		c.trySend(msg)
 	}
 
-	go c.writePump()
+	hub.goPump(c.writePump)
 	go c.readPump()
 }
 
@@ -310,7 +325,7 @@ func (c *Client) writePump() {
 
 		case <-c.closed:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.conn.WriteMessage(ws.CloseMessage, []byte{}) //nolint:errcheck
+			c.conn.WriteMessage(ws.CloseMessage, ws.FormatCloseMessage(c.closeCode, c.closeText)) //nolint:errcheck
 			return
 		}
 	}

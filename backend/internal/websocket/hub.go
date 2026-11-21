@@ -1,14 +1,27 @@
 package websocket
 
 import (
+	"context"
 	"sync"
+
+	ws "github.com/gorilla/websocket"
 )
+
+// shutdownReason is the close text peers receive with 1001 Going Away.
+const shutdownReason = "server shutting down"
 
 // Hub manages all active WebSocket connections.
 type Hub struct {
 	clients   map[*Client]struct{}
 	broadcast chan Message
 	mu        sync.RWMutex
+
+	// closing is set by Shutdown (guarded by mu). Once set, Register refuses
+	// new clients and goPump stops tracking pumps.
+	closing bool
+	// pumps counts write pumps Shutdown waits for. Add only runs under mu
+	// while closing is false, so no Add can race Shutdown's Wait.
+	pumps sync.WaitGroup
 }
 
 // NewHub creates a new Hub ready to Run.
@@ -67,11 +80,67 @@ func (h *Hub) Broadcast(msg Message) {
 	}
 }
 
-// Register adds a client to the hub.
+// Register adds a client to the hub. During shutdown it refuses the client
+// and closes it with 1001 Going Away instead.
 func (h *Hub) Register(c *Client) {
 	h.mu.Lock()
-	h.clients[c] = struct{}{}
+	refused := h.closing
+	if !refused {
+		h.clients[c] = struct{}{}
+	}
 	h.mu.Unlock()
+
+	if refused {
+		c.closeWith(ws.CloseGoingAway, shutdownReason)
+	}
+}
+
+// goPump runs pump in its own goroutine. Pumps started before Shutdown are
+// waited for by Shutdown; later ones are not tracked.
+func (h *Hub) goPump(pump func()) {
+	h.mu.Lock()
+	tracked := !h.closing
+	if tracked {
+		h.pumps.Add(1)
+	}
+	h.mu.Unlock()
+
+	go func() {
+		if tracked {
+			defer h.pumps.Done()
+		}
+		pump()
+	}()
+}
+
+// Shutdown closes every client with 1001 Going Away, refuses new ones, and
+// waits for the write pumps to send their close frames. It returns ctx.Err()
+// if ctx ends first. Safe to call more than once.
+func (h *Hub) Shutdown(ctx context.Context) error {
+	h.mu.Lock()
+	h.closing = true
+	clients := make([]*Client, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.clients = make(map[*Client]struct{})
+	h.mu.Unlock()
+
+	for _, c := range clients {
+		c.closeWith(ws.CloseGoingAway, shutdownReason)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		h.pumps.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Unregister removes a client from the hub and stops its write pump.

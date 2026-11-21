@@ -137,6 +137,11 @@ func main() {
 		stop()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		// Hijacked /ws connections are not closed by httpServer.Shutdown, so
+		// the hub sends peers 1001 Going Away first.
+		if err := hub.Shutdown(shutCtx); err != nil {
+			log.Printf("websocket shutdown: %v", err)
+		}
 		if err := httpServer.Shutdown(shutCtx); err != nil {
 			log.Printf("server forced shutdown: %v", err)
 		}

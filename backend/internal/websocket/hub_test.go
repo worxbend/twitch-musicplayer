@@ -1,9 +1,13 @@
 package websocket
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	ws "github.com/gorilla/websocket"
 )
 
 // newTestClient builds a Client with only the fields the hub touches, so hub
@@ -136,5 +140,112 @@ func TestRegisterUnregisterOrderIsPreserved(t *testing.T) {
 		default:
 			t.Fatalf("client %d was unregistered but never closed", i)
 		}
+	}
+}
+
+// assertCloseCode reads from conn until the close frame and checks its code.
+func assertCloseCode(t *testing.T, conn *ws.Conn, want int) {
+	t.Helper()
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+	for {
+		_, _, err := conn.ReadMessage()
+		if err == nil {
+			continue
+		}
+		var closeErr *ws.CloseError
+		if !errors.As(err, &closeErr) || closeErr.Code != want {
+			t.Fatalf("read error = %v, want close %d", err, want)
+		}
+		return
+	}
+}
+
+// TestShutdownSendsGoingAway covers peers seeing 1006 on server exit:
+// httpServer.Shutdown never closes hijacked /ws connections.
+func TestShutdownSendsGoingAway(t *testing.T) {
+	hub, conn := dialTestHub(t, emptyQueueManager{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := hub.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown = %v, want nil", err)
+	}
+
+	assertCloseCode(t, conn, ws.CloseGoingAway)
+	if got := hub.ClientCount(); got != 0 {
+		t.Fatalf("ClientCount after Shutdown = %d, want 0", got)
+	}
+}
+
+// TestDropSendsNormalClosure covers the empty close payload peers read as 1005.
+func TestDropSendsNormalClosure(t *testing.T) {
+	hub, conn := dialTestHub(t, emptyQueueManager{})
+
+	hub.mu.RLock()
+	var server *Client
+	for c := range hub.clients {
+		server = c
+	}
+	hub.mu.RUnlock()
+	if server == nil {
+		t.Fatal("server-side client not registered")
+	}
+
+	hub.Unregister(server)
+	assertCloseCode(t, conn, ws.CloseNormalClosure)
+}
+
+func TestRegisterAfterShutdownClosesClient(t *testing.T) {
+	h := NewHub()
+	if err := h.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown = %v, want nil", err)
+	}
+
+	c := NewClient(h, nil, nil, "", nil)
+	h.Register(c)
+
+	if got := h.ClientCount(); got != 0 {
+		t.Fatalf("ClientCount = %d, want 0", got)
+	}
+	select {
+	case <-c.closed:
+	default:
+		t.Fatal("client registered during shutdown was not closed")
+	}
+	if c.closeCode != ws.CloseGoingAway {
+		t.Fatalf("closeCode = %d, want %d", c.closeCode, ws.CloseGoingAway)
+	}
+}
+
+func TestShutdownIsIdempotent(t *testing.T) {
+	h := NewHub()
+	c := newTestClient(1)
+	h.Register(c)
+
+	for i := 0; i < 2; i++ {
+		if err := h.Shutdown(context.Background()); err != nil {
+			t.Fatalf("Shutdown call %d = %v, want nil", i+1, err)
+		}
+	}
+	if c.closeCode != ws.CloseGoingAway {
+		t.Fatalf("closeCode = %d, want %d", c.closeCode, ws.CloseGoingAway)
+	}
+}
+
+func TestShutdownRespectsContext(t *testing.T) {
+	h := NewHub()
+	h.pumps.Add(1) // a pump that never finishes
+	t.Cleanup(h.pumps.Done)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := h.Shutdown(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown = %v, want %v", err, context.DeadlineExceeded)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Shutdown took %v, want well under 1s", elapsed)
 	}
 }
