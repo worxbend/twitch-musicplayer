@@ -1,6 +1,7 @@
 import { createSignal, createEffect, onMount, onCleanup, For, Show } from 'solid-js';
 import { getBackendURL, getWebSocketURL } from './config/backend';
 import { reconnectDelay, HEARTBEAT_MS, isStale } from './config/reconnect';
+import { createLatest } from './admin/latestRequest';
 import { TerminalHeader } from './components/TerminalHeader';
 
 interface Song {
@@ -39,6 +40,9 @@ export function AdminApp() {
   let notifTimer = 0;
   let searchTimer = 0;
   let searchRequest = 0;
+  const queueGate = createLatest();
+  const historyGate = createLatest();
+  const playerGate = createLatest();
   let disposed = false;
   let clearDialog!: HTMLDialogElement;
 
@@ -57,16 +61,18 @@ export function AdminApp() {
     finally { if (id === searchRequest && !disposed) setLoading(false); }
   }
   async function fetchQueue() {
+    const id = queueGate.begin();
     try {
       const data = await (await request('/v1/queue')).json();
-      if (!disposed) { setQueue(data.items ?? []); setQueueError(false); }
-    } catch { if (!disposed) setQueueError(true); }
+      if (queueGate.isLatest(id) && !disposed) { setQueue(data.items ?? []); setQueueError(false); }
+    } catch { if (queueGate.isLatest(id) && !disposed) setQueueError(true); }
   }
   async function fetchHistory() {
+    const id = historyGate.begin();
     try {
       const data = await (await request('/v1/history?limit=10')).json();
-      if (!disposed) { setHistory(data.items ?? []); setHistoryError(false); }
-    } catch { if (!disposed) setHistoryError(true); }
+      if (historyGate.isLatest(id) && !disposed) { setHistory(data.items ?? []); setHistoryError(false); }
+    } catch { if (historyGate.isLatest(id) && !disposed) setHistoryError(true); }
   }
   // The newest entry is the track on air; the now-playing bar already shows it.
   function pastHistory() {
@@ -74,10 +80,11 @@ export function AdminApp() {
     return items.length && items[0].song.id === currentSong()?.id ? items.slice(1) : items;
   }
   async function fetchPlayerState() {
+    const id = playerGate.begin();
     try {
       const data = await (await request('/v1/player')).json();
-      if (!disposed) { setCurrentSong(data.current_song ?? null); setPlayerError(false); }
-    } catch { if (!disposed) setPlayerError(true); }
+      if (playerGate.isLatest(id) && !disposed) { setCurrentSong(data.current_song ?? null); setPlayerError(false); }
+    } catch { if (playerGate.isLatest(id) && !disposed) setPlayerError(true); }
   }
   function showNotification(message: string, error = false) {
     window.clearTimeout(notifTimer);
@@ -125,7 +132,7 @@ export function AdminApp() {
       reconnectAttempts = 0;
       lastMessageAt = Date.now();
       setConnected(true);
-      void fetchQueue(); void fetchPlayerState(); void fetchHistory();
+      void fetchQueue(); void fetchPlayerState(); void fetchHistory(); void fetchSongs();
       window.clearInterval(heartbeatInterval);
       heartbeatInterval = window.setInterval(() => {
         // Half-open socket: no heartbeat_ack or update for too long.
@@ -138,8 +145,9 @@ export function AdminApp() {
       try {
         const msg = JSON.parse(e.data) as { type: string; payload?: { song?: Song; current_song?: Song } };
         if (msg.type === 'queue_updated') void fetchQueue();
-        if (msg.type === 'now_playing') { setCurrentSong(msg.payload?.song ?? null); void fetchQueue(); void fetchHistory(); }
-        if (msg.type === 'state') { setCurrentSong(msg.payload?.current_song ?? null); void fetchQueue(); void fetchHistory(); }
+        // A pushed song is newer than any /v1/player reply still in flight.
+        if (msg.type === 'now_playing') { playerGate.begin(); setCurrentSong(msg.payload?.song ?? null); void fetchQueue(); void fetchHistory(); }
+        if (msg.type === 'state') { playerGate.begin(); setCurrentSong(msg.payload?.current_song ?? null); void fetchQueue(); void fetchHistory(); }
       } catch { /* Ignore malformed protocol messages. */ }
     };
     ws.onclose = () => {

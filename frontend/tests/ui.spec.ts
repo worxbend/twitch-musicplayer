@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createHash } from 'node:crypto';
 
@@ -162,6 +162,27 @@ test('admin recently played lists history newest first', async ({ page }) => {
   await expect(history.nth(0).locator('time')).toHaveAttribute('datetime', '2026-01-01T20:01:00Z');
   await expect(history.nth(1)).toContainText('Midnight compiler');
   await expect(history.nth(1).locator('time')).toHaveAttribute('datetime', '2026-01-01T19:57:00Z');
+});
+
+test('admin refetches the library when the socket reconnects', async ({ page }) => {
+  await mockStation(page);
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket('**/ws', ws => { sockets.push(ws); });
+  let library = songs;
+  let songRequests = 0;
+  await page.route(url => url.pathname === '/v1/songs', route => { songRequests++; return route.fulfill({ json: { songs: library } }); });
+  await page.goto('/admin');
+  const tracks = page.getByRole('region', { name: 'Music library' }).locator('.song-item');
+  await expect(tracks).toHaveCount(2);
+  // One fetch from the search debounce, one from the first socket open.
+  await expect.poll(() => songRequests).toBe(2);
+  const rescanned = { id: 'c', title: 'Rescanned lullaby', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024 };
+  library = [...songs, rescanned];
+  await sockets[0].close();
+  await expect.poll(() => sockets.length).toBe(2);
+  await expect.poll(() => songRequests).toBe(3);
+  await expect(tracks).toHaveCount(3);
+  await expect(page.getByText('Rescanned lullaby')).toBeVisible();
 });
 
 test('untitled queue song is labelled by its filename', async ({ page }) => {
