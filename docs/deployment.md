@@ -124,6 +124,10 @@ docker compose -f docker-compose.hub.yml up -d
 
 Changing it needs only a restart, never a rebuild. 🎉
 
+`BACKEND_URL` must be an absolute `http://` or `https://` URL with no spaces, quotes,
+angle brackets or control characters. Any other value stops the container at start
+with `lofi-config: invalid BACKEND_URL`.
+
 ### 💾 What persists
 
 The `bloom-data` named volume holds the play history, so the rotation survives a restart.

@@ -138,6 +138,14 @@ jobs:
           curl -fsS http://127.0.0.1:3000/ > index.html
           curl -fsS -D headers.txt http://127.0.0.1:3000/config.js > config.js
           grep -F 'backendUrl: "https://radio.example"' config.js
+          node -e 'const vm=require("vm"),fs=require("fs");const c={window:{}};vm.runInNewContext(fs.readFileSync("config.js","utf8"),c);if(c.window.__LOFI_CONFIG__.backendUrl!=="https://radio.example")process.exit(1)'
+          # Hostile values must stop the hook before nginx starts. Only the hook
+          # runs here, so a regression fails instead of hanging on nginx.
+          for bad in "$(printf 'https://x\n";alert(1)//')" 'https://x";alert(1)//' 'https://a</script>' 'radio.example'; do
+            if docker run --rm -e BACKEND_URL="$bad" --entrypoint /docker-entrypoint.d/20-lofi-config.sh lofi-frontend:ci 2>err.txt; then echo "accepted hostile BACKEND_URL"; exit 1; fi
+            grep -F 'invalid BACKEND_URL' err.txt
+          done
+          test "$(docker run --rm --entrypoint sh lofi-frontend:ci -c '/docker-entrypoint.d/20-lofi-config.sh >/dev/null && cat /usr/share/nginx/html/config.js')" = 'window.__LOFI_CONFIG__ = {};'
           grep -i '^cache-control:.*no-store' headers.txt
           curl -fsS http://127.0.0.1:3000/admin > admin.html
           grep -F '/assets/admin-' admin.html
