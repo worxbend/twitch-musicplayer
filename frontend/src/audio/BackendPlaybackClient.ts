@@ -68,6 +68,8 @@ const reconnectMaxMs = 8000;
 const heartbeatMs = 25000;
 const heartbeatTimeoutMs = heartbeatMs * 2.5;
 const streamRetryMs = 5000;
+const awaitSongTimeoutMs = 15000;
+const errorRetryMaxMs = 30000;
 const maxOutboxMessages = 20;
 const messageTypes = new Set<MessageType>([
   'need_song',
@@ -100,6 +102,8 @@ export class BackendPlaybackClient {
   private connecting = false;
   private streamRetryTimer = 0;
   private errorRetryTimer = 0;
+  private errorRetryAttempts = 0;
+  private awaitSongTimer = 0;
   private connection: ConnectionStatus = 'disconnected';
   private playback: PlaybackStatus = 'idle';
   // Bumped by every play(); a play that settles after a newer one started is ignored.
@@ -136,6 +140,7 @@ export class BackendPlaybackClient {
     window.clearInterval(this.heartbeatTimer);
     window.clearTimeout(this.streamRetryTimer);
     window.clearTimeout(this.errorRetryTimer);
+    window.clearTimeout(this.awaitSongTimer);
     window.removeEventListener('online', this.handleOnline);
     window.removeEventListener('offline', this.handleOffline);
     if (this.socket) {
@@ -168,8 +173,12 @@ export class BackendPlaybackClient {
       this.connecting = false;
       this.reconnectAttempts = 0;
       this.report({ connection: 'connected' }, 'radio connected');
+      const requestQueued = this.outbox.some(isSongRequest);
       this.flushOutbox();
-      if (!this.current && !this.pendingPlay && !this.awaitingSong) this.requestSong();
+      // Awaiting with nothing queued means the request went out on a socket
+      // that is now gone, so its reply is lost too.
+      const requestLost = this.awaitingSong && !requestQueued;
+      if (!this.current && !this.pendingPlay && (!this.awaitingSong || requestLost)) this.requestSong();
       window.clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = window.setInterval(() => {
         if (Date.now() - this.lastMessageAt > heartbeatTimeoutMs) {
@@ -225,6 +234,7 @@ export class BackendPlaybackClient {
       case 'play_song':
         if (!isPlaySongPayload(msg.payload)) return;
         this.awaitingSong = false;
+        window.clearTimeout(this.awaitSongTimer);
         await this.play(msg.payload);
         break;
       case 'prebuffer_song':
@@ -240,19 +250,28 @@ export class BackendPlaybackClient {
         this.current = null;
         window.clearTimeout(this.streamRetryTimer);
         window.clearTimeout(this.errorRetryTimer);
+        window.clearTimeout(this.awaitSongTimer);
         this.awaitingSong = false;
         this.requestSong();
         break;
       case 'error':
         if (msg.payload !== undefined && !isErrorPayload(msg.payload)) return;
         this.awaitingSong = false;
+        window.clearTimeout(this.awaitSongTimer);
         this.report({ playback: 'error' }, msg.payload?.message ?? 'radio error');
-        window.clearTimeout(this.errorRetryTimer);
-        this.errorRetryTimer = window.setTimeout(() => {
-          if (this.shouldRun && !this.current && !this.pendingPlay && !this.awaitingSong) this.requestSong();
-        }, reconnectBaseMs);
+        this.scheduleErrorRetry();
         break;
     }
+  }
+
+  // Backs off so an empty library does not draw a need_song every second from every player.
+  private scheduleErrorRetry() {
+    const delay = Math.min(reconnectBaseMs * 2 ** this.errorRetryAttempts, errorRetryMaxMs);
+    this.errorRetryAttempts += 1;
+    window.clearTimeout(this.errorRetryTimer);
+    this.errorRetryTimer = window.setTimeout(() => {
+      if (this.shouldRun && !this.current && !this.pendingPlay && !this.awaitingSong) this.requestSong();
+    }, delay);
   }
 
   private async play(payload: PlaySongPayload) {
@@ -281,6 +300,7 @@ export class BackendPlaybackClient {
     this.current = payload;
     this.pendingPlay = null;
     window.clearTimeout(this.streamRetryTimer);
+    this.errorRetryAttempts = 0;
     this.onSongChange?.({ title: songName, artist: payload.song.artist });
     this.report({ playback: 'playing' }, 'playing');
   }
@@ -319,7 +339,7 @@ export class BackendPlaybackClient {
   private finishCurrent(payload: PlaySongPayload, options: { awaitReplacement?: boolean } = {}) {
     if (this.current?.history_id !== payload.history_id) return;
     // Set before sending so a synchronous reply cannot clear it first.
-    if (options.awaitReplacement) this.awaitingSong = true;
+    if (options.awaitReplacement) this.startAwaitingSong();
     this.current = null;
     this.onSongChange?.(null);
     this.queueOrSend({
@@ -332,8 +352,17 @@ export class BackendPlaybackClient {
   }
 
   private requestSong() {
-    this.awaitingSong = true;
+    this.startAwaitingSong();
     this.queueOrSend({ type: 'need_song' });
+  }
+
+  // The backend may drop a reply when this client's send buffer is full; ask again.
+  private startAwaitingSong() {
+    this.awaitingSong = true;
+    window.clearTimeout(this.awaitSongTimer);
+    this.awaitSongTimer = window.setTimeout(() => {
+      if (this.shouldRun && this.awaitingSong && !this.current && !this.pendingPlay) this.requestSong();
+    }, awaitSongTimeoutMs);
   }
 
   private retryStream(payload: PlaySongPayload) {
@@ -403,6 +432,10 @@ export class BackendPlaybackClient {
     this.awaitingSong = false;
     this.onSongChange?.(null);
   }
+}
+
+function isSongRequest(message: SocketMessage): boolean {
+  return message.type === 'need_song' || message.type === 'song_finished';
 }
 
 function detachSocket(socket: WebSocket) {

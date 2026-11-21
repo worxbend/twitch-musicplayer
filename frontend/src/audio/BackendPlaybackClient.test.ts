@@ -57,13 +57,18 @@ interface Deferred {
   reject: (error: unknown) => void;
 }
 
+interface PlayCallbacks {
+  onEnded: () => void;
+  onNearEnd: () => void;
+}
+
 class FakeAudio {
   allowAutoplay = false;
-  plays: { url: string; name: string; settle: Deferred }[] = [];
+  plays: { url: string; name: string; settle: Deferred; callbacks: PlayCallbacks }[] = [];
 
-  playStream(url: string, name: string): Promise<void> {
+  playStream(url: string, name: string, callbacks: PlayCallbacks): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.plays.push({ url, name, settle: { resolve, reject } });
+      this.plays.push({ url, name, settle: { resolve, reject }, callbacks });
     });
   }
 
@@ -128,6 +133,10 @@ function playSong(id: string, title = id) {
 
 function flush() {
   return new Promise<void>(resolve => setImmediate(resolve));
+}
+
+function needSongCount(ws: FakeWebSocket) {
+  return ws.sent.filter(m => (m as { type: string }).type === 'need_song').length;
 }
 
 function lastPlayback() {
@@ -264,4 +273,83 @@ test("a stale socket's late close does not reset connecting or reschedule", () =
   assert.equal(statuses.length, reported);
   mock.timers.tick(20000);
   assert.equal(FakeWebSocket.instances.length, 2);
+});
+
+test('a need_song lost with its socket is re-sent on the next socket', () => {
+  socket(0).open();
+  assert.equal(needSongCount(socket(0)), 1);
+
+  socket(0).close();
+  mock.timers.tick(900);
+  socket(1).open();
+  assert.equal(needSongCount(socket(1)), 1);
+});
+
+test('a song_finished lost with its socket is followed by need_song on the next socket', async () => {
+  socket(0).open();
+  socket(0).message(playSong('a'));
+  audio.plays[0].settle.resolve();
+  await flush();
+  audio.plays[0].callbacks.onNearEnd();
+  assert.ok(socket(0).sent.some(m => (m as { type: string }).type === 'song_finished'));
+
+  socket(0).close();
+  mock.timers.tick(900);
+  socket(1).open();
+  assert.equal(needSongCount(socket(1)), 1);
+});
+
+test('a need_song still in the outbox is sent once on reconnect', () => {
+  socket(0).open();
+  socket(0).close();
+  mock.timers.tick(900);
+  assert.equal(FakeWebSocket.instances.length, 2, 'socket 1 stays connecting');
+
+  // The reply timeout queues need_song while socket 1 is still connecting,
+  // which drops socket 1 and reconnects after the 1800 ms backoff.
+  mock.timers.tick(15000 - 900);
+  mock.timers.tick(1800);
+  const reopened = socket();
+  assert.notEqual(reopened, socket(1));
+  reopened.open();
+  assert.equal(needSongCount(reopened), 1);
+});
+
+test('an unanswered need_song is re-sent after 15s', () => {
+  socket().open();
+  assert.equal(needSongCount(socket()), 1);
+  mock.timers.tick(14999);
+  assert.equal(needSongCount(socket()), 1);
+  mock.timers.tick(1);
+  assert.equal(needSongCount(socket()), 2);
+});
+
+test('a play_song before 15s cancels the reply timeout', () => {
+  socket().open();
+  mock.timers.tick(10000);
+  socket().message(playSong('a'));
+  mock.timers.tick(10000);
+  assert.equal(needSongCount(socket()), 1);
+});
+
+test('error retries back off to 30s and reset after a successful play', async () => {
+  const ws = socket();
+  ws.open();
+  for (const delay of [900, 1800, 3600, 7200, 14400, 28800, 30000, 30000]) {
+    const before = needSongCount(ws);
+    ws.message({ type: 'error', payload: { message: 'queue empty' } });
+    mock.timers.tick(delay - 1);
+    assert.equal(needSongCount(ws), before, `no retry before ${delay}ms`);
+    mock.timers.tick(1);
+    assert.equal(needSongCount(ws), before + 1, `retry at ${delay}ms`);
+  }
+
+  ws.message(playSong('a'));
+  audio.plays[0].settle.resolve();
+  await flush();
+  audio.plays[0].callbacks.onEnded();
+  const before = needSongCount(ws);
+  ws.message({ type: 'error', payload: { message: 'queue empty' } });
+  mock.timers.tick(900);
+  assert.equal(needSongCount(ws), before + 1, 'backoff resets after a play');
 });

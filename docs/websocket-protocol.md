@@ -171,7 +171,9 @@ The supported frontend is a single active WebSocket playback client. It is desig
 - reconnects when heartbeat acknowledgements or other messages stop arriving;
 - queues important outbound control messages while disconnected;
 - flushes queued messages after reconnect;
-- requests a song again after reconnect when no song is active;
+- requests a song again after reconnect when no song is active, or when a `need_song`/`song_finished` went out on a socket that closed before the reply;
+- re-sends `need_song` if no `play_song` arrives within 15 seconds;
+- retries after an `error` reply with exponential backoff from 900 ms up to 30 seconds, reset by the next successful play;
 - retries a pending stream if browser autoplay blocked playback;
 - retries stream playback after media element errors.
 

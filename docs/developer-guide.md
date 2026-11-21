@@ -153,7 +153,8 @@ can be tested without a browser or an audio device.
 - sends heartbeat messages;
 - treats a quiet socket as stale and reconnects;
 - queues outbound control messages while disconnected;
-- re-requests music when connected and idle;
+- re-requests music when connected and idle, when a song request's reply is lost with its socket, or after 15 seconds without a reply;
+- backs off `error` retries exponentially up to 30 seconds;
 - retries pending playback after a user gesture if autoplay blocks;
 - retries stream playback after media errors.
 
