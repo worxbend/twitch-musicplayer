@@ -117,6 +117,7 @@ class FakeAudioElement {
   duration = Number.NaN;
   onended: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  error: { code: number } | null = null;
 
   play() {
     this.paused = false;
@@ -132,8 +133,10 @@ class FakeAudioElement {
   }
 
   loads = 0;
+  // Like the browser, load() clears a previous media error.
   load() {
     this.loads++;
+    this.error = null;
   }
 
   removeAttribute(name: string) {
@@ -469,6 +472,56 @@ test('preloadNext waits for the fading-out channel, then the next play reuses it
   await third;
   assert.equal(first.loads, loadsBefore);
   assert.equal(activeElement(), first);
+});
+
+test('playStream reloads a preloaded channel whose element errored', async () => {
+  await playFirstTrack();
+  engine.preloadNext('/stream/b');
+  const next = inactiveElement();
+  next.error = { code: 4 };
+  const loadsBefore = next.loads;
+  let errorAtPlay: FakeAudioElement['error'] | undefined;
+  mock.method(next, 'play', () => {
+    errorAtPlay = next.error;
+    return Promise.resolve();
+  });
+
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+  mock.timers.tick(FADE_MS);
+  await second;
+
+  assert.equal(next.loads, loadsBefore + 1);
+  assert.equal(errorAtPlay, null);
+});
+
+test('a healthy preload with the same URL is not reloaded', async () => {
+  await playFirstTrack();
+  engine.preloadNext('/stream/b');
+  const next = inactiveElement();
+  const loadsBefore = next.loads;
+
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+  mock.timers.tick(FADE_MS);
+  await second;
+
+  assert.equal(next.loads, loadsBefore);
+});
+
+test('preloadNext reloads the same URL after the preload errored', async () => {
+  await playFirstTrack();
+  engine.preloadNext('/stream/b');
+  const next = inactiveElement();
+  const loadsBefore = next.loads;
+
+  engine.preloadNext('/stream/b');
+  assert.equal(next.loads, loadsBefore);
+
+  next.error = { code: 2 };
+  engine.preloadNext('/stream/b');
+  assert.equal(next.loads, loadsBefore + 1);
+  assert.equal(next.error, null);
 });
 
 test('a new play that claims the fading-out channel drops the waiting preload', async () => {

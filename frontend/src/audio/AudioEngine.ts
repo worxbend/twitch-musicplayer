@@ -274,7 +274,7 @@ export class AudioEngine {
   }
 
   private _loadIntoChannel(ch: PlaybackChannel, url: string) {
-    if (ch.audioEl.src === url) return;
+    if (ch.audioEl.src === url && ch.audioEl.error === null) return;
     ch._nearEndCleanup?.();
     ch._nearEndCleanup = null;
     ch.audioEl.pause();
@@ -326,8 +326,9 @@ export class AudioEngine {
     incoming.audioEl.onended = handlers.onEnded ?? null;
     incoming.audioEl.onerror = handlers.onError ? event => handlers.onError?.(event instanceof Event ? event : new Event('error')) : null;
 
-    // Skip reload if this channel already has the correct URL buffered (e.g. after preloadNext).
-    if (incoming.audioEl.src !== streamUrl) {
+    // Skip reload if this channel already has the correct URL buffered (e.g. after preloadNext),
+    // unless the preload errored.
+    if (incoming.audioEl.src !== streamUrl || incoming.audioEl.error !== null) {
       incoming.audioEl.src = streamUrl;
       incoming.audioEl.load();
     }
