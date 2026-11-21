@@ -2,7 +2,6 @@ package watcher
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -58,11 +57,10 @@ type Watcher struct {
 
 	// A new file is indexed once its size and modtime hold still for one
 	// settlePoll, so half-copied files are not indexed or queued truncated.
-	settlePoll    time.Duration
-	settleTimeout time.Duration
-	settling      sync.WaitGroup
-	inflightMu    sync.Mutex
-	inflight      map[string]struct{}
+	settlePoll time.Duration
+	settling   sync.WaitGroup
+	inflightMu sync.Mutex
+	inflight   map[string]struct{}
 
 	// OnRemoved, when set before Start, is notified after songs are dropped.
 	OnRemoved OnSongsRemoved
@@ -101,9 +99,8 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 		onNewSong:  onNewSong,
 		logger:     log.New(log.Writer(), "[watcher] ", log.LstdFlags),
 
-		settlePoll:    250 * time.Millisecond,
-		settleTimeout: 30 * time.Second,
-		inflight:      make(map[string]struct{}),
+		settlePoll: 250 * time.Millisecond,
+		inflight:   make(map[string]struct{}),
 	}, nil
 }
 
@@ -250,23 +247,20 @@ func (w *Watcher) release(path string) {
 }
 
 // waitSettled returns nil once path's size and modtime are unchanged across
-// two consecutive polls. It fails if path disappears, ctx ends, or the file
-// is still changing after settleTimeout.
+// two consecutive polls. It fails if path disappears or ctx ends. There is no
+// deadline: a copy over a slow link can take minutes, and no Write event
+// would ever restart the wait once it gave up.
 func (w *Watcher) waitSettled(ctx context.Context, path string) error {
 	prev, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	deadline := time.NewTimer(w.settleTimeout)
-	defer deadline.Stop()
 	poll := time.NewTicker(w.settlePoll)
 	defer poll.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("still changing after %s", w.settleTimeout)
 		case <-poll.C:
 		}
 		cur, err := os.Stat(path)

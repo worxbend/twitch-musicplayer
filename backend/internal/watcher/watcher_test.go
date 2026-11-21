@@ -39,7 +39,6 @@ func startWatcher(t *testing.T, dir string) *harness {
 	}
 	w.OnRemoved = func(_ []*models.Song) { h.removals.Add(1) }
 	w.settlePoll = 300 * time.Millisecond
-	w.settleTimeout = 5 * time.Second
 	h.w = w
 
 	ctx, cancel := context.WithCancel(context.Background())
