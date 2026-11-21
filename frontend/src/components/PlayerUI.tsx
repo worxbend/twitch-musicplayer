@@ -88,7 +88,7 @@ export function PlayerUI(props: Props) {
         </div>
         <p class="sr-only" role="status" aria-live="polite">{`${status().label}. ${status().detail}`}</p>
         <Show when={!status().live}>
-          <div class="player-message"><span class="message-prompt" aria-hidden="true">◉</span><p>{status().detail}</p><Show when={props.playbackStatus() === 'blocked'}><button class="btn btn-primary" disabled={enabling()} onClick={() => void enableAudio()}>{enabling() ? 'Starting audio…' : 'Enable audio ▶'}</button></Show><Show when={props.playbackStatus() === 'playing' && props.paused?.()}><button class="btn btn-primary" onClick={() => props.audio()?.play()}>Resume ▶</button></Show></div>
+          <div class="player-message"><span class="message-prompt" aria-hidden="true">◉</span><p>{status().detail}</p><Show when={props.playbackStatus() === 'blocked'}><button type="button" class="btn btn-primary" aria-disabled={enabling() ? 'true' : undefined} onClick={() => void enableAudio()}>{enabling() ? 'Starting audio…' : 'Enable audio ▶'}</button></Show><Show when={props.playbackStatus() === 'playing' && props.paused?.()}><button class="btn btn-primary" onClick={() => props.audio()?.play()}>Resume ▶</button></Show></div>
         </Show>
         <div class="performance-space" aria-hidden="true"><span class="performance-coordinate">{props.sceneSlug || 'ambient'} / {status().live ? 'audio reactive' : 'idle study'}</span><span class="performance-coordinate">Signal field</span></div>
         <div class="player-controls">

@@ -137,7 +137,7 @@ test('empty, loading, search-empty, and backend failure states', async ({ page }
   await page.goto('/admin');
   await expect(page.getByText('Reading your library')).toBeVisible();
   await expect(page.getByText('Your library is quiet')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Skip track' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Skip track' })).toHaveAttribute('aria-disabled', 'true');
   await page.getByLabel('Search music library').fill('missing');
   await expect(page.getByText('No matching tracks')).toBeVisible();
   await expect(page.getByText('No songs played yet.')).toBeVisible();
@@ -250,7 +250,7 @@ test('audio unlock works by keyboard and reports actual playback', async ({ page
   await expect(enable).toBeVisible();
   await enable.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('button', { name: 'Starting audio' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Starting audio' })).toHaveAttribute('aria-disabled', 'true');
   await expect(page.locator('.status')).toHaveText('On air', {timeout: 10000});
   await expect(page.locator('#np-title')).toHaveText('Midnight compiler');
   await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /[1-9]/);

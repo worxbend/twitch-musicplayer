@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 const song = { id: 'a', title: 'Midnight compiler', filename: 'a.mp3', artist: 'Soft Circuit', album: 'After hours', duration_secs: 180 };
 
@@ -58,4 +59,33 @@ test('a slow previous search never overwrites a newer result', async ({ page }) 
   await expect(page.locator('.song-title')).toHaveText('new');
   await page.waitForResponse(r => r.url().endsWith('/v1/songs?q=old'));
   await expect(page.locator('.song-title')).toHaveText('new');
+});
+
+test('a busy action button keeps keyboard focus and ignores repeat presses', async ({ page }) => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let posts = 0;
+  await page.routeWebSocket('**/ws', () => {});
+  await page.route('**/v1/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/v1/queue' && route.request().method() === 'POST') { posts++; await gate; }
+    return route.fulfill({ json: path === '/v1/songs' ? {songs: [song]} : path === '/v1/queue' ? {items: []} : {current_song: song} });
+  });
+  await page.goto('/admin');
+  const add = page.getByRole('button', {name: 'Add Midnight compiler to queue'});
+  await add.focus();
+  await page.keyboard.press('Enter');
+  await expect(add).toHaveAttribute('aria-disabled', 'true');
+  await expect(add).toBeFocused();
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+  // The axe scan itself moves focus to <body>; put it back before the repeat press.
+  await add.focus();
+  await page.keyboard.press('Enter');
+  await expect(add).toBeFocused();
+  expect(posts).toBe(1);
+  release();
+  await expect(page.getByRole('status')).toContainText('Queued: Midnight compiler');
+  await expect(add).not.toHaveAttribute('aria-disabled');
+  await expect(add).toBeFocused();
+  expect(posts).toBe(1);
 });

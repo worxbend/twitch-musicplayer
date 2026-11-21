@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onMount, onCleanup, For, Show } from 'solid-js';
+import { createSignal, createEffect, onMount, onCleanup, splitProps, For, Show, type JSX } from 'solid-js';
 import { getBackendURL, getWebSocketURL } from './config/backend';
 import { reconnectDelay, HEARTBEAT_MS, isStale } from './config/reconnect';
 import { createLatest } from './admin/latestRequest';
@@ -32,6 +32,16 @@ function focusedQueueControl(): QueueControl | null {
 function restoreQueueFocus(control: QueueControl | null) {
   if (!control) return;
   document.querySelector<HTMLElement>(`.queue-list [data-queue-id="${CSS.escape(control.id)}"][data-queue-action="${CSS.escape(control.action)}"]`)?.focus();
+}
+// aria-disabled, not disabled: a natively disabled button drops keyboard
+// focus to <body> when it becomes disabled under the cursor.
+type ActionButtonProps = Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, 'type' | 'disabled' | 'onClick'> & {
+  inactive: () => boolean;
+  onClick: () => void;
+};
+function ActionButton(props: ActionButtonProps) {
+  const [local, rest] = splitProps(props, ['inactive', 'onClick']);
+  return <button {...rest} type="button" aria-disabled={local.inactive() ? 'true' : undefined} onClick={() => { if (!local.inactive()) local.onClick(); }} />;
 }
 function formatClock(iso: string) { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 
@@ -125,14 +135,8 @@ export function AdminApp() {
     finally { setBusy(''); }
   }
 
-  // aria-disabled, not disabled: a natively disabled button drops keyboard
-  // focus to <body> when it becomes disabled under the cursor.
   function MoveButton(props: { item: QueueItem; direction: 'up' | 'down'; blocked: boolean }) {
-    const inactive = () => props.blocked || !!busy();
-    return <button type="button" class="btn btn-ghost btn-icon" aria-label={`Move ${queueItemLabel(props.item)} ${props.direction}`} title={`Move ${props.direction}`} aria-disabled={inactive() ? 'true' : undefined} data-queue-id={props.item.id} data-queue-action={props.direction} onClick={() => {
-      if (inactive()) return;
-      void action(`/v1/queue/${props.item.id}:move`, 'Queue order updated.', 'POST', { direction: props.direction });
-    }}><span aria-hidden="true">{props.direction === 'up' ? '↑' : '↓'}</span></button>;
+    return <ActionButton class="btn btn-ghost btn-icon" aria-label={`Move ${queueItemLabel(props.item)} ${props.direction}`} title={`Move ${props.direction}`} data-queue-id={props.item.id} data-queue-action={props.direction} inactive={() => props.blocked || !!busy()} onClick={() => void action(`/v1/queue/${props.item.id}:move`, 'Queue order updated.', 'POST', { direction: props.direction })}><span aria-hidden="true">{props.direction === 'up' ? '↑' : '↓'}</span></ActionButton>;
   }
 
   let socket: WebSocket | null = null;
@@ -221,7 +225,7 @@ export function AdminApp() {
             </Show>
           </div>
           <a class="btn" href="/">Open player ↗</a>
-          <button class="btn btn-warning" disabled={!!busy() || !currentSong()} onClick={() => void action('/v1/player:skip', 'Skip requested. The player will advance.')}><span aria-hidden="true">≫</span>{busy() === '/v1/player:skip' ? 'Skipping…' : 'Skip track'}</button>
+          <ActionButton class="btn btn-warning" inactive={() => !!busy() || !currentSong()} onClick={() => void action('/v1/player:skip', 'Skip requested. The player will advance.')}><span aria-hidden="true">≫</span>{busy() === '/v1/player:skip' ? 'Skipping…' : 'Skip track'}</ActionButton>
         </section>
         <div class="admin-main">
           <section class="song-panel" aria-labelledby="library-heading">
@@ -236,7 +240,7 @@ export function AdminApp() {
                       <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
                       <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta">{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
                       <span class="song-duration">{formatDuration(song.duration_secs)}</span>
-                      <div class="song-actions"><button class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} disabled={!!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</button><button class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} disabled={!!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</button></div>
+                      <div class="song-actions"><ActionButton class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} inactive={() => !!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</ActionButton><ActionButton class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} inactive={() => !!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</ActionButton></div>
                     </div>}
                   </For>
                 </Show>
@@ -245,12 +249,12 @@ export function AdminApp() {
             <div class="panel-footnote"><span class="key-hint">+</span> queue it <span class="key-hint">▶</span> play it now</div>
           </section>
           <section class="queue-panel" aria-labelledby="queue-heading">
-            <div class="panel-header"><h2 id="queue-heading" class="panel-title">Up next <span class="queue-count">{queue().length}</span></h2><button class="btn btn-danger" disabled={!!busy() || !queue().length} onClick={() => clearDialog.showModal()}>Clear queue</button></div>
+            <div class="panel-header"><h2 id="queue-heading" class="panel-title">Up next <span class="queue-count">{queue().length}</span></h2><ActionButton class="btn btn-danger" inactive={() => !!busy() || !queue().length} onClick={() => clearDialog.showModal()}>Clear queue</ActionButton></div>
             <div class="queue-legend"><span><i class="queue-source manual" />manual</span><span><i class="queue-source auto" />auto rotation</span></div>
             <div class="queue-list">
               <Show when={!queueError()} fallback={<div class="empty-state"><h3>Queue unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => void fetchQueue()}>Retry</button></div>}>
                 <For each={queue()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">+</span><h3>Make the next move</h3><p>Add a track from the library. Automatic rotation keeps things moving when the player is listening.</p></div>}>
-                  {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{queueItemLabel(item)}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><MoveButton item={item} direction="up" blocked={idx() === 0} /><MoveButton item={item} direction="down" blocked={idx() === queue().length - 1} /><button class="btn btn-danger btn-icon" aria-label={`Remove ${queueItemLabel(item)} from queue`} title="Remove from queue" disabled={!!busy()} data-queue-id={item.id} data-queue-action="remove" onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</button></div>}
+                  {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{queueItemLabel(item)}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><MoveButton item={item} direction="up" blocked={idx() === 0} /><MoveButton item={item} direction="down" blocked={idx() === queue().length - 1} /><ActionButton class="btn btn-danger btn-icon" aria-label={`Remove ${queueItemLabel(item)} from queue`} title="Remove from queue" inactive={() => !!busy()} data-queue-id={item.id} data-queue-action="remove" onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</ActionButton></div>}
                 </For>
               </Show>
             </div>
