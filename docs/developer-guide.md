@@ -199,7 +199,7 @@ gofmt -l internal cmd   # should print nothing
 ```bash
 cd frontend
 npm test                # analysis maths, via node --test
-npx tsc --noEmit        # typecheck only
+npm run typecheck       # typecheck src, tests and configs
 npm run build           # typecheck + production bundle
 npm run test:ui         # Chromium artwork, accessibility, playback and interaction checks
 ```
