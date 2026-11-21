@@ -185,7 +185,7 @@ needs a restart, not a rebuild.
 
 ### 🔧 From source
 
-> **You'll need:** Go 1.25+, Node 20+, and a folder of MP3s. No database. No CGO.
+> **You'll need:** Go 1.25+, Node 22.18+ (the TypeScript unit tests run on `node --test`), and a folder of MP3s. No database. No CGO.
 
 **1️⃣ Start the backend** 🎛️
 
@@ -385,15 +385,23 @@ back-to-back — as long as an alternative exists.
 ## ✅ Verification
 
 ```bash
-cd backend  && go test ./... -race    # queue strategies + hub concurrency
-cd frontend && npm run build          # typecheck + production bundle
+cd backend
+gofmt -l .              # should print nothing
+go vet ./...
+go test -race ./...     # queue strategies + hub concurrency
+
+cd ../frontend
+npm test                # unit tests, via node --test
+npm run build           # typecheck + production bundle
 ```
+
+CI (`.github/workflows/ci.yml`) runs the same gates on every push to `main` and every pull request.
 
 The redesigned instruments, UI, screenshots, and browser verification are documented in
 **[Signal Observatory](docs/signal-observatory/README.md)**. Run its browser checks with
 `cd frontend && npm run test:ui` after installing Playwright's Chromium browser.
 
-Both should be green before you push. The backend tests cover the shuffle guarantees
+All of them should be green before you push. The backend tests cover the shuffle guarantees
 (full-cycle coverage, no back-to-back artists, recency weighting) and the WebSocket hub's
 concurrency behaviour. 🧪
 
