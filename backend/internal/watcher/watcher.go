@@ -240,7 +240,12 @@ func (w *Watcher) resync(ctx context.Context) {
 	w.settling.Go(func() {
 		defer w.resyncing.Store(false)
 		_, err := w.walkTree(ctx, w.dir, func(path string) error {
-			if ok, err := w.songRepo.ExistsByPath(ctx, path); err == nil && !ok {
+			indexed, err := w.songRepo.ExistsByPath(ctx, path)
+			if err != nil {
+				w.logger.Printf("resync %s: %v", path, err)
+				return nil
+			}
+			if !indexed {
 				w.registerWhenSettled(ctx, path)
 			}
 			return nil
