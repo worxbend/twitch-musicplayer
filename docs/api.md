@@ -161,7 +161,12 @@ Returns the current song as one plain-text line (`text/plain; charset=utf-8`) fo
 bots. It uses `obs.now_playing_format` (default `{artist} - {title}`), so it matches the
 OBS now-playing file. A song with no artist returns just its title, line breaks in tags
 become spaces, and there is no trailing newline. While nothing is playing it returns
-`200` with an empty body. Responses carry `Cache-Control: no-store`.
+`200` with an empty body, or with the optional `?idle=` text. Responses carry
+`Cache-Control: no-store`.
+
+`?idle=` is used only while nothing is playing. CR and LF in it become spaces and
+surrounding whitespace is trimmed. It may be at most 200 characters; a longer value returns
+`400 {"error":"idle must be at most 200 characters"}`, even while a song plays.
 
 Chat command examples (replace the host with your public backend URL):
 
@@ -169,6 +174,10 @@ Chat command examples (replace the host with your public backend URL):
 Nightbot:      !song  ->  Now playing: $(urlfetch https://radio.example.com/v1/now-playing.txt)
 StreamElements: !song  ->  Now playing: ${customapi.https://radio.example.com/v1/now-playing.txt}
 ```
+
+These commands prefix `Now playing: `, so idle text appears after it. With
+`https://radio.example.com/v1/now-playing.txt?idle=nothing%20right%20now` an idle radio
+answers `Now playing: nothing right now`.
 
 ## 🕰️ History
 

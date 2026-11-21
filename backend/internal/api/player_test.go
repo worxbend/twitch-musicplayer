@@ -5,7 +5,9 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"lofi-radio-backend/internal/models"
@@ -101,6 +103,49 @@ func TestPlayerNowPlayingText(t *testing.T) {
 			}
 			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 				t.Errorf("Cache-Control = %q", got)
+			}
+		})
+	}
+}
+
+func TestPlayerNowPlayingTextIdle(t *testing.T) {
+	playing := &models.Song{Title: "Rain", Artist: "Nujabes"}
+	tests := []struct {
+		name     string
+		current  *models.Song
+		query    string
+		wantCode int
+		want     string
+	}{
+		{name: "playing ignores idle", current: playing, query: "?idle=x", wantCode: http.StatusOK, want: "Nujabes - Rain"},
+		{name: "idle text while idle", query: "?idle=Radio%20is%20idle", wantCode: http.StatusOK, want: "Radio is idle"},
+		{name: "no idle param keeps empty body", wantCode: http.StatusOK},
+		{name: "CR LF flattened and trimmed", query: "?idle=%0D%0Aoff%0D%0Aair%0A", wantCode: http.StatusOK, want: "off  air"},
+		{name: "200 multibyte runes accepted", query: "?idle=" + url.QueryEscape(strings.Repeat("é", 200)), wantCode: http.StatusOK, want: strings.Repeat("é", 200)},
+		{name: "201 runes rejected", query: "?idle=" + strings.Repeat("a", 201), wantCode: http.StatusBadRequest},
+		{name: "201 runes rejected while playing", current: playing, query: "?idle=" + strings.Repeat("a", 201), wantCode: http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := player.NewStateTracker()
+			if tt.current != nil {
+				st.SetCurrentSong(tt.current)
+			}
+			h := NewPlayerHandler(fakeCounter{}, fakeCounter{}, &fakeQueueManager{}, &fakeBroadcaster{}, st, "{artist} - {title}")
+			rec := serve(t, RegisterRoutesHTTP(nil, nil, h), http.MethodGet, "/v1/now-playing.txt"+tt.query, "", nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if tt.wantCode != http.StatusOK {
+				var body map[string]string
+				decodeBody(t, rec, &body)
+				if body["error"] != "idle must be at most 200 characters" {
+					t.Fatalf("error body = %v", body)
+				}
+				return
+			}
+			if got := rec.Body.String(); got != tt.want {
+				t.Errorf("body = %q, want %q", got, tt.want)
 			}
 		})
 	}

@@ -424,13 +424,27 @@ paths:
         (Nightbot `$(urlfetch)`, StreamElements `${customapi}`). The line uses
         `obs.now_playing_format` (default `{artist} - {title}`); a song without
         an artist renders just its title, and line breaks in tags become spaces.
-        While nothing is playing the body is empty. There is no trailing
-        newline, and the response is sent with `Cache-Control: no-store`.
+        While nothing is playing the body is the `idle` text, or empty when
+        `idle` is absent. There is no trailing newline, and the response is
+        sent with `Cache-Control: no-store`.
       operationId: getNowPlayingText
       tags: [player]
+      parameters:
+        - name: idle
+          in: query
+          required: false
+          description: >
+            Fallback text, used only while nothing is playing. CR and LF become
+            spaces and surrounding whitespace is trimmed. It is validated on
+            every request: over 200 characters returns 400 even while a song
+            plays.
+          schema:
+            type: string
+            maxLength: 200
+            example: Radio is idle
       responses:
         "200":
-          description: Current song line, or an empty body when idle
+          description: Current song line, or the idle text (empty without `idle`) when idle
           headers:
             Cache-Control:
               schema:
@@ -441,6 +455,12 @@ paths:
               schema:
                 type: string
                 example: Nujabes - Aruarian Dance
+        "400":
+          description: idle is longer than 200 characters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/history:
     get:

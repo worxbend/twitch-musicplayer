@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"lofi-radio-backend/internal/models"
 	"lofi-radio-backend/internal/player"
@@ -13,6 +15,12 @@ import (
 
 // defaultHistoryLimit is the page size of GET /v1/history without ?limit.
 const defaultHistoryLimit = 20
+
+// maxIdleTextRunes caps the ?idle= fallback text of GET /v1/now-playing.txt.
+const maxIdleTextRunes = 200
+
+// idleLineBreaks flattens CR and LF in ?idle= so the reply stays one line.
+var idleLineBreaks = strings.NewReplacer("\r", " ", "\n", " ")
 
 type playerSongRepo interface {
 	Count(ctx context.Context) (int, error)
@@ -78,14 +86,26 @@ func (h *PlayerHandler) Skip(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "skip broadcast"})
 }
 
-// NowPlayingText handles GET /v1/now-playing.txt: the current song as one
-// plain-text line for chat bots (Nightbot, StreamElements). Idle returns an
-// empty body. no-store keeps proxies from serving a stale title.
+// NowPlayingText handles GET /v1/now-playing.txt?idle=TEXT: the current song
+// as one plain-text line for chat bots (Nightbot, StreamElements). While idle
+// it returns the optional idle text (CR/LF flattened, trimmed), else an empty
+// body. idle is validated on every request, playing or not: over
+// maxIdleTextRunes is 400. no-store keeps proxies from serving a stale title.
 func (h *PlayerHandler) NowPlayingText(w http.ResponseWriter, r *http.Request) {
+	idle := strings.TrimSpace(idleLineBreaks.Replace(r.URL.Query().Get("idle")))
+	if utf8.RuneCountInString(idle) > maxIdleTextRunes {
+		writeError(w, http.StatusBadRequest, "idle must be at most 200 characters")
+		return
+	}
+
+	line := player.FormatNowPlaying(h.nowPlayingFormat, h.stateTracker.GetCurrentSong())
+	if line == "" {
+		line = idle
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, player.FormatNowPlaying(h.nowPlayingFormat, h.stateTracker.GetCurrentSong()))
+	_, _ = io.WriteString(w, line)
 }
 
 // State handles GET /v1/player.
