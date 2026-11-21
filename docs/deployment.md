@@ -235,7 +235,7 @@ The current backend CORS and WebSocket origin handling are permissive for local 
 
 ## 🛠️ Operational Notes
 
-- The backend scans the music folder, including nested folders, on startup.
+- The backend scans the music folder, including nested folders, on startup. The scan finishes before the API listens, so startup takes longer as the library grows. The healthcheck allows 300s for it; raise `start_period` for a very large library on slow storage.
 - New files are indexed and queued once their size stops changing, so a slow copy straight into the folder is safe.
 - Deleted or renamed files are dropped from the library and the queue.
 - Symlinks that resolve outside `music_dir` are skipped.

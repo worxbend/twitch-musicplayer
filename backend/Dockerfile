@@ -40,7 +40,7 @@ ENV PORT=8080 \
 
 # The station is up when it answers /health. Compose uses this to hold the
 # frontend back until the backend is actually accepting requests.
-HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=3s --start-period=300s --retries=3 \
     CMD wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1
 
 CMD ["lofi-radio"]
