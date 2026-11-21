@@ -155,7 +155,7 @@ can be tested without a browser or an audio device.
 - re-requests music when connected and idle, when a song request's reply is lost with its socket, or after 15 seconds without a reply;
 - backs off `error` retries exponentially up to 30 seconds;
 - retries pending playback after a user gesture if autoplay blocks;
-- retries stream playback after media errors, then skips the song with `need_song` after 3 failed retries.
+- retries stream playback after media errors or a 20-second start timeout, then skips the song with `need_song` after 3 failed retries.
 
 ## 🔒 Backend-Only Frontend Mode
 

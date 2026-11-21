@@ -232,6 +232,17 @@ test('NotSupportedError is a stream error that retries on its own', async () => 
   assert.equal(audio.plays.length, 2);
 });
 
+test('TimeoutError is a stream error that retries on its own', async () => {
+  socket().open();
+  socket().message(playSong('a'));
+  audio.plays[0].settle.reject(new DOMException('x', 'TimeoutError'));
+  await flush();
+  assert.equal(lastPlayback(), 'error');
+
+  mock.timers.tick(5000);
+  assert.equal(audio.plays.length, 2);
+});
+
 async function failPlay(index: number, name = 'NotSupportedError') {
   audio.plays[index].settle.reject(new DOMException('x', name));
   await flush();

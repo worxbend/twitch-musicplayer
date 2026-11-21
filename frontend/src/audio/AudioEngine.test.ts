@@ -162,7 +162,7 @@ Object.assign(globalThis, {
   },
 });
 
-const { AudioEngine } = await import('./AudioEngine.ts');
+const { AudioEngine, PLAY_START_TIMEOUT_MS } = await import('./AudioEngine.ts');
 
 const FADE_MS = 2500;
 
@@ -302,6 +302,59 @@ test('a play() rejection does not fire onStarted', async () => {
   settleSecond().reject(new DOMException('blocked', 'NotAllowedError'));
   await assert.rejects(second, { name: 'NotAllowedError' });
   assert.equal(onStarted.mock.callCount(), 0);
+});
+
+test('a play() that never settles fails with TimeoutError and leaves nothing playing', async () => {
+  holdNextPlay();
+  const first = engine.playStream('/stream/a', 'A');
+  const rejected = assert.rejects(first, { name: 'TimeoutError' });
+  await flush();
+  const incoming = activeElement();
+
+  mock.timers.tick(PLAY_START_TIMEOUT_MS - 1);
+  await flush();
+  assert.equal(incoming.src, '/stream/a', 'no timeout before the limit');
+  mock.timers.tick(1);
+  await rejected;
+
+  assert.equal(incoming.src, '');
+  assert.equal(engine.playing, false);
+  assert.equal(engine['_activeChannel'], null);
+});
+
+test('a stuck next stream times out and restores the outgoing track', async () => {
+  const first = await playFirstTrack();
+  holdNextPlay();
+  const second = engine.playStream('/stream/b', 'B');
+  const rejected = assert.rejects(second, { name: 'TimeoutError' });
+  await flush();
+
+  mock.timers.tick(PLAY_START_TIMEOUT_MS);
+  await rejected;
+
+  assert.equal(activeElement(), first);
+  assert.equal(first.src, '/stream/a');
+  assert.equal(first.paused, false);
+  assert.equal(engine['_activeChannel']?.gain.gain.value, 1);
+  assert.equal(engine.playing, true);
+});
+
+test('a play() that settles before the limit clears the start timer', async () => {
+  const settle = holdNextPlay();
+  const first = engine.playStream('/stream/a', 'A');
+  await flush();
+  mock.timers.tick(PLAY_START_TIMEOUT_MS - 1);
+  settle().resolve();
+  await flush();
+  mock.timers.tick(FADE_MS);
+  await first;
+
+  const states = recordPlayStates();
+  mock.timers.tick(PLAY_START_TIMEOUT_MS);
+  await flush();
+  assert.equal(activeElement().src, '/stream/a');
+  assert.equal(engine.playing, true);
+  assert.deepEqual(states, []);
 });
 
 function master() {

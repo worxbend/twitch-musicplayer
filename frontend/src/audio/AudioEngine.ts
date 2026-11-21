@@ -5,6 +5,8 @@ import { mediaStateOf } from './mediaSession.ts';
 const BINS = 512;
 const DEFAULT_FADE_OUT_MS = 2500;
 const DEFAULT_FADE_IN_MS = 2500;
+// A stream whose play() has not settled by then is treated as failed.
+export const PLAY_START_TIMEOUT_MS = 20_000;
 // Seconds before end to fire onNearEnd (triggers actual crossfade): fade + 0.5s network margin
 const NEAR_END_THRESHOLD_SECS = DEFAULT_FADE_OUT_MS / 1000 + 0.5; // 3.0s
 // Seconds before end to fire onPrefetch (triggers peek_next + audio preload)
@@ -338,7 +340,7 @@ export class AudioEngine {
       const started = incoming.audioEl.play();
       // play() clears paused at once, so a track change reports 'playing' with no 'paused' blip.
       this._emitPlayState();
-      await started;
+      await this._withStartTimeout(started);
       if (superseded()) return;
       this.playing = true;
       handlers.onStarted?.();
@@ -398,6 +400,23 @@ export class AudioEngine {
       this.mode = hadSource ? 'backend' : 'idle';
       this._emitPlayState();
       throw error;
+    }
+  }
+
+  // Rejects with TimeoutError when a stream never starts, e.g. a stalled proxy.
+  // Promise.race also handles a late rejection of `started`, so it is never unhandled.
+  private async _withStartTimeout(started: Promise<void>): Promise<void> {
+    let timer: number | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = window.setTimeout(
+        () => reject(new DOMException('stream did not start', 'TimeoutError')),
+        PLAY_START_TIMEOUT_MS,
+      );
+    });
+    try {
+      await Promise.race([started, timeout]);
+    } finally {
+      window.clearTimeout(timer);
     }
   }
 
