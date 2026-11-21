@@ -289,7 +289,8 @@ func TestQueueSkip(t *testing.T) {
 	}{
 		{name: "non-empty queue", items: []*models.QueueItem{front, behind}, wantCode: http.StatusOK, wantSongID: "n"},
 		{name: "dead head skipped", items: []*models.QueueItem{dead, behind}, wantCode: http.StatusOK, wantSongID: "m"},
-		{name: "all entries dead", items: []*models.QueueItem{dead}, wantCode: http.StatusOK},
+		{name: "all entries dead, auto-select", items: []*models.QueueItem{dead}, autoSelects: true, wantCode: http.StatusOK},
+		{name: "all entries dead, manual_only", items: []*models.QueueItem{dead}, wantCode: http.StatusConflict},
 		{name: "empty queue, manual_only", wantCode: http.StatusConflict},
 		{name: "empty queue, auto-select", autoSelects: true, wantCode: http.StatusOK},
 		{name: "list error", listErr: errors.New("boom"), wantCode: http.StatusInternalServerError},

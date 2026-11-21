@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"strconv"
 	"testing"
@@ -21,7 +22,7 @@ type fakeCounter struct {
 func (f fakeCounter) Count(context.Context) (int, error) { return f.n, f.err }
 
 func playerRouter(songs, queue fakeCounter, hub *fakeBroadcaster, st *player.StateTracker) http.Handler {
-	return RegisterRoutesHTTP(nil, nil, NewPlayerHandler(songs, queue, hub, st, "{artist} - {title}"))
+	return RegisterRoutesHTTP(nil, nil, NewPlayerHandler(songs, queue, &fakeQueueManager{}, hub, st, "{artist} - {title}"))
 }
 
 func TestPlayerState(t *testing.T) {
@@ -87,7 +88,7 @@ func TestPlayerNowPlayingText(t *testing.T) {
 			if tt.current != nil {
 				st.SetCurrentSong(tt.current)
 			}
-			h := NewPlayerHandler(fakeCounter{}, fakeCounter{}, &fakeBroadcaster{}, st, tt.format)
+			h := NewPlayerHandler(fakeCounter{}, fakeCounter{}, &fakeQueueManager{}, &fakeBroadcaster{}, st, tt.format)
 			rec := serve(t, RegisterRoutesHTTP(nil, nil, h), http.MethodGet, "/v1/now-playing.txt", "", nil)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
@@ -105,14 +106,44 @@ func TestPlayerNowPlayingText(t *testing.T) {
 	}
 }
 
-func TestPlayerSkipBroadcastsSkipNow(t *testing.T) {
-	hub := &fakeBroadcaster{}
-	rec := serve(t, playerRouter(fakeCounter{}, fakeCounter{}, hub, player.NewStateTracker()), http.MethodPost, "/v1/player:skip", "", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+func TestPlayerSkip(t *testing.T) {
+	playable := &models.QueueItem{ID: "q1", SongID: "n", Song: &models.Song{ID: "n"}}
+	// dead is an entry whose song left the library: ListQueue reports Song=nil.
+	dead := &models.QueueItem{ID: "q2", SongID: "gone"}
+	tests := []struct {
+		name          string
+		mgr           *fakeQueueManager
+		wantCode      int
+		wantBody      map[string]string
+		wantBroadcast bool
+	}{
+		{name: "manual_only, empty queue", mgr: &fakeQueueManager{}, wantCode: http.StatusConflict, wantBody: map[string]string{"error": "queue is empty"}},
+		{name: "manual_only, only dead entries", mgr: &fakeQueueManager{items: []*models.QueueItem{dead}}, wantCode: http.StatusConflict, wantBody: map[string]string{"error": "queue is empty"}},
+		{name: "manual_only, playable entry", mgr: &fakeQueueManager{items: []*models.QueueItem{dead, playable}}, wantCode: http.StatusOK, wantBody: map[string]string{"message": "skip broadcast"}, wantBroadcast: true},
+		{name: "auto-select, empty queue", mgr: &fakeQueueManager{autoSelects: true}, wantCode: http.StatusOK, wantBody: map[string]string{"message": "skip broadcast"}, wantBroadcast: true},
+		{name: "list error", mgr: &fakeQueueManager{autoSelects: true, listErr: errors.New("boom")}, wantCode: http.StatusInternalServerError, wantBody: map[string]string{"error": "failed to skip current song"}},
 	}
-	if len(hub.msgs) != 1 || hub.msgs[0].Type != websocket.MsgSkipNow {
-		t.Fatalf("broadcasts = %v, want one %s", hub.types(), websocket.MsgSkipNow)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hub := &fakeBroadcaster{}
+			h := NewPlayerHandler(fakeCounter{}, fakeCounter{}, tt.mgr, hub, player.NewStateTracker(), "{artist} - {title}")
+			rec := serve(t, RegisterRoutesHTTP(nil, nil, h), http.MethodPost, "/v1/player:skip", "", nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			var body map[string]string
+			decodeBody(t, rec, &body)
+			if !maps.Equal(body, tt.wantBody) {
+				t.Fatalf("body = %v, want %v", body, tt.wantBody)
+			}
+			wantMsgs := 0
+			if tt.wantBroadcast {
+				wantMsgs = 1
+			}
+			if len(hub.msgs) != wantMsgs || (wantMsgs == 1 && hub.msgs[0].Type != websocket.MsgSkipNow) {
+				t.Fatalf("broadcasts = %v, want %d %s", hub.types(), wantMsgs, websocket.MsgSkipNow)
+			}
+		})
 	}
 }
 

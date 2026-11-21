@@ -147,8 +147,8 @@ func (h *QueueHandler) Move(w http.ResponseWriter, r *http.Request) {
 
 // Skip handles POST /v1/queue:skip.
 // It broadcasts skip_now so connected audio clients interrupt the current
-// track, and returns the queued song that will play next (null when the queue
-// is empty and the strategy auto-selects). It does not dequeue: the client's
+// track, and returns the queued song that will play next (null when no entry
+// is playable and the strategy auto-selects). It does not dequeue: the client's
 // need_song -> NextSong flow does, so the next song is heard, not lost.
 func (h *QueueHandler) Skip(w http.ResponseWriter, r *http.Request) {
 	items, err := h.mgr.ListQueue(r.Context())
@@ -156,9 +156,7 @@ func (h *QueueHandler) Skip(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to skip current song")
 		return
 	}
-	// Under manual_only an empty queue has nothing to skip to; that is an
-	// expected state, not a fault. Other strategies auto-select on need_song.
-	if len(items) == 0 && !h.mgr.AutoSelects() {
+	if nothingToSkipTo(items, h.mgr.AutoSelects()) {
 		writeError(w, http.StatusConflict, "queue is empty")
 		return
 	}
@@ -171,6 +169,13 @@ func (h *QueueHandler) Skip(w http.ResponseWriter, r *http.Request) {
 	}
 	h.broadcastQueueUpdated(r.Context(), "skipped")
 	writeJSON(w, http.StatusOK, map[string]any{"song": next})
+}
+
+// nothingToSkipTo reports whether a skip would leave the stream silent: under
+// manual_only with no playable entry, need_song finds nothing. That is an
+// expected state, not a fault. Other strategies auto-select on need_song.
+func nothingToSkipTo(items []*models.QueueItem, autoSelects bool) bool {
+	return !autoSelects && models.FirstPlayable(items) == nil
 }
 
 // Clear handles POST /v1/queue:clear.

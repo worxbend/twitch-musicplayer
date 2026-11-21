@@ -298,7 +298,7 @@ paths:
                     allOf:
                       - $ref: "#/components/schemas/Song"
         "409":
-          description: Queue is empty under manual_only; nothing is broadcast
+          description: No playable queued entry under manual_only; nothing is broadcast
           content:
             application/json:
               schema:
@@ -388,6 +388,8 @@ paths:
         (main scene, overlay) so they immediately abandon the current track and
         request the next one. No queue entry is consumed here — the natural
         `need_song` → `NextSong` flow handles dequeue when the client responds.
+        Under `manual_only` with no playable queued entry it returns 409 and
+        broadcasts nothing, so a skip cannot leave the stream silent.
       operationId: skipPlayer
       tags: [player]
       responses:
@@ -401,6 +403,18 @@ paths:
                   message:
                     type: string
                     example: skip broadcast
+        "409":
+          description: No playable queued entry under manual_only; nothing is broadcast
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Queue could not be read; nothing is broadcast
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/now-playing.txt:
     get:

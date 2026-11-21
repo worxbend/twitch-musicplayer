@@ -86,7 +86,7 @@ func main() {
 	// ── HTTP API handlers ─────────────────────────────────────────────────────
 	songsH := api.NewSongsHandler(songRepo, cfg.MusicDir)
 	queueH := api.NewQueueHandler(queueMgr, queueRepo, hub)
-	playerH := api.NewPlayerHandler(songRepo, queueRepo, hub, stateTracker, cfg.OBS.NowPlayingFormat)
+	playerH := api.NewPlayerHandler(songRepo, queueRepo, queueMgr, hub, stateTracker, cfg.OBS.NowPlayingFormat)
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	httpServer := server.New(server.Options{
