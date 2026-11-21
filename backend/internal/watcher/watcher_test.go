@@ -564,6 +564,89 @@ func TestWatcherRefreshDoesNotReviveSongDeletedMidRefresh(t *testing.T) {
 	}
 }
 
+// removeOnCreateRepo deletes the file right before the song is inserted,
+// putting a watcher Remove event deterministically between Stat and Create.
+type removeOnCreateRepo struct {
+	*repository.MemSongRepo
+}
+
+func (r removeOnCreateRepo) Create(ctx context.Context, song *models.Song) error {
+	if err := os.Remove(song.Path); err != nil {
+		return err
+	}
+	return r.MemSongRepo.Create(ctx, song)
+}
+
+// registerHarness writes a.mp3 and builds an unstarted watcher over repo that
+// counts OnNewSong calls.
+func registerHarness(t *testing.T, songs *repository.MemSongRepo, repo SongRepository) (*Watcher, *queue.Manager, string, *atomic.Int32) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp3")
+	if err := os.WriteFile(path, taggedMP3(t, "A"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := queue.New(songs, played.New(100, 0.01), repository.NewMemQueueRepo(songs), queue.ManagerConfig{
+		Fill: queue.FillConfig{Strategy: queue.FillManualOnly},
+	})
+	var newSongs atomic.Int32
+	w, err := New(dir, []string{".mp3"}, repo, mgr, func(_ *models.Song) { newSongs.Add(1) })
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { w.fsWatcher.Close() }) // Start, which owns the close, never runs.
+	return w, mgr, path, &newSongs
+}
+
+func queueLen(t *testing.T, mgr *queue.Manager) int {
+	t.Helper()
+	items, err := mgr.ListQueue(context.Background())
+	if err != nil {
+		t.Fatalf("ListQueue: %v", err)
+	}
+	return len(items)
+}
+
+func TestWatcherRegisterFileDropsSongDeletedBeforeCreate(t *testing.T) {
+	ctx := context.Background()
+	songs := repository.NewMemSongRepo()
+	w, mgr, path, newSongs := registerHarness(t, songs, removeOnCreateRepo{songs})
+
+	song, created, err := w.registerFile(ctx, path, true)
+	if song != nil || created || err != nil {
+		t.Fatalf("registerFile = (%v, %v, %v), want (nil, false, nil)", song, created, err)
+	}
+	if ok, _ := songs.ExistsByPath(ctx, path); ok {
+		t.Fatal("ExistsByPath = true, want false (ghost song indexed)")
+	}
+	if n := queueLen(t, mgr); n != 0 {
+		t.Fatalf("queue length = %d, want 0 (ghost song queued)", n)
+	}
+	if n := newSongs.Load(); n != 0 {
+		t.Fatalf("OnNewSong fired %d times, want 0", n)
+	}
+}
+
+func TestWatcherRegisterFileQueuesNewSongOnce(t *testing.T) {
+	ctx := context.Background()
+	songs := repository.NewMemSongRepo()
+	w, mgr, path, newSongs := registerHarness(t, songs, songs)
+
+	song, created, err := w.registerFile(ctx, path, true)
+	if song == nil || !created || err != nil {
+		t.Fatalf("registerFile = (%v, %v, %v), want (song, true, nil)", song, created, err)
+	}
+	if ok, _ := songs.ExistsByPath(ctx, path); !ok {
+		t.Fatal("ExistsByPath = false, want true")
+	}
+	if n := queueLen(t, mgr); n != 1 {
+		t.Fatalf("queue length = %d, want 1", n)
+	}
+	if n := newSongs.Load(); n != 1 {
+		t.Fatalf("OnNewSong fired %d times, want 1", n)
+	}
+}
+
 // overflowHarness indexes a.mp3 and b.mp3 with a watcher that is never
 // started, so no fsnotify event is consumed, then deletes b.mp3, adds c.mp3
 // and adds sub/d.mp3 behind its back.

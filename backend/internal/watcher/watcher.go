@@ -428,6 +428,14 @@ func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool
 	if err := w.songRepo.Create(ctx, song); err != nil {
 		return nil, false, err
 	}
+	// A Remove event handled before Create found no song to delete, so
+	// re-check the file. A delete after this Stat is caught by its Remove
+	// event, as the song now exists; AddToQueue and RemoveSong share the
+	// manager mutex, so that event either fails the queue add or dequeues it.
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		w.unregisterPath(ctx, path)
+		return nil, false, nil
+	}
 	w.logger.Printf("indexed: %s (%.0fs)", song.Title, song.DurationSecs)
 
 	if addToQueue {
