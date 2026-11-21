@@ -21,8 +21,7 @@ type fakeQueueManager struct {
 	items        []*models.QueueItem
 	addErr       error
 	playNextErr  error
-	nextSong     *models.Song
-	nextErr      error
+	listErr      error
 	clearErr     error
 	addedID      string
 	playNextID   string
@@ -46,11 +45,7 @@ func (f *fakeQueueManager) PlayNext(_ context.Context, songID string) error {
 }
 
 func (f *fakeQueueManager) ListQueue(context.Context) ([]*models.QueueItem, error) {
-	return f.items, nil
-}
-
-func (f *fakeQueueManager) NextSong(context.Context) (*models.Song, error) {
-	return f.nextSong, f.nextErr
+	return f.items, f.listErr
 }
 
 func (f *fakeQueueManager) ClearQueue(context.Context) error {
@@ -217,24 +212,28 @@ func TestQueuePlayNext(t *testing.T) {
 }
 
 func TestQueueSkip(t *testing.T) {
+	front := &models.QueueItem{ID: "q1", SongID: "n", Song: &models.Song{ID: "n"}}
+	behind := &models.QueueItem{ID: "q2", SongID: "m", Song: &models.Song{ID: "m"}}
 	tests := []struct {
 		name     string
-		song     *models.Song
-		err      error
+		items    []*models.QueueItem
+		listErr  error
 		wantCode int
 	}{
-		{name: "next song", song: &models.Song{ID: "n"}, wantCode: http.StatusOK},
-		{name: "empty queue", err: queuemgr.ErrQueueEmpty, wantCode: http.StatusConflict},
-		{name: "wrapped empty queue", err: fmt.Errorf("next: %w", queuemgr.ErrQueueEmpty), wantCode: http.StatusConflict},
-		{name: "other error", err: errors.New("boom"), wantCode: http.StatusInternalServerError},
+		{name: "non-empty queue", items: []*models.QueueItem{front, behind}, wantCode: http.StatusOK},
+		{name: "empty queue", wantCode: http.StatusConflict},
+		{name: "list error", listErr: errors.New("boom"), wantCode: http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mgr := &fakeQueueManager{nextSong: tt.song, nextErr: tt.err}
+			mgr := &fakeQueueManager{items: tt.items, listErr: tt.listErr}
 			b := &fakeBroadcaster{}
 			rec := serve(t, queueRouter(mgr, &fakeQueueRepo{}, b), http.MethodPost, "/v1/queue:skip", "", nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
+			}
+			if len(mgr.items) != len(tt.items) {
+				t.Fatalf("queue length = %d, want %d unchanged", len(mgr.items), len(tt.items))
 			}
 			if tt.wantCode != http.StatusOK {
 				if len(b.msgs) != 0 {
@@ -246,9 +245,13 @@ func TestQueueSkip(t *testing.T) {
 				Song models.Song `json:"song"`
 			}
 			decodeBody(t, rec, &got)
-			if got.Song.ID != "n" {
-				t.Fatalf("song = %+v, want id n", got.Song)
+			if got.Song.ID != front.Song.ID {
+				t.Fatalf("song = %+v, want id %s", got.Song, front.Song.ID)
 			}
+			if len(b.msgs) != 2 || b.msgs[0].Type != websocket.MsgSkipNow {
+				t.Fatalf("broadcasts = %v, want %s then %s", b.types(), websocket.MsgSkipNow, websocket.MsgQueueUpdated)
+			}
+			b.msgs = b.msgs[1:]
 			assertQueueUpdated(t, b, "skipped")
 		})
 	}

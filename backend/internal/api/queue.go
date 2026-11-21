@@ -17,7 +17,6 @@ type queueManager interface {
 	AddToQueue(ctx context.Context, songID string, source models.QueueSource) (*models.QueueItem, error)
 	PlayNext(ctx context.Context, songID string) error
 	ListQueue(ctx context.Context) ([]*models.QueueItem, error)
-	NextSong(ctx context.Context) (*models.Song, error)
 	ClearQueue(ctx context.Context) error
 }
 
@@ -107,19 +106,25 @@ func (h *QueueHandler) Remove(w http.ResponseWriter, r *http.Request) {
 }
 
 // Skip handles POST /v1/queue:skip.
+// It broadcasts skip_now so connected audio clients interrupt the current
+// track, and returns the song that will play next. It does not dequeue: the
+// client's need_song -> NextSong flow does, so the next song is heard, not lost.
 func (h *QueueHandler) Skip(w http.ResponseWriter, r *http.Request) {
-	song, err := h.mgr.NextSong(r.Context())
+	items, err := h.mgr.ListQueue(r.Context())
 	if err != nil {
-		// An empty queue is an expected state under manual_only, not a fault.
-		if errors.Is(err, queuemgr.ErrQueueEmpty) {
-			writeError(w, http.StatusConflict, "queue is empty")
-			return
-		}
 		writeError(w, http.StatusInternalServerError, "failed to skip current song")
 		return
 	}
+	// An empty queue is an expected state under manual_only, not a fault.
+	if len(items) == 0 {
+		writeError(w, http.StatusConflict, "queue is empty")
+		return
+	}
+	if msg, err := websocket.Encode(websocket.MsgSkipNow, nil); err == nil {
+		h.broadcaster.Broadcast(msg)
+	}
 	h.broadcastQueueUpdated(r.Context(), "skipped")
-	writeJSON(w, http.StatusOK, map[string]any{"song": song})
+	writeJSON(w, http.StatusOK, map[string]any{"song": items[0].Song})
 }
 
 // Clear handles POST /v1/queue:clear.

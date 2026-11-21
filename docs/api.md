@@ -85,8 +85,9 @@ Removes a queued item.
 POST /v1/queue:skip
 ```
 
-Advances to the next song and returns it as `{"song": {...}}`. Returns
-`409 {"error":"queue is empty"}` when nothing is queued under the `manual_only` strategy.
+Interrupts the current track on every connected player by broadcasting `skip_now`, and
+returns the upcoming song as `{"song": {...}}` without dequeuing it; the player's `need_song`
+request dequeues it. Returns `409 {"error":"queue is empty"}` when nothing is queued.
 
 ```http
 POST /v1/queue:clear

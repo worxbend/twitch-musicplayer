@@ -183,21 +183,33 @@ paths:
   /v1/queue:skip:
     post:
       summary: Skip current song
-      description: Advances to the next song in the queue according to the configured strategy.
+      description: >
+        Broadcasts `skip_now` over WebSocket so every connected audio client
+        interrupts the current track, then returns the song at the front of the
+        queue. The queue is not modified here; the client's `need_song` →
+        `NextSong` flow dequeues that song when it asks for the next track.
       operationId: skipCurrent
       tags: [queue]
       responses:
         "200":
-          description: Next song selected
+          description: Skip broadcast sent; `song` is the upcoming song (null if its entry is stale)
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   song:
-                    $ref: "#/components/schemas/Song"
+                    nullable: true
+                    allOf:
+                      - $ref: "#/components/schemas/Song"
         "409":
-          description: Queue is empty (manual_only strategy)
+          description: Queue is empty; nothing is broadcast
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Queue could not be read; nothing is broadcast
           content:
             application/json:
               schema:
