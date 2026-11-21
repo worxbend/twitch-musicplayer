@@ -307,6 +307,44 @@ paths:
                     type: string
                     example: skip broadcast
 
+  /v1/history:
+    get:
+      summary: List recent song starts
+      description: >
+        Returns the most recent song starts, newest first. History is kept in
+        memory (last 50 starts) and resets when the server restarts.
+      operationId: listHistory
+      tags: [player]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum entries to return. Values above 50 are clamped to 50.
+          schema:
+            type: integer
+            minimum: 1
+            default: 20
+      responses:
+        "200":
+          description: Recent song starts, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PlayEntry"
+                  total:
+                    type: integer
+        "400":
+          description: limit is not a positive integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   parameters:
     songId:
@@ -392,6 +430,15 @@ components:
           type: integer
         total_songs:
           type: integer
+
+    PlayEntry:
+      type: object
+      properties:
+        song:
+          $ref: "#/components/schemas/Song"
+        started_at:
+          type: string
+          format: date-time
 
     Error:
       type: object

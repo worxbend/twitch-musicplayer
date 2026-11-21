@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"lofi-radio-backend/internal/models"
@@ -75,5 +76,59 @@ func TestPlayerSkipBroadcastsSkipNow(t *testing.T) {
 	}
 	if len(hub.msgs) != 1 || hub.msgs[0].Type != websocket.MsgSkipNow {
 		t.Fatalf("broadcasts = %v, want one %s", hub.types(), websocket.MsgSkipNow)
+	}
+}
+
+func TestPlayerHistory(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    string
+		songs     int
+		wantCode  int
+		wantTotal int
+	}{
+		{name: "empty", target: "/v1/history", wantCode: http.StatusOK},
+		{name: "default limit", target: "/v1/history", songs: 3, wantCode: http.StatusOK, wantTotal: 3},
+		{name: "limit 2", target: "/v1/history?limit=2", songs: 3, wantCode: http.StatusOK, wantTotal: 2},
+		{name: "limit clamped", target: "/v1/history?limit=999", songs: player.MaxHistory + 5, wantCode: http.StatusOK, wantTotal: player.MaxHistory},
+		{name: "non-integer limit", target: "/v1/history?limit=abc", wantCode: http.StatusBadRequest},
+		{name: "zero limit", target: "/v1/history?limit=0", wantCode: http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := player.NewStateTracker()
+			for i := range tt.songs {
+				st.SetCurrentSong(&models.Song{ID: strconv.Itoa(i)})
+			}
+			rec := serve(t, playerRouter(fakeCounter{}, fakeCounter{}, &fakeBroadcaster{}, st), http.MethodGet, tt.target, "", nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if tt.wantCode != http.StatusOK {
+				var body map[string]string
+				decodeBody(t, rec, &body)
+				if body["error"] != "limit must be a positive integer" {
+					t.Fatalf("error body = %v", body)
+				}
+				return
+			}
+			var got struct {
+				Items []map[string]any `json:"items"`
+				Total *int             `json:"total"`
+			}
+			decodeBody(t, rec, &got)
+			if got.Items == nil || got.Total == nil || *got.Total != tt.wantTotal || len(got.Items) != tt.wantTotal {
+				t.Fatalf("body = %s, want %d items", rec.Body.String(), tt.wantTotal)
+			}
+			for i, item := range got.Items {
+				song, _ := item["song"].(map[string]any)
+				if want := strconv.Itoa(tt.songs - 1 - i); song["id"] != want {
+					t.Fatalf("items[%d].song.id = %v, want %s (newest first)", i, song["id"], want)
+				}
+				if _, ok := item["started_at"].(string); !ok {
+					t.Fatalf("items[%d] missing started_at: %v", i, item)
+				}
+			}
+		})
 	}
 }

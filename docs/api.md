@@ -134,6 +134,29 @@ happens here; the usual `need_song` flow performs the dequeue.
 
 ## 🕰️ History
 
-There is no history endpoint. Play history is not stored as records — it is kept in a
-Bloom filter used only to decide what has already been played this cycle. The `history_id`
-in WebSocket payloads is a per-playback correlation ID, not a stored entity.
+```http
+GET /v1/history?limit=20
+```
+
+Returns the most recent song starts, newest first, in the same `items`/`total` shape as
+`GET /v1/queue`. `limit` defaults to `20`, values above `50` are clamped to `50`, and a
+non-integer or value below `1` returns `400 {"error":"limit must be a positive integer"}`.
+
+```json
+{
+  "items": [
+    {
+      "song": { "id": "...", "title": "...", "artist": "..." },
+      "started_at": "2026-01-01T20:15:04Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+History is kept in memory: it holds the last 50 starts and resets when the server
+restarts. A song is recorded when a player starts it, so a skipped track still appears.
+
+This list is separate from the Bloom filter, which is used only to decide what has
+already been played this cycle. The `history_id` in WebSocket payloads is a per-playback
+correlation ID, not a key into this list.

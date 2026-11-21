@@ -3,11 +3,15 @@ package api
 import (
 	"context"
 	"net/http"
+	"strconv"
 
 	"lofi-radio-backend/internal/models"
 	"lofi-radio-backend/internal/player"
 	"lofi-radio-backend/internal/websocket"
 )
+
+// defaultHistoryLimit is the page size of GET /v1/history without ?limit.
+const defaultHistoryLimit = 20
 
 type playerSongRepo interface {
 	Count(ctx context.Context) (int, error)
@@ -74,4 +78,24 @@ func (h *PlayerHandler) State(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, state)
+}
+
+// History handles GET /v1/history?limit=N. It returns the most recent song
+// starts, newest first. limit defaults to 20 and is clamped to player.MaxHistory.
+func (h *PlayerHandler) History(w http.ResponseWriter, r *http.Request) {
+	limit := defaultHistoryLimit
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = min(n, player.MaxHistory)
+	}
+
+	items := h.stateTracker.History(limit)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": items,
+		"total": len(items),
+	})
 }
