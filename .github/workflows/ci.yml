@@ -150,6 +150,8 @@ jobs:
           curl -fsS http://127.0.0.1:3000/admin > admin.html
           grep -F '/assets/admin-' admin.html
           if cmp -s index.html admin.html; then echo "/admin served the SPA index"; exit 1; fi
+          curl -fsSL http://127.0.0.1:3000/admin/ > admin-slash.html
+          grep -F '/assets/admin-' admin-slash.html
           curl -fsS -o /dev/null http://127.0.0.1:3000/now-playing
           # HTML entry points must revalidate; hashed assets stay long-cached.
           for path in / /admin /admin.html /now-playing; do
