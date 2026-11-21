@@ -24,6 +24,9 @@ type fakeQueueManager struct {
 	listErr      error
 	clearErr     error
 	autoSelects  bool
+	emptyLibrary bool
+	libraryErr   error
+	libraryCalls int
 	addedID      string
 	playNextID   string
 	addedSource  models.QueueSource
@@ -50,6 +53,16 @@ func (f *fakeQueueManager) ListQueue(context.Context) ([]*models.QueueItem, erro
 }
 
 func (f *fakeQueueManager) AutoSelects() bool { return f.autoSelects }
+
+// TotalSongs reports one song unless emptyLibrary is set, so the zero value is
+// a non-empty library.
+func (f *fakeQueueManager) TotalSongs(context.Context) (int, error) {
+	f.libraryCalls++
+	if f.emptyLibrary {
+		return 0, f.libraryErr
+	}
+	return 1, f.libraryErr
+}
 
 func (f *fakeQueueManager) ClearQueue(context.Context) error {
 	f.clearedCalls++
@@ -280,24 +293,31 @@ func TestQueueSkip(t *testing.T) {
 	// dead is an entry whose song left the library: ListQueue reports Song=nil.
 	dead := &models.QueueItem{ID: "q3", SongID: "gone"}
 	tests := []struct {
-		name        string
-		items       []*models.QueueItem
-		listErr     error
-		autoSelects bool
-		wantCode    int
-		wantSongID  string
+		name         string
+		items        []*models.QueueItem
+		listErr      error
+		autoSelects  bool
+		emptyLibrary bool
+		libraryErr   error
+		wantCode     int
+		wantSongID   string
+		wantErr      string
 	}{
 		{name: "non-empty queue", items: []*models.QueueItem{front, behind}, wantCode: http.StatusOK, wantSongID: "n"},
+		{name: "playable entry, auto-select, empty library", items: []*models.QueueItem{front}, autoSelects: true, emptyLibrary: true, wantCode: http.StatusOK, wantSongID: "n"},
 		{name: "dead head skipped", items: []*models.QueueItem{dead, behind}, wantCode: http.StatusOK, wantSongID: "m"},
 		{name: "all entries dead, auto-select", items: []*models.QueueItem{dead}, autoSelects: true, wantCode: http.StatusOK},
 		{name: "all entries dead, manual_only", items: []*models.QueueItem{dead}, wantCode: http.StatusConflict},
 		{name: "empty queue, manual_only", wantCode: http.StatusConflict},
 		{name: "empty queue, auto-select", autoSelects: true, wantCode: http.StatusOK},
+		{name: "empty queue, auto-select, empty library", autoSelects: true, emptyLibrary: true, wantCode: http.StatusConflict, wantErr: "no songs available"},
+		{name: "all entries dead, auto-select, empty library", items: []*models.QueueItem{dead}, autoSelects: true, emptyLibrary: true, wantCode: http.StatusConflict, wantErr: "no songs available"},
+		{name: "empty queue, auto-select, library count error", autoSelects: true, libraryErr: errors.New("boom"), wantCode: http.StatusInternalServerError, wantErr: "failed to skip current song"},
 		{name: "list error", listErr: errors.New("boom"), wantCode: http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mgr := &fakeQueueManager{items: tt.items, listErr: tt.listErr, autoSelects: tt.autoSelects}
+			mgr := &fakeQueueManager{items: tt.items, listErr: tt.listErr, autoSelects: tt.autoSelects, emptyLibrary: tt.emptyLibrary, libraryErr: tt.libraryErr}
 			b := &fakeBroadcaster{}
 			rec := serve(t, queueRouter(mgr, &fakeQueueRepo{}, b), http.MethodPost, "/v1/queue:skip", "", nil)
 			if rec.Code != tt.wantCode {
@@ -310,7 +330,17 @@ func TestQueueSkip(t *testing.T) {
 				if len(b.msgs) != 0 {
 					t.Fatalf("unexpected broadcasts %v", b.types())
 				}
+				if tt.wantErr != "" {
+					var body map[string]string
+					decodeBody(t, rec, &body)
+					if body["error"] != tt.wantErr {
+						t.Fatalf("error = %q, want %q", body["error"], tt.wantErr)
+					}
+				}
 				return
+			}
+			if tt.wantSongID != "" && mgr.libraryCalls != 0 {
+				t.Fatalf("TotalSongs calls = %d, want 0 when the queue is playable", mgr.libraryCalls)
 			}
 			var got struct {
 				Song *models.Song `json:"song"`

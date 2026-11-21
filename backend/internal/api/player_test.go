@@ -173,6 +173,8 @@ func TestPlayerSkip(t *testing.T) {
 		{name: "manual_only, playable entry", mgr: &fakeQueueManager{items: []*models.QueueItem{dead, playable}}, wantCode: http.StatusOK, wantBody: map[string]string{"message": "skip broadcast"}, wantBroadcast: true},
 		{name: "auto-select, empty queue", mgr: &fakeQueueManager{autoSelects: true}, wantCode: http.StatusOK, wantBody: map[string]string{"message": "skip broadcast"}, wantBroadcast: true},
 		{name: "list error", mgr: &fakeQueueManager{autoSelects: true, listErr: errors.New("boom")}, wantCode: http.StatusInternalServerError, wantBody: map[string]string{"error": "failed to skip current song"}},
+		{name: "auto-select, empty queue, empty library", mgr: &fakeQueueManager{autoSelects: true, emptyLibrary: true}, wantCode: http.StatusConflict, wantBody: map[string]string{"error": "no songs available"}},
+		{name: "auto-select, library count error", mgr: &fakeQueueManager{autoSelects: true, libraryErr: errors.New("boom")}, wantCode: http.StatusInternalServerError, wantBody: map[string]string{"error": "failed to skip current song"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

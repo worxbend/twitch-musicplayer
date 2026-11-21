@@ -298,13 +298,16 @@ paths:
                     allOf:
                       - $ref: "#/components/schemas/Song"
         "409":
-          description: No playable queued entry under manual_only; nothing is broadcast
+          description: >
+            Nothing would play next: no playable queued entry under manual_only
+            (`queue is empty`), or an auto strategy with an empty library
+            (`no songs available`); nothing is broadcast
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "500":
-          description: Queue could not be read; nothing is broadcast
+          description: Queue or library could not be read; nothing is broadcast
           content:
             application/json:
               schema:
@@ -388,8 +391,9 @@ paths:
         (main scene, overlay) so they immediately abandon the current track and
         request the next one. No queue entry is consumed here — the natural
         `need_song` → `NextSong` flow handles dequeue when the client responds.
-        Under `manual_only` with no playable queued entry it returns 409 and
-        broadcasts nothing, so a skip cannot leave the stream silent.
+        It returns 409 and broadcasts nothing when nothing would play next (no
+        playable queued entry under `manual_only`, or an auto strategy with an
+        empty library), so a skip cannot leave the stream silent.
       operationId: skipPlayer
       tags: [player]
       responses:
@@ -404,13 +408,16 @@ paths:
                     type: string
                     example: skip broadcast
         "409":
-          description: No playable queued entry under manual_only; nothing is broadcast
+          description: >
+            Nothing would play next: no playable queued entry under manual_only
+            (`queue is empty`), or an auto strategy with an empty library
+            (`no songs available`); nothing is broadcast
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "500":
-          description: Queue could not be read; nothing is broadcast
+          description: Queue or library could not be read; nothing is broadcast
           content:
             application/json:
               schema:

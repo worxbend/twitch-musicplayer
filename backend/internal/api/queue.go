@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -17,9 +18,15 @@ import (
 type queueManager interface {
 	AddToQueue(ctx context.Context, songID string, source models.QueueSource) (*models.QueueItem, error)
 	PlayNext(ctx context.Context, songID string) error
-	ListQueue(ctx context.Context) ([]*models.QueueItem, error)
 	ClearQueue(ctx context.Context) error
+	skipSource
+}
+
+// skipSource tells a skip handler whether a skip would leave anything to play.
+type skipSource interface {
+	ListQueue(ctx context.Context) ([]*models.QueueItem, error)
 	AutoSelects() bool
+	TotalSongs(ctx context.Context) (int, error)
 }
 
 type queueRepo interface {
@@ -156,8 +163,13 @@ func (h *QueueHandler) Skip(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to skip current song")
 		return
 	}
-	if nothingToSkipTo(items, h.mgr.AutoSelects()) {
-		writeError(w, http.StatusConflict, "queue is empty")
+	reason, err := skipConflict(r.Context(), h.mgr, items)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to skip current song")
+		return
+	}
+	if reason != "" {
+		writeError(w, http.StatusConflict, reason)
 		return
 	}
 	var next *models.Song
@@ -171,11 +183,26 @@ func (h *QueueHandler) Skip(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"song": next})
 }
 
-// nothingToSkipTo reports whether a skip would leave the stream silent: under
-// manual_only with no playable entry, need_song finds nothing. That is an
-// expected state, not a fault. Other strategies auto-select on need_song.
-func nothingToSkipTo(items []*models.QueueItem, autoSelects bool) bool {
-	return !autoSelects && models.FirstPlayable(items) == nil
+// skipConflict returns why a skip would leave the stream silent, or "" when
+// need_song will find a song. With no playable entry, manual_only finds
+// nothing, and an auto strategy finds nothing when the library is empty. Those
+// are expected states, not faults. The library is counted only when the queue
+// has no playable entry, so a playable queue never pays for it.
+func skipConflict(ctx context.Context, src skipSource, items []*models.QueueItem) (string, error) {
+	if models.FirstPlayable(items) != nil {
+		return "", nil
+	}
+	if !src.AutoSelects() {
+		return "queue is empty", nil
+	}
+	total, err := src.TotalSongs(ctx)
+	if err != nil {
+		return "", fmt.Errorf("count songs: %w", err)
+	}
+	if total == 0 {
+		return queuemgr.ErrLibraryEmpty.Error(), nil
+	}
+	return "", nil
 }
 
 // Clear handles POST /v1/queue:clear.

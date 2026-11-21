@@ -101,7 +101,9 @@ Interrupts the current track on every connected player by broadcasting `skip_now
 returns the upcoming song as `{"song": {...}}` without dequeuing it (queued entries whose file
 left the library are passed over, as at play time); the player's `need_song`
 request dequeues it. With no playable entry, `song` is `null` and the player auto-selects, except
-under `manual_only`, which returns `409 {"error":"queue is empty"}` and broadcasts nothing.
+under `manual_only`, which returns `409 {"error":"queue is empty"}` and broadcasts nothing. An
+auto strategy with an empty library returns `409 {"error":"no songs available"}` and broadcasts
+nothing as well.
 
 ```http
 POST /v1/queue:clear
@@ -150,8 +152,9 @@ POST /v1/player:skip
 Broadcasts `skip_now` to every connected audio client and returns
 `{"message":"skip broadcast"}`. No server-side queue manipulation happens here; the usual
 `need_song` flow performs the dequeue. Like `queue:skip`, under `manual_only` with no playable
-queued entry it returns `409 {"error":"queue is empty"}` and broadcasts nothing; a queue read
-failure returns `500` and broadcasts nothing.
+queued entry it returns `409 {"error":"queue is empty"}`, and under an auto strategy with no
+playable entry and an empty library it returns `409 {"error":"no songs available"}`; neither
+broadcasts. A queue or library read failure returns `500` and broadcasts nothing.
 
 ```http
 GET /v1/now-playing.txt

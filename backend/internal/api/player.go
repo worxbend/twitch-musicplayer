@@ -27,12 +27,6 @@ type playerQueueRepo interface {
 	Count(ctx context.Context) (int, error)
 }
 
-// playerSkipSource tells Skip whether a skip would leave anything to play.
-type playerSkipSource interface {
-	ListQueue(ctx context.Context) ([]*models.QueueItem, error)
-	AutoSelects() bool
-}
-
 type playerHub interface {
 	ClientCount() int
 	Broadcast(msg websocket.Message)
@@ -42,7 +36,7 @@ type playerHub interface {
 type PlayerHandler struct {
 	songRepo     playerSongRepo
 	queueRepo    playerQueueRepo
-	skipSource   playerSkipSource
+	skipSource   skipSource
 	hub          playerHub
 	stateTracker *player.StateTracker
 	// nowPlayingFormat is obs.now_playing_format, used by NowPlayingText.
@@ -52,7 +46,7 @@ type PlayerHandler struct {
 func NewPlayerHandler(
 	s playerSongRepo,
 	q playerQueueRepo,
-	skip playerSkipSource,
+	skip skipSource,
 	hub playerHub,
 	st *player.StateTracker,
 	nowPlayingFormat string,
@@ -65,16 +59,22 @@ func NewPlayerHandler(
 // (main scene, overlay) immediately abandon the current track and request the
 // next one. No server-side queue manipulation happens here — the natural
 // need_song → NextSong flow handles the dequeue. Like queue:skip, it returns
-// 409 and broadcasts nothing under manual_only when no queued entry is
-// playable, so a skip cannot drop the stream into silence.
+// 409 and broadcasts nothing when nothing would play next: no playable queued
+// entry under manual_only, or an auto strategy with an empty library. So a
+// skip cannot drop the stream into silence.
 func (h *PlayerHandler) Skip(w http.ResponseWriter, r *http.Request) {
 	items, err := h.skipSource.ListQueue(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to skip current song")
 		return
 	}
-	if nothingToSkipTo(items, h.skipSource.AutoSelects()) {
-		writeError(w, http.StatusConflict, "queue is empty")
+	reason, err := skipConflict(r.Context(), h.skipSource, items)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to skip current song")
+		return
+	}
+	if reason != "" {
+		writeError(w, http.StatusConflict, reason)
 		return
 	}
 	if msg, err := websocket.Encode(websocket.MsgSkipNow, nil); err == nil {
