@@ -183,6 +183,41 @@ test('player status stays in one live region from blocked to on air', async ({ p
   await expect(status).toHaveCount(1);
 });
 
+type MediaHandlerWindow = Window & { __mediaHandlers: Record<string, () => void> };
+
+test('media-key pause shows the paused state and Resume restarts playback', async ({ page }) => {
+  // The audio elements are never in the DOM, so the media key's pause handler is the real trigger.
+  await page.addInitScript(() => {
+    if (!('mediaSession' in navigator)) return;
+    const handlers: Record<string, () => void> = {};
+    (window as unknown as MediaHandlerWindow).__mediaHandlers = handlers;
+    const original = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
+    navigator.mediaSession.setActionHandler = (action, handler) => {
+      if (handler) handlers[action] = () => handler({ action });
+      original(action, handler);
+    };
+  });
+  await mockStation(page, { requireGesture: true });
+  await page.goto('/');
+  test.skip(!(await page.evaluate(() => 'mediaSession' in navigator)), 'browser has no Media Session API');
+  await page.getByRole('button', { name: 'Enable audio' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.status')).toHaveText('On air', {timeout: 10000});
+  const playbackState = () => page.evaluate(() => navigator.mediaSession.playbackState);
+
+  await page.evaluate(() => (window as unknown as MediaHandlerWindow).__mediaHandlers.pause());
+  await expect(page.getByRole('status')).toContainText('Paused');
+  const resume = page.getByRole('button', { name: 'Resume ▶' });
+  await expect(resume).toBeVisible();
+  await expect.poll(playbackState).toBe('paused');
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+
+  await resume.click();
+  await expect(resume).toHaveCount(0);
+  await expect(page.locator('.status')).toHaveText('On air');
+  await expect.poll(playbackState).toBe('playing');
+});
+
 test('volume shortcuts change the slider, mute toggles, and the level survives reload', async ({ page }) => {
   await mockStation(page, { empty: true });
   await page.goto('/');
