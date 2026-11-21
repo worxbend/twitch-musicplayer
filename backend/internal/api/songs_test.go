@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 
 	"lofi-radio-backend/internal/models"
 )
@@ -209,6 +214,60 @@ func TestSongsStreamContent(t *testing.T) {
 				t.Fatal("forbidden response leaked file content")
 			}
 		})
+	}
+}
+
+// A browser <audio> element reads a song progressively, so the response lives
+// far longer than the server-wide WriteTimeout that guards the JSON endpoints.
+func TestStreamContentOutlivesServerWriteTimeout(t *testing.T) {
+	musicDir := t.TempDir()
+	songPath := filepath.Join(musicDir, "song.mp3")
+	const size = 16 << 20
+	f, err := os.Create(songPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &fakeSongRepo{songs: []*models.Song{{ID: "s", Path: songPath}}}
+	router := chi.NewRouter()
+	router.Use(middleware.Logger) // production wraps the writer; the fix must reach through it
+	RegisterRoutes(router, NewSongsHandler(repo, musicDir), nil, nil)
+
+	srv := httptest.NewUnstartedServer(router)
+	srv.Config.WriteTimeout = 250 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL + "/v1/songs/s/content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	buf := make([]byte, 64<<10)
+	total := 0
+	for {
+		n, err := resp.Body.Read(buf)
+		total += n
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read after %d of %d bytes: %v", total, size, err)
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if total != size {
+		t.Fatalf("read %d bytes, want %d", total, size)
 	}
 }
 

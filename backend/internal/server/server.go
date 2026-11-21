@@ -30,10 +30,12 @@ type Options struct {
 // New wires up the Chi router and returns a configured *http.Server.
 func New(opts Options) *http.Server {
 	return &http.Server{
-		Addr:         fmt.Sprintf(":%d", opts.Port),
-		Handler:      buildRoutes(opts),
-		IdleTimeout:  time.Minute,
-		ReadTimeout:  10 * time.Second,
+		Addr:        fmt.Sprintf(":%d", opts.Port),
+		Handler:     buildRoutes(opts),
+		IdleTimeout: time.Minute,
+		ReadTimeout: 10 * time.Second,
+		// WriteTimeout guards JSON/API responses. Song streaming lifts it per
+		// response in api.SongsHandler.StreamContent.
 		WriteTimeout: 30 * time.Second,
 	}
 }

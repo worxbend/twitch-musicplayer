@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -96,6 +98,11 @@ func (h *SongsHandler) StreamContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Audio downloads progressively and outlives the server-wide WriteTimeout;
+	// IdleTimeout and client disconnect still bound the connection.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		log.Printf("stream %s: clear write deadline: %v", id, err)
+	}
 	http.ServeFile(w, r, path)
 }
 
