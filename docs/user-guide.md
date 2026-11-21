@@ -84,6 +84,9 @@ notices within about a minute and reconnects by itself. It plays no
 audio, so pair it with the audio source page. It only listens to the backend and never
 advances the queue, so it is safe to add alongside a playing page.
 
+The **Now playing text** card on the Scenes page builds this URL from align, size and hold
+controls and copies it for you.
+
 ### 🎨 Recolouring
 
 Add `?ramp=` to any scene to change its palette:

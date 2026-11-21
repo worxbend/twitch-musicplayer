@@ -52,6 +52,11 @@ html.scenes-index-page #root { min-height: 100%; }
 .scene-card--featured .scene-format { display: none; }
 .scene-card--featured p { min-height: 0; }
 .scene-extra .scene-card-body > .btn { width: 100%; margin-bottom: 18px; }
+.overlay-builder { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
+.overlay-builder label { display: grid; gap: 6px; min-width: 0; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.overlay-builder select, .overlay-builder input { width: 100%; min-width: 0; min-height: 42px; padding: 9px 10px; background: var(--surface); color: var(--accent); border: 1px solid var(--border); border-radius: 8px; font-family: var(--mono); font-size: 12px; }
+.overlay-builder small { grid-column: 1 / -1; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.scene-url span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .manual-copy { display: block; color: var(--amber); margin-bottom: 30px; font-size: 12px; }
 .manual-copy input { display: block; width: 100%; padding: 14px; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font-family: var(--mono); font-size: 12px; }
 

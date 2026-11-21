@@ -106,6 +106,17 @@ test('scene ramp selection, copy confirmation, and clipboard fallback', async ({
   await expect(page.getByLabel('Browser-source URL', { exact: true })).toHaveValue('http://127.0.0.1:3100/bars?ramp=SPECTRUM');
 });
 
+test('now playing overlay URL builder copies the configured URL', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/scenes');
+  await page.getByLabel('Align').selectOption('center');
+  await page.getByLabel('Size (px)').fill('48');
+  await page.getByLabel('Hold (s)').fill('8');
+  await page.getByRole('button', { name: 'Copy now playing overlay URL' }).click();
+  await expect(page.getByRole('status')).toContainText('Browser-source URL copied');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8');
+});
+
 test('library search, queue add/remove, and keyboard-safe clear confirmation', async ({ page }) => {
   await mockStation(page);
   await page.goto('/admin');

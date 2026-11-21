@@ -3,6 +3,7 @@ import { SCENES } from './viz/scenes';
 import { RAMPS, type RampName } from './viz/palette';
 import { TerminalHeader } from './components/TerminalHeader';
 import { SignalPreview } from './components/SignalPreview';
+import { nowPlayingAlignments, nowPlayingPath, type NowPlayingAlign } from './nowPlaying';
 
 const studies: Record<string, { medium: string; description: string }> = {
   spectrum: { medium: 'Phosphor / phase', description: 'A luminous laboratory trace, paired with a dancing Lissajous orbit. An intimate view inside the signal.' },
@@ -19,6 +20,10 @@ export function ScenesIndex() {
   const [notice, setNotice] = createSignal('');
   const [copyError, setCopyError] = createSignal(false);
   const [manualURL, setManualURL] = createSignal('');
+  const [align, setAlign] = createSignal<NowPlayingAlign>('left');
+  const [size, setSize] = createSignal(32);
+  const [hold, setHold] = createSignal(0);
+  const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold() });
   let timer = 0;
   onMount(() => {
     document.documentElement.classList.add('scenes-index-page');
@@ -101,6 +106,29 @@ export function ScenesIndex() {
               <div class="scene-urls">
                 <button class="scene-url" onClick={() => void copy(`/overlay?ramp=${ramp()}`)}><span>/overlay</span><span class="copy-hint">copy ⧉</span></button>
                 <button class="scene-url" onClick={() => void copy(`/logo-overlay?ramp=${ramp()}`)}><span>/logo-overlay</span><span class="copy-hint">copy ⧉</span></button>
+              </div>
+            </div>
+          </aside>
+          <aside class="scene-card scene-extra" aria-labelledby="now-playing-heading">
+            <div class="scene-card-body">
+              <div class="scene-card-heading"><h2 id="now-playing-heading">Now playing text</h2><span class="scene-format">Transparent</span></div>
+              <p>The current title and artist as plain text. Lay it over any scene or camera.</p>
+              <div class="overlay-builder">
+                <label>Align
+                  <select value={align()} onChange={e => setAlign(e.currentTarget.value as NowPlayingAlign)}>
+                    <For each={nowPlayingAlignments}>{value => <option value={value}>{value}</option>}</For>
+                  </select>
+                </label>
+                <label>Size (px)
+                  <input type="number" min="12" max="120" step="1" value={size()} onInput={e => setSize(e.currentTarget.valueAsNumber)} />
+                </label>
+                <label>Hold (s)
+                  <input type="number" min="0" max="600" step="1" value={hold()} aria-describedby="hold-help" onInput={e => setHold(e.currentTarget.valueAsNumber)} />
+                </label>
+                <small id="hold-help">0 = always visible</small>
+              </div>
+              <div class="scene-urls">
+                <button class="scene-url" onClick={() => void copy(nowPlayingURL())} aria-label="Copy now playing overlay URL"><span>{nowPlayingURL()}</span><span class="copy-hint">copy ⧉</span></button>
               </div>
             </div>
           </aside>

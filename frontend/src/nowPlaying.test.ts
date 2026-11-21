@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNowPlayingOptions, reduceNowPlaying, type NowPlayingSong } from './nowPlaying.ts';
+import { nowPlayingPath, parseNowPlayingOptions, reduceNowPlaying, type NowPlayingSong } from './nowPlaying.ts';
 
 const prev: NowPlayingSong = { title: 'Old Song', artist: 'Old Artist' };
 
@@ -85,4 +85,38 @@ test('invalid or missing hold means always visible', () => {
   for (const search of ['', '?hold=', '?hold=0', '?hold=601', '?hold=-3', '?hold=abc', '?hold=1.5']) {
     assert.equal(parseNowPlayingOptions(search).hold, 0, search);
   }
+});
+
+test('nowPlayingPath leaves defaults out', () => {
+  assert.equal(nowPlayingPath({}), '/now-playing');
+  assert.equal(nowPlayingPath({ align: 'left', size: 32, hold: 0 }), '/now-playing');
+});
+
+test('nowPlayingPath orders params align, size, hold', () => {
+  assert.equal(nowPlayingPath({ hold: 8, size: 48, align: 'center' }), '/now-playing?align=center&size=48&hold=8');
+});
+
+test('nowPlayingPath round-trips through parseNowPlayingOptions', () => {
+  const cases = [
+    { align: 'center', size: 48, hold: 8 },
+    { align: 'right', size: 12, hold: 600 },
+    { align: 'left', size: 120, hold: 1 },
+    { align: 'left', size: 32, hold: 0 },
+  ] as const;
+  for (const opts of cases) {
+    assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts);
+  }
+});
+
+test('nowPlayingPath clamps out-of-range values', () => {
+  assert.equal(nowPlayingPath({ size: 5 }), '/now-playing?size=12');
+  assert.equal(nowPlayingPath({ size: 500 }), '/now-playing?size=120');
+  assert.equal(nowPlayingPath({ hold: 9999 }), '/now-playing?hold=600');
+  assert.equal(nowPlayingPath({ hold: -3 }), '/now-playing');
+});
+
+test('nowPlayingPath rounds non-integers and ignores bad input', () => {
+  assert.equal(nowPlayingPath({ size: 47.6, hold: 7.5 }), '/now-playing?size=48&hold=8');
+  assert.equal(nowPlayingPath({ size: NaN, hold: NaN }), '/now-playing');
+  assert.equal(nowPlayingPath({ align: 'middle' as never }), '/now-playing');
 });

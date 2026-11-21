@@ -53,7 +53,7 @@ export function reduceNowPlaying(prev: NowPlayingSong | null, raw: string): NowP
   return prev;
 }
 
-const alignments: readonly NowPlayingAlign[] = ['left', 'center', 'right'];
+export const nowPlayingAlignments: readonly NowPlayingAlign[] = ['left', 'center', 'right'];
 const defaultSizePx = 32;
 const minSizePx = 12;
 const maxSizePx = 120;
@@ -70,10 +70,32 @@ function parseWholeNumber(raw: string | null): number {
 export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const params = new URLSearchParams(search);
   const rawAlign = params.get('align');
-  const align = alignments.find(value => value === rawAlign) ?? 'left';
+  const align = nowPlayingAlignments.find(value => value === rawAlign) ?? 'left';
   const px = parseWholeNumber(params.get('size'));
   const size = px >= minSizePx && px <= maxSizePx ? px : defaultSizePx;
   const secs = parseWholeNumber(params.get('hold'));
   const hold = secs >= 1 && secs <= maxHoldSecs ? secs : 0;
   return { align, size, hold };
+}
+
+/** Rounds to a whole number inside min..max; a missing or non-numeric value gives `fallback`. */
+function clampWhole(value: number | undefined, min: number, max: number, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/**
+ * Builds the /now-playing path that parseNowPlayingOptions reads back. Values are
+ * clamped to the accepted ranges and defaults are left out of the query.
+ */
+export function nowPlayingPath(opts: Partial<NowPlayingOptions>): string {
+  const align = nowPlayingAlignments.find(value => value === opts.align) ?? 'left';
+  const size = clampWhole(opts.size, minSizePx, maxSizePx, defaultSizePx);
+  const hold = clampWhole(opts.hold, 0, maxHoldSecs, 0);
+  const params = new URLSearchParams();
+  if (align !== 'left') params.set('align', align);
+  if (size !== defaultSizePx) params.set('size', String(size));
+  if (hold !== 0) params.set('hold', String(hold));
+  const query = params.toString();
+  return query ? `/now-playing?${query}` : '/now-playing';
 }
