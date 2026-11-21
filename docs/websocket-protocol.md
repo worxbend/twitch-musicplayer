@@ -29,6 +29,9 @@ All messages use:
 }
 ```
 
+The server reads at most 4096 bytes per client frame. A larger frame closes
+the connection with code 1009 (message too big).
+
 ## 📤 Client To Server
 
 ### `need_song`
