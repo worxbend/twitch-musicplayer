@@ -58,6 +58,10 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
       queue = queue.filter(item => item.id !== url.pathname.split('/').pop());
       await route.fulfill({ status: 204 }); return;
     }
+    if (url.pathname === '/v1/history') {
+      const items = options.empty ? [] : [{ song: songs[0], started_at: '2026-01-01T20:05:00Z' }, { song: songs[1], started_at: '2026-01-01T20:01:00Z' }];
+      await route.fulfill({ json: { items, total: items.length } }); return;
+    }
     const query = url.searchParams.get('q')?.toLowerCase() || '';
     const json = url.pathname === '/v1/songs' ? { songs: options.empty ? [] : songs.filter(song => `${song.title} ${song.artist} ${song.album}`.toLowerCase().includes(query)) }
       : url.pathname === '/v1/queue' ? { items: queue } : { current_song: options.empty ? null : songs[0] };
@@ -136,13 +140,35 @@ test('empty, loading, search-empty, and backend failure states', async ({ page }
   await expect(page.getByRole('button', { name: 'Skip track' })).toBeDisabled();
   await page.getByLabel('Search music library').fill('missing');
   await expect(page.getByText('No matching tracks')).toBeVisible();
+  await expect(page.getByText('No songs played yet.')).toBeVisible();
   await page.unroute('**/v1/**');
   await mockStation(page, { failure: true });
   await page.reload();
   await expect(page.getByText('Library unavailable', { exact: true })).toBeVisible();
   await expect(page.getByText('Queue unavailable', { exact: true })).toBeVisible();
   await expect(page.getByText('Player status unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('History unavailable', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry connection' })).toBeVisible();
+});
+
+test('admin recently played lists history newest first', async ({ page }) => {
+  await mockStation(page);
+  await page.goto('/admin');
+  const history = page.getByRole('region', { name: 'Recently played' }).getByRole('listitem');
+  // songs[0] is on air, so its history entry is hidden.
+  await expect(history).toHaveCount(1);
+  await expect(history).toContainText('Buffering dreams');
+  await expect(history).toContainText('Terminal Club');
+  await expect(history.locator('time')).toHaveAttribute('datetime', '2026-01-01T20:01:00Z');
+});
+
+test('untitled queue song is labelled by its filename', async ({ page }) => {
+  await mockStation(page);
+  const untitled = { id: 'c', title: '', artist: '', album: '', filename: 'c.mp3', duration_secs: 0, size_bytes: 1024 };
+  await page.route('**/v1/queue', route => route.fulfill({ json: { items: [{ id: 'q3', song_id: 'c', song: untitled, position: 1, source: 'manual' }] } }));
+  await page.goto('/admin');
+  await expect(page.locator('.queue-item .queue-title')).toHaveText('c.mp3');
+  await expect(page.getByRole('button', { name: 'Remove c.mp3 from queue' })).toBeVisible();
 });
 
 test('play-now and skip send the existing backend commands', async ({ page }) => {

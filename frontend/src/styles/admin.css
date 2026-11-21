@@ -18,8 +18,11 @@ html, body { min-height: 100%; background: var(--bg); }
 .now-duration { color: var(--amber); margin-left: 18px; font-family: var(--mono); font-size: 11px; }
 .now-playing-bar .btn { background: #0d1726; }
 .admin-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .48fr); gap: 24px; align-items: stretch; margin-bottom: 28px; }
-.song-panel, .queue-panel { min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 14px; background: #0d1423; overflow: hidden; }
-.queue-panel { background: #101a2a; }
+.song-panel, .queue-panel, .history-panel { min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 14px; background: #0d1423; overflow: hidden; }
+.queue-panel, .history-panel { background: #101a2a; }
+.history-panel { margin-bottom: 28px; }
+.history-list { list-style: none; margin: 0; padding: 0; }
+.history-time { color: var(--muted); font-family: var(--mono); font-size: 11px; flex-shrink: 0; }
 .panel-header .btn { min-height: 36px; font-size: 11px; padding: 6px 11px; background: transparent; }
 .search-row { display: flex; align-items: center; gap: 12px; margin: 22px 24px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); padding: 0 14px; }
 .search-row:focus-within { border-color: var(--accent); }
@@ -49,7 +52,7 @@ html, body { min-height: 100%; background: var(--bg); }
 .queue-source { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .queue-source.manual { background: var(--accent2); }
 .queue-source.auto { background: var(--coral); }
-.queue-item { display: flex; align-items: center; padding: 17px 22px; gap: 12px; border-bottom: 1px solid #26344a; transition: background var(--motion); }
+.queue-item, .history-item { display: flex; align-items: center; padding: 17px 22px; gap: 12px; border-bottom: 1px solid #26344a; transition: background var(--motion); }
 .queue-pos { color: var(--muted); font-family: var(--mono); font-size: 10px; }
 .queue-title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .queue-artist { color: var(--muted); font-size: 11px; margin-top: 5px; }
@@ -111,7 +114,7 @@ html, body { min-height: 100%; background: var(--bg); }
   .search-box { font-size: 12px; }
   .empty-state { padding: 40px 22px; }
   .empty-state h3 { font-size: 18px; }
-  .queue-item { padding: 16px; }
+  .queue-item, .history-item { padding: 16px; }
   .panel-footnote { padding-left: 16px; padding-right: 16px; }
   .terminal-dialog { padding: 26px 22px; }
   .terminal-dialog h2 { font-size: 27px; }

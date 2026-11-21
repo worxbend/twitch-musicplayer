@@ -42,7 +42,8 @@ room with luminous audio instruments, a scene collection, and a broadcast consol
 - **Scene picker (`/scenes`)** — explore seven visualizers, choose a colour ramp,
   and copy a scene or transparent-overlay URL for an OBS browser source.
 - **Station console (`/admin`)** — search your library, queue tracks, play a track
-  immediately, skip the current song, and clear upcoming tracks with confirmation.
+  immediately, skip the current song, clear upcoming tracks with confirmation, and see
+  the last songs played.
   Keep a player or browser source open so the station can play your selections.
 
 A Go backend indexes files, selects tracks, and sends live updates over WebSocket.

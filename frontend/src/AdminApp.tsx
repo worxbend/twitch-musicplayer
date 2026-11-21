@@ -11,16 +11,20 @@ interface QueueItem {
   id: string; song_id: string; song?: Song; position: number;
   source: 'auto' | 'manual'; added_at: string;
 }
+interface HistoryItem { song: Song; started_at: string; }
 function formatDuration(secs: number): string {
   if (!secs || secs <= 0) return '--:--';
   return `${Math.floor(secs / 60)}:${Math.floor(secs % 60).toString().padStart(2, '0')}`;
 }
 function songLabel(song: Song) { return song.title || song.filename; }
+function queueItemLabel(item: QueueItem) { return item.song ? songLabel(item.song) : item.song_id; }
+function formatClock(iso: string) { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 
 export function AdminApp() {
   const backendURL = getBackendURL();
   const [songs, setSongs] = createSignal<Song[]>([]);
   const [queue, setQueue] = createSignal<QueueItem[]>([]);
+  const [history, setHistory] = createSignal<HistoryItem[]>([]);
   const [currentSong, setCurrentSong] = createSignal<Song | null>(null);
   const [connected, setConnected] = createSignal(false);
   const [notification, setNotification] = createSignal('');
@@ -29,6 +33,7 @@ export function AdminApp() {
   const [loading, setLoading] = createSignal(true);
   const [libraryError, setLibraryError] = createSignal(false);
   const [queueError, setQueueError] = createSignal(false);
+  const [historyError, setHistoryError] = createSignal(false);
   const [playerError, setPlayerError] = createSignal(false);
   const [busy, setBusy] = createSignal('');
   let notifTimer = 0;
@@ -56,6 +61,17 @@ export function AdminApp() {
       const data = await (await request('/v1/queue')).json();
       if (!disposed) { setQueue(data.items ?? []); setQueueError(false); }
     } catch { if (!disposed) setQueueError(true); }
+  }
+  async function fetchHistory() {
+    try {
+      const data = await (await request('/v1/history?limit=10')).json();
+      if (!disposed) { setHistory(data.items ?? []); setHistoryError(false); }
+    } catch { if (!disposed) setHistoryError(true); }
+  }
+  // The newest entry is the track on air; the now-playing bar already shows it.
+  function pastHistory() {
+    const items = history();
+    return items.length && items[0].song.id === currentSong()?.id ? items.slice(1) : items;
   }
   async function fetchPlayerState() {
     try {
@@ -109,7 +125,7 @@ export function AdminApp() {
       reconnectAttempts = 0;
       lastMessageAt = Date.now();
       setConnected(true);
-      void fetchQueue(); void fetchPlayerState();
+      void fetchQueue(); void fetchPlayerState(); void fetchHistory();
       window.clearInterval(heartbeatInterval);
       heartbeatInterval = window.setInterval(() => {
         // Half-open socket: no heartbeat_ack or update for too long.
@@ -122,8 +138,8 @@ export function AdminApp() {
       try {
         const msg = JSON.parse(e.data) as { type: string; payload?: { song?: Song; current_song?: Song } };
         if (msg.type === 'queue_updated') void fetchQueue();
-        if (msg.type === 'now_playing') { setCurrentSong(msg.payload?.song ?? null); void fetchQueue(); }
-        if (msg.type === 'state') { setCurrentSong(msg.payload?.current_song ?? null); void fetchQueue(); }
+        if (msg.type === 'now_playing') { setCurrentSong(msg.payload?.song ?? null); void fetchQueue(); void fetchHistory(); }
+        if (msg.type === 'state') { setCurrentSong(msg.payload?.current_song ?? null); void fetchQueue(); void fetchHistory(); }
       } catch { /* Ignore malformed protocol messages. */ }
     };
     ws.onclose = () => {
@@ -140,7 +156,7 @@ export function AdminApp() {
     searchTimer = window.setTimeout(() => void fetchSongs(q), 280);
   });
   onMount(() => {
-    void fetchQueue(); void fetchPlayerState(); connectWS();
+    void fetchQueue(); void fetchPlayerState(); void fetchHistory(); connectWS();
   });
   onCleanup(() => {
     disposed = true;
@@ -197,13 +213,25 @@ export function AdminApp() {
             <div class="queue-list">
               <Show when={!queueError()} fallback={<div class="empty-state"><h3>Queue unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => void fetchQueue()}>Retry</button></div>}>
                 <For each={queue()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">+</span><h3>Make the next move</h3><p>Add a track from the library. Automatic rotation keeps things moving when the player is listening.</p></div>}>
-                  {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{item.song?.title || item.song?.filename || item.song_id}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><button class="btn btn-danger btn-icon" aria-label={`Remove ${item.song?.title || 'track'} from queue`} title="Remove from queue" disabled={!!busy()} onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</button></div>}
+                  {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{queueItemLabel(item)}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><button class="btn btn-danger btn-icon" aria-label={`Remove ${queueItemLabel(item)} from queue`} title="Remove from queue" disabled={!!busy()} onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</button></div>}
                 </For>
               </Show>
             </div>
             <div class="panel-footnote">Queue changes sync with every listener.</div>
           </section>
         </div>
+        <section class="history-panel" aria-labelledby="history-heading">
+          <div class="panel-header"><h2 id="history-heading" class="panel-title">Recently played</h2></div>
+          <Show when={!historyError()} fallback={<div class="empty-state"><h3>History unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => void fetchHistory()}>Retry</button></div>}>
+            <Show when={pastHistory().length} fallback={<div class="empty-state"><p>No songs played yet.</p></div>}>
+              <ol class="history-list">
+                <For each={pastHistory()}>
+                  {entry => <li class="history-item"><div class="queue-info"><div class="queue-title">{songLabel(entry.song)}</div><div class="queue-artist">{entry.song.artist || 'Unknown artist'}</div></div><time class="history-time" datetime={entry.started_at}>{formatClock(entry.started_at)}</time></li>}
+                </For>
+              </ol>
+            </Show>
+          </Show>
+        </section>
         <footer class="terminal-footer"><span>Your station. Your selection.</span><span>{busy() ? 'Executing request…' : 'All controls in sync with your station.'}</span></footer>
       </main>
       <dialog ref={clearDialog!} class="terminal-dialog" aria-labelledby="clear-title" aria-describedby="clear-description">
