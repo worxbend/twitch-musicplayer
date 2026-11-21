@@ -229,6 +229,64 @@ func TestMemSongRepoCreateSameIDDoesNotDuplicate(t *testing.T) {
 	if n, _ := repo.Count(ctx); n != 1 {
 		t.Fatalf("Count = %d, want 1", n)
 	}
+	if ok, _ := repo.ExistsByPath(ctx, "/m/a.mp3"); !ok {
+		t.Fatal("ExistsByPath after same-path re-create = false, want true")
+	}
+}
+
+func TestMemSongRepoCreateSameIDNewPathDropsOldPath(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemSongRepo()
+	for _, p := range []string{"/m/x.mp3", "/m/y.mp3"} {
+		if err := repo.Create(ctx, &models.Song{ID: "a", Path: p}); err != nil {
+			t.Fatalf("Create %s: %v", p, err)
+		}
+	}
+
+	if ok, _ := repo.ExistsByPath(ctx, "/m/x.mp3"); ok {
+		t.Fatal("ExistsByPath old path = true, want false")
+	}
+	if ok, _ := repo.ExistsByPath(ctx, "/m/y.mp3"); !ok {
+		t.Fatal("ExistsByPath new path = false, want true")
+	}
+	list, _ := repo.List(ctx)
+	if len(list) != 1 || list[0].Path != "/m/y.mp3" {
+		t.Fatalf("List = %v, want one song at /m/y.mp3", list)
+	}
+	if _, found, _ := repo.DeleteByPath(ctx, "/m/x.mp3"); found {
+		t.Fatal("DeleteByPath old path found = true, want false")
+	}
+	if n, _ := repo.Count(ctx); n != 1 {
+		t.Fatalf("Count = %d after DeleteByPath old path, want 1", n)
+	}
+	if _, found, _ := repo.DeleteByPath(ctx, "/m/y.mp3"); !found {
+		t.Fatal("DeleteByPath new path found = false, want true")
+	}
+	if n, _ := repo.Count(ctx); n != 0 {
+		t.Fatalf("Count = %d after DeleteByPath new path, want 0", n)
+	}
+}
+
+func TestMemSongRepoCreateNewPathKeepsPathClaimedByOtherID(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemSongRepo()
+	for _, s := range []models.Song{
+		{ID: "a", Path: "/m/x.mp3"},
+		{ID: "b", Path: "/m/x.mp3"},
+		{ID: "a", Path: "/m/y.mp3"},
+	} {
+		if err := repo.Create(ctx, &s); err != nil {
+			t.Fatalf("Create %s %s: %v", s.ID, s.Path, err)
+		}
+	}
+
+	if ok, _ := repo.ExistsByPath(ctx, "/m/x.mp3"); !ok {
+		t.Fatal("ExistsByPath claimed path = false, want true")
+	}
+	got, found, _ := repo.DeleteByPath(ctx, "/m/x.mp3")
+	if !found || got.ID != "b" {
+		t.Fatalf("DeleteByPath claimed path = %v, found %v; want song b", got, found)
+	}
 }
 
 func TestMemSongRepoGetByIDUnknown(t *testing.T) {

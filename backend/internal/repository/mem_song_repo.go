@@ -29,11 +29,15 @@ func NewMemSongRepo() *MemSongRepo {
 	}
 }
 
+// Create inserts or replaces a song. Re-creating an ID with a new Path drops
+// the old path from the index unless another ID has since claimed it.
 func (r *MemSongRepo) Create(_ context.Context, song *models.Song) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.byID[song.ID]; !exists {
+	if old, exists := r.byID[song.ID]; !exists {
 		r.order = append(r.order, song.ID)
+	} else if old.Path != song.Path && r.byPath[old.Path] == song.ID {
+		delete(r.byPath, old.Path)
 	}
 	cp := *song
 	r.byID[song.ID] = &cp
