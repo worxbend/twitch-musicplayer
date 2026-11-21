@@ -12,6 +12,7 @@ export function App() {
   const [trackArtist, setTrackArtist] = createSignal('lofi radio · 24/7');
   const [wsStatus, setWsStatus]     = createSignal<ConnectionStatus>('disconnected');
   const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
+  const [mediaState, setMediaState] = createSignal<MediaSessionPlaybackState>('none');
   let backendClient: BackendPlaybackClient | null = null;
   let unbindMediaSession = () => {};
 
@@ -42,8 +43,9 @@ export function App() {
       onPause: () => a.pause(),
     });
     // The OS play/pause state follows the audio element, not the radio's connection reports.
-    a.onPlayStateChange = (state) => setMediaPlayState(session, state);
-    unbindMediaSession = () => { a.onPlayStateChange = undefined; unbindHandlers(); };
+    // PlayerUI reads it too, so a media-key pause shows as Paused.
+    a.onPlayStateChange = (state) => { setMediaPlayState(session, state); setMediaState(state); };
+    unbindMediaSession = () => { a.onPlayStateChange = undefined; setMediaState('none'); unbindHandlers(); };
     backendClient.start();
   };
 
@@ -57,6 +59,7 @@ export function App() {
         trackArtist={trackArtist}
         wsStatus={wsStatus}
         playbackStatus={playbackStatus}
+        paused={() => mediaState() === 'paused'}
         onEnableAudio={() => backendClient?.retryPendingPlay()}
         audio={audio}
       />

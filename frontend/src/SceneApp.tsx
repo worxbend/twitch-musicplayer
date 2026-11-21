@@ -29,6 +29,7 @@ export function SceneApp(props: Props) {
   const [audio, setAudio] = createSignal<AudioEngine | null>(null);
   const [wsStatus, setWsStatus] = createSignal<ConnectionStatus>('disconnected');
   const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
+  const [mediaState, setMediaState] = createSignal<MediaSessionPlaybackState>('none');
   let backendClient: BackendPlaybackClient | null = null;
   let unbindMediaSession = () => {};
 
@@ -74,8 +75,9 @@ export function SceneApp(props: Props) {
       onPause: () => audio.pause(),
     });
     // The OS play/pause state follows the audio element, not the radio's connection reports.
-    audio.onPlayStateChange = (state) => setMediaPlayState(session, state);
-    unbindMediaSession = () => { audio.onPlayStateChange = undefined; unbindHandlers(); };
+    // PlayerUI reads it too, so a media-key pause shows as Paused.
+    audio.onPlayStateChange = (state) => { setMediaPlayState(session, state); setMediaState(state); };
+    unbindMediaSession = () => { audio.onPlayStateChange = undefined; setMediaState('none'); unbindHandlers(); };
     backendClient.start();
   };
 
@@ -100,6 +102,7 @@ export function SceneApp(props: Props) {
           trackArtist={trackArtist}
           wsStatus={wsStatus}
           playbackStatus={playbackStatus}
+          paused={() => mediaState() === 'paused'}
           audio={audio}
           onEnableAudio={() => backendClient?.retryPendingPlay()}
           sceneName={props.scene.label}
