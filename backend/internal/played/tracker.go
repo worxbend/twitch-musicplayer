@@ -1,8 +1,11 @@
 package played
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -142,23 +145,58 @@ func writeSynced(tmp *os.File, f *bloom.BloomFilter) error {
 }
 
 // Load restores the filter from path. Returns nil if path does not exist.
-// On a read error the in-memory filter is left unchanged.
+// A file that fails validateBloomFile or decoding returns an error and leaves
+// the in-memory filter unchanged.
 func (t *Tracker) Load(path string) error {
-	file, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	if err := validateBloomFile(data); err != nil {
+		return fmt.Errorf("bloom file %s: %w", path, err)
+	}
 	f := &bloom.BloomFilter{}
-	if _, err := f.ReadFrom(file); err != nil {
-		return err
+	if _, err := f.ReadFrom(bytes.NewReader(data)); err != nil {
+		return fmt.Errorf("bloom file %s: %w", path, err)
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.f = f
 	t.dirty = false
+	return nil
+}
+
+// bloomHeaderLen is the serialized header: big-endian uint64 m, k and bitset
+// length, followed by ceil(length/64) uint64 words.
+const bloomHeaderLen = 24
+
+// validateBloomFile checks the header of a serialized filter before decoding.
+// The decoder trusts the header: m == 0 makes every lookup divide by zero,
+// k == 0 makes every song test as played, and a huge length allocates before
+// any bit is read.
+func validateBloomFile(data []byte) error {
+	if len(data) < bloomHeaderLen {
+		return fmt.Errorf("header is %d bytes, want %d", len(data), bloomHeaderLen)
+	}
+	m := binary.BigEndian.Uint64(data[0:8])
+	k := binary.BigEndian.Uint64(data[8:16])
+	length := binary.BigEndian.Uint64(data[16:24])
+	if m == 0 || k == 0 {
+		return fmt.Errorf("degenerate filter m=%d k=%d", m, k)
+	}
+	if length != m {
+		return fmt.Errorf("bitset length %d does not match m=%d", length, m)
+	}
+	words := m / 64
+	if m%64 != 0 {
+		words++
+	}
+	// words <= 2^58, so the byte count cannot overflow uint64.
+	if want := bloomHeaderLen + 8*words; uint64(len(data)) != want {
+		return fmt.Errorf("file is %d bytes, want %d for m=%d", len(data), want, m)
+	}
 	return nil
 }

@@ -2,6 +2,7 @@ package played
 
 import (
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,5 +202,68 @@ func TestRunAutosaveWritesAndStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("RunAutosave did not return within 1s of cancel")
+	}
+}
+
+// bloomFile builds a serialized filter: big-endian m, k, bitset length, then
+// the given number of zero words.
+func bloomFile(m, k, length uint64, words int) []byte {
+	data := make([]byte, 24+8*words)
+	binary.BigEndian.PutUint64(data[0:], m)
+	binary.BigEndian.PutUint64(data[8:], k)
+	binary.BigEndian.PutUint64(data[16:], length)
+	return data
+}
+
+func TestLoadRejectsDegenerateOrCorruptFile(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"short header", bloomFile(64, 3, 64, 0)[:23]},
+		{"m is zero", bloomFile(0, 3, 0, 0)},
+		{"k is zero", bloomFile(64, 0, 64, 1)},
+		{"bitset length differs from m", bloomFile(64, 3, 128, 2)},
+		{"huge length header", bloomFile(1<<62, 3, 1<<62, 0)},
+		{"missing words", bloomFile(128, 3, 128, 1)},
+		{"extra words", bloomFile(64, 3, 64, 2)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "x.bloom")
+			if err := os.WriteFile(path, tc.data, 0o600); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+			tr := newTestTracker()
+			tr.MarkPlayed("keep")
+			err := tr.Load(path)
+			if err == nil {
+				t.Fatal("Load returned nil error")
+			}
+			if !strings.Contains(err.Error(), path) {
+				t.Errorf("error %q does not name the file", err)
+			}
+			if !tr.HasPlayed("keep") {
+				t.Fatal("failed Load replaced the in-memory filter")
+			}
+			if tr.HasPlayed("zzz-control") {
+				t.Error("HasPlayed(zzz-control) = true; filter looks degenerate")
+			}
+			tr.MarkPlayed("after") // must not panic
+		})
+	}
+}
+
+func TestLoadAcceptsFileWithPartialLastWord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.bloom")
+	if err := os.WriteFile(path, bloomFile(65, 3, 65, 2), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	tr := newTestTracker()
+	if err := tr.Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if tr.HasPlayed("a") {
+		t.Error("HasPlayed(a) = true on an empty filter")
 	}
 }
