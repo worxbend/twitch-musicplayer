@@ -27,12 +27,14 @@ picked up live by the filesystem watcher — including files added to nested sub
 ## 🔨 Make Targets
 
 ```bash
-make check      # CI gates: fmt-check, vet, test, vulncheck, build
+make check      # CI gates: fmt-check, tidy-check, vet, staticcheck, test, vulncheck, build
 make build      # compile the binary
 make run        # build and run
 make test       # go test -race ./...
 make fmt-check  # fail if gofmt would change a file
+make tidy-check # fail if go mod tidy would change go.mod or go.sum
 make vet        # go vet ./...
+make staticcheck # staticcheck at the CI-pinned version
 make vulncheck  # govulncheck at the CI-pinned version
 make watch      # live reload with pinned air (no global install)
 make clean      # remove build artifacts
