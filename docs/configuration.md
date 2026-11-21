@@ -131,7 +131,7 @@ VITE_AUTO_START_AUDIO=false
 - WebSocket URL: `ws://.../ws` or `wss://.../ws`. A path prefix is kept, so `https://host/radio` gives `wss://host/radio/ws`.
 - Relative stream URL resolution.
 
-`VITE_AUTO_START_AUDIO=true` lets the frontend try to start playback without a browser click. Overlay routes enable this by default for OBS/browser-source use; the main page can also opt in with `?autoplay=1`.
+`VITE_AUTO_START_AUDIO=true` lets the frontend try to start playback without a browser click. OBS browser sources are detected through the `obsstudio` global and always request autoplay, whatever this value says. `?autoplay=1` or `?autoplay=0` on any route overrides both.
 
 ## 📋 Queue Strategies
 

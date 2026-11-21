@@ -66,3 +66,13 @@ test('without a query or OBS the default is returned', () => {
   assert.equal(shouldAutoStartAudio(false), false);
   assert.equal(shouldAutoStartAudio(true), true);
 });
+
+test('an explicit env value cannot switch off OBS detection', () => {
+  usePage('', true);
+  assert.equal(shouldAutoStartAudio(false, 'false'), true);
+});
+
+test('outside OBS the env value beats the default', () => {
+  assert.equal(shouldAutoStartAudio(true, 'false'), false);
+  assert.equal(shouldAutoStartAudio(false, 'true'), true);
+});

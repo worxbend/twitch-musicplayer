@@ -2,14 +2,19 @@ type ObsWindow = Window & {
   obsstudio?: unknown;
 };
 
-export function shouldAutoStartAudio(defaultValue = false) {
+export function shouldAutoStartAudio(
+  defaultValue = false,
+  buildValue = import.meta.env?.VITE_AUTO_START_AUDIO as string | undefined,
+) {
   const queryValue = parseBoolean(new URLSearchParams(window.location.search).get('autoplay'));
   if (queryValue !== null) return queryValue;
 
-  const envValue = parseBoolean(import.meta.env?.VITE_AUTO_START_AUDIO as string | undefined);
-  if (envValue !== null) return envValue;
-
+  // OBS browser sources never get a user gesture, so a build-time "false"
+  // must not silence them; only ?autoplay= can opt an OBS source out.
   if ((window as ObsWindow).obsstudio !== undefined) return true;
+
+  const envValue = parseBoolean(buildValue);
+  if (envValue !== null) return envValue;
 
   return defaultValue;
 }
