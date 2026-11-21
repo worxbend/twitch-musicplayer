@@ -324,7 +324,7 @@ test('a stream error during the fade-in retries instead of becoming current', as
   assert.equal(lastPlayback(), 'playing');
 });
 
-test('a successful retry resets the count for a later failure', async () => {
+test('a successful restart keeps the song\'s retry count; the next song starts fresh', async () => {
   const ws = socket();
   ws.open();
   ws.message(playSong('a'));
@@ -336,15 +336,49 @@ test('a successful retry resets the count for a later failure', async () => {
   await flush();
   assert.equal(lastPlayback(), 'playing');
 
-  // The same song errors mid-playback: it gets a fresh 3 retries.
+  // The same song errors mid-playback: two retries are spent, one is left.
   audio.plays[2].callbacks.onError();
+  assert.equal(needSongCount(ws), 1);
+  mock.timers.tick(5000);
+  assert.equal(audio.plays.length, 4);
+  await failPlay(3);
+  assert.equal(needSongCount(ws), 2);
+  assert.equal(statuses.at(-1)?.message, 'stream unplayable, skipping');
+
+  // A different song gets its own 3 retries.
+  ws.message(playSong('b'));
+  audio.plays[4].settle.resolve();
+  await flush();
+  audio.plays[4].callbacks.onError();
   for (let retry = 1; retry <= 3; retry += 1) {
+    assert.equal(needSongCount(ws), 2, `no skip before retry ${retry}`);
+    mock.timers.tick(5000);
+    assert.equal(audio.plays.length, retry + 5);
+    await failPlay(retry + 4);
+  }
+  assert.equal(needSongCount(ws), 3);
+});
+
+test('a song that starts and then fails every time is skipped after 3 retries', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  audio.plays[0].settle.resolve();
+  await flush();
+  for (let retry = 1; retry <= 3; retry += 1) {
+    audio.plays[retry - 1].callbacks.onError();
     assert.equal(needSongCount(ws), 1, `no skip before retry ${retry}`);
     mock.timers.tick(5000);
-    assert.equal(audio.plays.length, retry + 3);
-    await failPlay(retry + 2);
+    assert.equal(audio.plays.length, retry + 1);
+    audio.plays[retry].settle.resolve();
+    await flush();
   }
+
+  audio.plays[3].callbacks.onError();
   assert.equal(needSongCount(ws), 2);
+  assert.equal(statuses.at(-1)?.message, 'stream unplayable, skipping');
+  mock.timers.tick(5000);
+  assert.equal(audio.plays.length, 4, 'no fifth attempt');
 });
 
 test('NotAllowedError does not count as a stream retry or skip the song', async () => {

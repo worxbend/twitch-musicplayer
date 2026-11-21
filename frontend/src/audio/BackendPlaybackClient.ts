@@ -339,7 +339,9 @@ export class BackendPlaybackClient {
     this.pendingPlay = null;
     window.clearTimeout(this.streamRetryTimer);
     this.errorRetryAttempts = 0;
-    this.resetStreamRetries();
+    // A restart of the same song keeps its count, so a deterministic mid-file
+    // error is still skipped instead of replaying the same seconds forever.
+    if (this.streamRetryHistoryId !== payload.history_id) this.resetStreamRetries();
     if (this.finishedInFlight === payload.history_id) {
       this.finishedInFlight = null;
       this.finishCurrent(payload);
