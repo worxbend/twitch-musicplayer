@@ -594,3 +594,55 @@ test('the same play state is reported once', async () => {
   el.dispatch('pause');
   assert.deepEqual(states, ['playing', 'paused']);
 });
+
+test('a play() that resolves after dispose does not start the disposed engine', async () => {
+  await playFirstTrack();
+  const settleSecond = holdNextPlay();
+  const onStarted = mock.fn();
+  const second = engine.playStream('/stream/b', 'B', { onStarted, onNearEnd: () => {} });
+  await flush();
+  const listen = mock.method(activeElement(), 'addEventListener');
+
+  engine.dispose();
+  settleSecond().resolve();
+  await second;
+
+  assert.equal(onStarted.mock.callCount(), 0);
+  assert.equal(engine.playing, false);
+  assert.equal(engine.mode, 'idle');
+  assert.equal(listen.mock.callCount(), 0);
+});
+
+test('a play() that rejects after dispose reports no further play state and stays idle', async () => {
+  await playFirstTrack();
+  const settleSecond = holdNextPlay();
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+  const incoming = activeElement();
+
+  engine.dispose();
+  const states = recordPlayStates();
+  const loadsAfterDispose = incoming.loads;
+  settleSecond().reject(new DOMException('aborted', 'AbortError'));
+  await assert.rejects(second, { name: 'AbortError' });
+
+  assert.deepEqual(states, []);
+  assert.equal(incoming.loads, loadsAfterDispose, 'released element left alone');
+  assert.equal(engine.playing, false);
+  assert.equal(engine.mode, 'idle');
+});
+
+test('dispose during a crossfade leaves the released elements alone', async () => {
+  const first = await playFirstTrack();
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+  engine.preloadNext('/stream/c');
+
+  engine.dispose();
+  const loadsAfterDispose = first.loads;
+  mock.timers.tick(FADE_MS);
+  await second;
+
+  assert.equal(first.src, '');
+  assert.equal(first.loads, loadsAfterDispose);
+});

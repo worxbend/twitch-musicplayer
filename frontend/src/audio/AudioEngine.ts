@@ -387,7 +387,7 @@ export class AudioEngine {
     } catch (error) {
       this._releaseFadeClaim(outgoing);
       if (superseded()) {
-        if (incoming !== this._activeChannel) this._stopChannel(incoming);
+        if (!this._disposed && incoming !== this._activeChannel) this._stopChannel(incoming);
         throw error;
       }
       this._stopChannel(incoming);
@@ -556,6 +556,8 @@ export class AudioEngine {
   dispose() {
     if (this._disposed) return;
     this._disposed = true;
+    // Supersedes any in-flight playStream so a late play() settle cannot touch released channels.
+    this._transition++;
     this.playing = false;
     this.mode = 'idle';
     this.hasUserSource = false;
