@@ -18,7 +18,7 @@ cp .env.example .env
 cp config.example.toml config.toml
 mkdir -p music
 go mod download
-go run cmd/api/main.go
+go run ./cmd/api
 ```
 
 Drop `.mp3` files into `music/`. Existing files are scanned at startup and new ones are

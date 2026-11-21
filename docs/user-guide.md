@@ -24,7 +24,7 @@ once it is running, it keeps running.
 
 | Step | Do this |
 |:--:|:--|
-| 1️⃣ | Start the backend — see the [Deployment Guide](deployment.md) or just `go run cmd/api/main.go` |
+| 1️⃣ | Start the backend — see the [Deployment Guide](deployment.md) or just `go run ./cmd/api` |
 | 2️⃣ | Start the frontend — `npm run dev` |
 | 3️⃣ | Open `http://localhost:3000` |
 | 4️⃣ | If the browser blocks autoplay, click or tap anywhere once 👆 |

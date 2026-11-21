@@ -136,7 +136,7 @@ Your music is mounted read-only and is never written to. Delete the volume with
 
 ```bash
 cd backend
-go build -o lofi-radio-backend cmd/api/main.go
+go build -o lofi-radio-backend ./cmd/api
 ```
 
 Run:

@@ -10,7 +10,7 @@ COPY . .
 
 # CGO stays off: nothing here needs a C library, so the result is a static
 # binary that runs on any base image.
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /lofi-radio ./cmd/api/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /lofi-radio ./cmd/api
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 # Alpine rather than scratch. It costs about 8 MB, and buys a shell for

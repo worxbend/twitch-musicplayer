@@ -40,7 +40,7 @@ cp .env.example .env
 cp config.example.toml config.toml
 mkdir -p music
 go mod download
-go run cmd/api/main.go
+go run ./cmd/api
 ```
 
 The backend starts at `http://localhost:8080`.

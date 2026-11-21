@@ -9,11 +9,11 @@ all: build test
 
 build:
 	@echo "Building..."
-	@go build -o main cmd/api/main.go
+	@go build -o main ./cmd/api
 
 # Run the application
 run:
-	@go run cmd/api/main.go
+	@go run ./cmd/api
 
 # Test the application
 test:
