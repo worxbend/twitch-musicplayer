@@ -9,6 +9,7 @@ import (
 // SongRepository defines persistence operations for songs.
 type SongRepository interface {
 	Create(ctx context.Context, song *models.Song) error
+	Update(ctx context.Context, song *models.Song) error
 	GetByID(ctx context.Context, id string) (*models.Song, error)
 	List(ctx context.Context) ([]*models.Song, error)
 	Search(ctx context.Context, query string) ([]*models.Song, error)

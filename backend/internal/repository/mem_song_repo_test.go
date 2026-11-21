@@ -73,3 +73,52 @@ func TestMemSongRepoDeleteUnderDirIsSeparatorAware(t *testing.T) {
 		t.Fatal("ExistsByPath /m/a/x.mp3 = true after DeleteUnderDir")
 	}
 }
+
+func TestMemSongRepoUpdateUnknownNeverInserts(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemSongRepo()
+
+	err := repo.Update(ctx, &models.Song{ID: "id:/m/a.mp3", Path: "/m/a.mp3", Title: "Ghost"})
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("Update unknown err = %v, want sql.ErrNoRows", err)
+	}
+	if n, _ := repo.Count(ctx); n != 0 {
+		t.Fatalf("Count = %d after Update unknown, want 0", n)
+	}
+	if ok, _ := repo.ExistsByPath(ctx, "/m/a.mp3"); ok {
+		t.Fatal("ExistsByPath = true after Update unknown")
+	}
+}
+
+func TestMemSongRepoUpdateReplacesInPlace(t *testing.T) {
+	ctx := context.Background()
+	repo := seedSongs(t, "/m/a.mp3", "/m/b.mp3")
+
+	if err := repo.Update(ctx, &models.Song{ID: "id:/m/a.mp3", Path: "/m/a.mp3", Title: "Retagged"}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, err := repo.GetByID(ctx, "id:/m/a.mp3")
+	if err != nil || got.Title != "Retagged" {
+		t.Fatalf("GetByID = (%v, %v), want title Retagged", got, err)
+	}
+	if want := []string{"id:/m/a.mp3", "id:/m/b.mp3"}; len(repo.order) != 2 || repo.order[0] != want[0] || repo.order[1] != want[1] {
+		t.Fatalf("order = %v, want %v", repo.order, want)
+	}
+	if ok, _ := repo.ExistsByPath(ctx, "/m/a.mp3"); !ok {
+		t.Fatal("ExistsByPath = false after Update")
+	}
+}
+
+func TestMemSongRepoUpdateStoresCopy(t *testing.T) {
+	ctx := context.Background()
+	repo := seedSongs(t, "/m/a.mp3")
+	song := &models.Song{ID: "id:/m/a.mp3", Path: "/m/a.mp3", Title: "Stored"}
+
+	if err := repo.Update(ctx, song); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	song.Title = "Mutated"
+	if got, _ := repo.GetByID(ctx, song.ID); got.Title != "Stored" {
+		t.Fatalf("stored title = %q, want Stored", got.Title)
+	}
+}

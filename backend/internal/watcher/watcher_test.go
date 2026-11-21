@@ -503,3 +503,60 @@ func TestWatcherOnUpdatedFiresOnlyWhenMetadataChanges(t *testing.T) {
 		t.Fatalf("OnUpdated fired %d times, want 1", n)
 	}
 }
+
+// deleteOnGetRepo deletes the song right after GetByID returns it, putting a
+// watcher Remove event deterministically inside refreshFile's tag re-read.
+type deleteOnGetRepo struct {
+	*repository.MemSongRepo
+}
+
+func (r deleteOnGetRepo) GetByID(ctx context.Context, id string) (*models.Song, error) {
+	song, err := r.MemSongRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := r.DeleteByPath(ctx, song.Path); err != nil {
+		return nil, err
+	}
+	return song, nil
+}
+
+func TestWatcherRefreshDoesNotReviveSongDeletedMidRefresh(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp3")
+	if err := os.WriteFile(path, taggedMP3(t, "Old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	songs := repository.NewMemSongRepo()
+	mgr := queue.New(songs, played.New(100, 0.01), repository.NewMemQueueRepo(songs), queue.ManagerConfig{
+		Fill: queue.FillConfig{Strategy: queue.FillManualOnly},
+	})
+	w, err := New(dir, []string{".mp3"}, deleteOnGetRepo{songs}, mgr, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { w.fsWatcher.Close() }) // Start, which owns the close, never runs.
+	var updates atomic.Int32
+	w.OnUpdated = func(_ *models.Song) { updates.Add(1) }
+	if _, err := w.ScanExisting(ctx); err != nil {
+		t.Fatalf("ScanExisting: %v", err)
+	}
+	if err := os.WriteFile(path, taggedMP3(t, "New"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	song, err := w.refreshFile(ctx, path)
+	if song != nil || err != nil {
+		t.Fatalf("refreshFile = (%v, %v), want (nil, nil)", song, err)
+	}
+	if n, _ := songs.Count(ctx); n != 0 {
+		t.Fatalf("Count = %d, want 0 (deleted song revived)", n)
+	}
+	if ok, _ := songs.ExistsByPath(ctx, path); ok {
+		t.Fatal("ExistsByPath = true, want false (deleted song revived)")
+	}
+	if n := updates.Load(); n != 0 {
+		t.Fatalf("OnUpdated fired %d times, want 0", n)
+	}
+}

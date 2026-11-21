@@ -23,6 +23,7 @@ type SongRepository interface {
 	ExistsByPath(ctx context.Context, path string) (bool, error)
 	GetByID(ctx context.Context, id string) (*models.Song, error)
 	Create(ctx context.Context, song *models.Song) error
+	Update(ctx context.Context, song *models.Song) error
 	DeleteByPath(ctx context.Context, path string) (*models.Song, bool, error)
 	DeleteUnderDir(ctx context.Context, dir string) ([]*models.Song, error)
 }
@@ -379,7 +380,8 @@ func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool
 // refreshFile re-reads the metadata of an indexed file that was rewritten or
 // replaced, so a retag shows up without a restart. It never re-queues, and it
 // writes and notifies OnUpdated only when the metadata changed. It returns
-// (nil, nil) when the song left the library meanwhile, so it is not revived.
+// (nil, nil) when the song left the library, even mid-refresh: the write is
+// update-only, so a delete racing the tag re-read cannot revive the song.
 func (w *Watcher) refreshFile(ctx context.Context, path string) (*models.Song, error) {
 	current, err := w.songRepo.GetByID(ctx, songID(path))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -396,7 +398,11 @@ func (w *Watcher) refreshFile(ctx context.Context, path string) (*models.Song, e
 	if updated == *current {
 		return current, nil
 	}
-	if err := w.songRepo.Create(ctx, &updated); err != nil {
+	err = w.songRepo.Update(ctx, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	w.logger.Printf("updated: %s", updated.Title)

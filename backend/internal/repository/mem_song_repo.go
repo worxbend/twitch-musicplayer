@@ -40,6 +40,20 @@ func (r *MemSongRepo) Create(_ context.Context, song *models.Song) error {
 	return nil
 }
 
+// Update replaces an existing song's record. It returns sql.ErrNoRows when the
+// ID is not in the library and never inserts, so a stale write cannot revive a
+// deleted song. List order and the path index are unchanged.
+func (r *MemSongRepo) Update(_ context.Context, song *models.Song) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.byID[song.ID]; !ok {
+		return sql.ErrNoRows
+	}
+	cp := *song
+	r.byID[song.ID] = &cp
+	return nil
+}
+
 func (r *MemSongRepo) GetByID(_ context.Context, id string) (*models.Song, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
