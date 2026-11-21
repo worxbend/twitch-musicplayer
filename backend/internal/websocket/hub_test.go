@@ -122,7 +122,7 @@ func TestRegisterUnregisterOrderIsPreserved(t *testing.T) {
 	all := make([]*Client, 0, clients)
 	for i := 0; i < clients; i++ {
 		c := NewClient(h, nil, nil, "", nil)
-		h.Register(c)
+		h.Register(c, nil)
 		h.Unregister(c)
 		all = append(all, c)
 	}
@@ -202,7 +202,7 @@ func TestRegisterAfterShutdownClosesClient(t *testing.T) {
 	}
 
 	c := NewClient(h, nil, nil, "", nil)
-	h.Register(c)
+	h.Register(c, nil)
 
 	if got := h.ClientCount(); got != 0 {
 		t.Fatalf("ClientCount = %d, want 0", got)
@@ -220,7 +220,7 @@ func TestRegisterAfterShutdownClosesClient(t *testing.T) {
 func TestShutdownIsIdempotent(t *testing.T) {
 	h := NewHub()
 	c := newTestClient(1)
-	h.Register(c)
+	h.Register(c, nil)
 
 	for i := 0; i < 2; i++ {
 		if err := h.Shutdown(context.Background()); err != nil {

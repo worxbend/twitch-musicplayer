@@ -379,3 +379,68 @@ func TestNeedSongOnEmptyLibraryKeepsNowPlaying(t *testing.T) {
 	drainSent(t, c, MsgError)
 	assertSongKept(t, c)
 }
+
+// racingQueueManager starts song b and broadcasts now_playing the first time
+// ListQueue runs, which is while ServeWS builds the connect snapshot. It then
+// waits, giving the hub time to deliver that broadcast if it is allowed to.
+type racingQueueManager struct {
+	emptyQueueManager
+	hub     *Hub
+	tracker *player.StateTracker
+	once    sync.Once
+}
+
+func (m *racingQueueManager) ListQueue(context.Context) ([]*models.QueueItem, error) {
+	m.once.Do(func() {
+		song := &models.Song{ID: "b"}
+		m.tracker.SetCurrentSong(song)
+		if msg, err := Encode(MsgNowPlaying, NowPlayingPayload{Song: *song}); err == nil {
+			m.hub.Broadcast(msg)
+		}
+		time.Sleep(50 * time.Millisecond)
+	})
+	return nil, nil
+}
+
+// A song change racing a new peer's connect must not reach the peer ahead of
+// the connect snapshot: state(a) then now_playing(b) leaves b on screen, while
+// the reverse order leaves the stale a showing for the whole of b.
+func TestConnectSnapshotPrecedesRacingNowPlaying(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+	tracker := player.NewStateTracker()
+	tracker.SetCurrentSong(&models.Song{ID: "a"})
+	mgr := &racingQueueManager{hub: hub, tracker: tracker}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ServeWS(hub, mgr, "", tracker, w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	conn, _, err := ws.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
+
+	for _, want := range []struct{ msgType, songID string }{{MsgState, "a"}, {MsgNowPlaying, "b"}} {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		var payload struct {
+			CurrentSong *models.Song `json:"current_song"`
+			Song        *models.Song `json:"song"`
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			t.Fatalf("decode %s: %v", msg.Type, err)
+		}
+		song := payload.Song
+		if msg.Type == MsgState {
+			song = payload.CurrentSong
+		}
+		if msg.Type != want.msgType || song == nil || song.ID != want.songID {
+			t.Fatalf("frame = %s song %v, want %s song %s", msg.Type, song, want.msgType, want.songID)
+		}
+	}
+}

@@ -117,7 +117,7 @@ func (c *Client) trySend(msg Message) bool {
 }
 
 // ServeWS upgrades the HTTP connection to WebSocket, registers the client with
-// the hub, sends the initial state message, and starts the read/write pumps.
+// the hub and its initial state message, and starts the read/write pumps.
 func ServeWS(hub *Hub, queueMgr QueueManager, baseURL string, st *player.StateTracker, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -126,14 +126,12 @@ func ServeWS(hub *Hub, queueMgr QueueManager, baseURL string, st *player.StateTr
 	}
 
 	c := NewClient(hub, conn, queueMgr, baseURL, st)
-	hub.Register(c)
-
-	// Queue the initial snapshot before the pumps start, so it is the first
-	// frame the peer receives. The request context is not used here: it is
-	// cancelled as soon as ServeWS returns, which would abort these lookups.
-	if msg, encErr := Encode(MsgState, c.snapshotState(context.Background())); encErr == nil {
-		c.trySend(msg)
-	}
+	// Register queues the snapshot as the first frame, ahead of any
+	// broadcast. The request context is not used here: it is cancelled as
+	// soon as ServeWS returns, which would abort these lookups.
+	hub.Register(c, func() (Message, error) {
+		return Encode(MsgState, c.snapshotState(context.Background()))
+	})
 
 	hub.goPump(c.writePump)
 	go c.readPump()

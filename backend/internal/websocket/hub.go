@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"log"
 	"sync"
 
 	ws "github.com/gorilla/websocket"
@@ -82,10 +83,18 @@ func (h *Hub) Broadcast(msg Message) {
 
 // Register adds a client to the hub. During shutdown it refuses the client
 // and closes it with 1001 Going Away instead.
-func (h *Hub) Register(c *Client) {
+//
+// A non-nil first builds the client's first frame. It runs and is queued
+// under the write lock that deliver needs, so no broadcast can reach c ahead
+// of it, and every later broadcast reflects state at least as new as the
+// state first read. first must not call back into the hub's locking methods.
+func (h *Hub) Register(c *Client, first func() (Message, error)) {
 	h.mu.Lock()
 	refused := h.closing
 	if !refused {
+		if first != nil {
+			queueFirstFrame(c, first)
+		}
 		h.clients[c] = struct{}{}
 	}
 	h.mu.Unlock()
@@ -93,6 +102,17 @@ func (h *Hub) Register(c *Client) {
 	if refused {
 		c.closeWith(ws.CloseGoingAway, shutdownReason)
 	}
+}
+
+// queueFirstFrame queues first's message on c. An encode failure is logged
+// and the client is still registered, just without the frame.
+func queueFirstFrame(c *Client, first func() (Message, error)) {
+	msg, err := first()
+	if err != nil {
+		log.Printf("websocket first frame: %v", err)
+		return
+	}
+	c.trySend(msg)
 }
 
 // goPump runs pump in its own goroutine. Pumps started before Shutdown are
