@@ -6,39 +6,25 @@ import (
 
 // Hub manages all active WebSocket connections.
 type Hub struct {
-	clients    map[*Client]struct{}
-	broadcast  chan Message
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.RWMutex
+	clients   map[*Client]struct{}
+	broadcast chan Message
+	mu        sync.RWMutex
 }
 
 // NewHub creates a new Hub ready to Run.
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[*Client]struct{}),
-		broadcast:  make(chan Message, 256),
-		register:   make(chan *Client, 16),
-		unregister: make(chan *Client, 16),
+		clients:   make(map[*Client]struct{}),
+		broadcast: make(chan Message, 256),
 	}
 }
 
-// Run processes register, unregister, and broadcast events.
-// It must be started in its own goroutine.
+// Run delivers queued broadcasts to clients. It must be started in its own
+// goroutine. Register and Unregister do not go through Run: they edit the
+// client set directly under h.mu so their order is never reshuffled.
 func (h *Hub) Run() {
-	for {
-		select {
-		case c := <-h.register:
-			h.mu.Lock()
-			h.clients[c] = struct{}{}
-			h.mu.Unlock()
-
-		case c := <-h.unregister:
-			h.drop(c)
-
-		case msg := <-h.broadcast:
-			h.deliver(msg)
-		}
+	for msg := range h.broadcast {
+		h.deliver(msg)
 	}
 }
 
@@ -54,9 +40,7 @@ func (h *Hub) deliver(msg Message) {
 	}
 	h.mu.RUnlock()
 
-	// Removed inline rather than via h.unregister: Run is the only reader of
-	// that channel, so sending to it from here would deadlock the hub once the
-	// channel buffer filled.
+	// Dropped only after RUnlock: drop takes the write lock.
 	for _, c := range stalled {
 		h.drop(c)
 	}
@@ -85,12 +69,14 @@ func (h *Hub) Broadcast(msg Message) {
 
 // Register adds a client to the hub.
 func (h *Hub) Register(c *Client) {
-	h.register <- c
+	h.mu.Lock()
+	h.clients[c] = struct{}{}
+	h.mu.Unlock()
 }
 
 // Unregister removes a client from the hub and stops its write pump.
 func (h *Hub) Unregister(c *Client) {
-	h.unregister <- c
+	h.drop(c)
 }
 
 // ClientCount returns the number of currently connected clients.

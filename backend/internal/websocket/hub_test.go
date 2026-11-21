@@ -36,12 +36,12 @@ func TestSendAfterDropDoesNotPanic(t *testing.T) {
 }
 
 // TestDeliverDropsStalledClientsWithoutDeadlock covers the hub deadlock: Run
-// used to remove an overflowed client by sending to h.unregister, a channel
-// only Run itself drains, so the hub froze once that buffer filled. More
-// stalled clients than the unregister buffer holds are used here on purpose.
+// used to remove an overflowed client by sending to an unregister channel only
+// Run itself drained, so the hub froze once that 16-slot buffer filled. More
+// stalled clients than that buffer held are used here on purpose.
 func TestDeliverDropsStalledClientsWithoutDeadlock(t *testing.T) {
 	h := NewHub()
-	const stalledClients = 64 // > cap(h.unregister)
+	const stalledClients = 64
 
 	for i := 0; i < stalledClients; i++ {
 		c := newTestClient(0) // zero buffer: every send fails immediately
@@ -103,5 +103,38 @@ func TestDeliverReachesLiveClients(t *testing.T) {
 	}
 	if got := h.ClientCount(); got != 1 {
 		t.Fatalf("live client should stay registered, count=%d", got)
+	}
+}
+
+// TestRegisterUnregisterOrderIsPreserved covers the ghost client: Register and
+// Unregister used separate channels drained by one select, so a peer that
+// disconnected right after connecting could be unregistered before it was
+// registered, leaving a dead client counted in the hub.
+func TestRegisterUnregisterOrderIsPreserved(t *testing.T) {
+	h := NewHub()
+	go h.Run()
+
+	const clients = 2000
+	all := make([]*Client, 0, clients)
+	for i := 0; i < clients; i++ {
+		c := NewClient(h, nil, nil, "", nil)
+		h.Register(c)
+		h.Unregister(c)
+		all = append(all, c)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for h.ClientCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("ghost clients left in hub: %d", h.ClientCount())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	for i, c := range all {
+		select {
+		case <-c.closed:
+		default:
+			t.Fatalf("client %d was unregistered but never closed", i)
+		}
 	}
 }
