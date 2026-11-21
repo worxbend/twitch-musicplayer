@@ -21,7 +21,7 @@ tracks, and renders an audio-reactive visualizer you can drop straight into OBS.
 
 <br />
 
-**[📻 Overview](#-overview) · [🖥️ Screenshots](#-screenshots) · [⚡ Quick Start](#-quick-start) · [🎬 The Scenes](#-the-scenes) · [📚 Docs](#-documentation)**
+**[🌐 Website](https://worxbend.github.io/twitch-musicplayer/) · [📻 Overview](#-overview) · [🖥️ Screenshots](#-screenshots) · [⚡ Quick Start](#-quick-start) · [🎬 The Scenes](#-the-scenes) · [📚 Docs](#-documentation)**
 
 </div>
 

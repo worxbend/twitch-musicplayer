@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lofi Radio for Twitch: your MP3s, on air all night</title>
+  <meta name="description" content="A self-hosted 24/7 lofi radio for your stream. Point it at a folder of MP3s and get crossfades, audio-reactive OBS scenes, a live queue console and now-playing text for chat bots." />
+  <meta property="og:title" content="Lofi Radio for Twitch" />
+  <meta property="og:description" content="Your MP3s, on air all night. Self-hosted radio with audio-reactive OBS scenes." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://worxbend.github.io/twitch-musicplayer/" />
+  <meta property="og:image" content="https://worxbend.github.io/twitch-musicplayer/shots/player-desktop.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="theme-color" content="#ff8f5e" />
+  <link rel="icon" href="logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;600&display=swap" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="masthead">
+    <a class="brand" href="./">
+      <img src="logo.png" alt="" width="40" height="40" />
+      <span>Lofi Radio <em>for Twitch</em></span>
+    </a>
+    <nav aria-label="Page">
+      <a href="#features">What it does</a>
+      <a href="#tracklist">Routes</a>
+      <a href="#start">Get it running</a>
+      <a class="nav-gh" href="https://github.com/worxbend/twitch-musicplayer">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <h1 id="hero-title">Your MP3s.<br />On air.<br />All night.</h1>
+        <p class="lede">A self-hosted 24/7 lofi radio for your stream. Point it at a folder of
+          music you're allowed to broadcast, and it picks, crossfades and paints every track
+          into an OBS scene. No subscription, no algorithm, no stranger's playlist.</p>
+        <div class="cta-row">
+          <a class="btn btn-ink" href="#start">Get it running</a>
+          <a class="btn btn-line" href="https://github.com/worxbend/twitch-musicplayer">Read the code on GitHub</a>
+        </div>
+      </div>
+
+      <figure class="tuner" aria-labelledby="tuner-caption">
+        <div class="tuner-screen">
+          <img id="tuner-shot" src="shots/player-desktop.png" width="1440" height="960"
+               alt="Ambient player: an orbital record, fine rain and a floating track deck" />
+        </div>
+        <figcaption id="tuner-caption" class="tuner-readout">
+          <span class="readout-route" id="tuner-route">/</span>
+          <span class="readout-text" id="tuner-text">Orbital record, spectral needles and fine rain.</span>
+        </figcaption>
+        <fieldset class="dial">
+          <legend class="visually-hidden">Tune to a scene</legend>
+          <div class="dial-band" aria-hidden="true"><span class="needle" id="needle"></span></div>
+          <div class="dial-stations" id="stations">
+            <label><input type="radio" name="scene" value="player" checked /><span>Ambient</span></label>
+            <label><input type="radio" name="scene" value="spectrum" /><span>Spectrum</span></label>
+            <label><input type="radio" name="scene" value="bars" /><span>Bars</span></label>
+            <label><input type="radio" name="scene" value="mirror" /><span>Mirror</span></label>
+            <label><input type="radio" name="scene" value="dots" /><span>Dots</span></label>
+            <label><input type="radio" name="scene" value="ribbon" /><span>Ribbon</span></label>
+            <label><input type="radio" name="scene" value="line" /><span>Line</span></label>
+            <label><input type="radio" name="scene" value="lens" /><span>Lens</span></label>
+          </div>
+        </fieldset>
+      </figure>
+    </section>
+
+    <section id="features" class="band band-night" aria-labelledby="features-title">
+      <div class="wrap split">
+        <div>
+          <h2 id="features-title">Built for the stream, not the playlist.</h2>
+          <p class="aside">A Go backend runs the station. A SolidJS and PixiJS frontend plays it,
+            draws it and hands it to OBS. Everything stays on your machine.</p>
+        </div>
+        <dl class="features">
+          <div>
+            <dt>It never goes quiet</dt>
+            <dd>Equal-power crossfades between tracks. Broken files get retried, then skipped.
+              Dropped connections reconnect on their own.</dd>
+          </div>
+          <div>
+            <dt>Drop files in, they're on the air</dt>
+            <dd>The library watches your folder. New MP3s are queued once the copy finishes;
+              deleted ones leave quietly; retagged ones update live.</dd>
+          </div>
+          <div>
+            <dt>Eight scenes that actually listen</dt>
+            <dd>Audio-reactive WebGL visuals, each with a transparent overlay twin and colour
+              ramps. Paste the URL into an OBS browser source and you're done.</dd>
+          </div>
+          <div>
+            <dt>Chat knows what's playing</dt>
+            <dd>A transparent now-playing overlay, a text file for OBS Text sources, and
+              <code>/v1/now-playing.txt</code> for Nightbot or StreamElements.</dd>
+          </div>
+          <div>
+            <dt>No repeats, no artist pile-ups</dt>
+            <dd>Every song plays once per cycle, and the same artist never plays twice in a row.
+              Play history survives restarts.</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section id="tracklist" class="band band-mint" aria-labelledby="tracklist-title">
+      <div class="wrap">
+        <h2 id="tracklist-title">The tracklist</h2>
+        <p class="aside">Every route is its own page, sized to drop into OBS.</p>
+        <div class="sides">
+          <div class="side">
+            <h3>Side A: the station</h3>
+            <ol>
+              <li><code>/</code><span>The listening room, with a floating track deck</span></li>
+              <li><code>/scenes</code><span>Every visualizer, with copyable OBS links</span></li>
+              <li><code>/admin</code><span>Library search, live queue, skip and play now</span></li>
+              <li><code>/now-playing</code><span>Transparent title text that fades on cue</span></li>
+              <li><code>/overlay</code><span>The ambient scene with the chrome stripped off</span></li>
+            </ol>
+          </div>
+          <div class="side">
+            <h3>Side B: the scenes</h3>
+            <ol>
+              <li><code>/spectrum</code><span>Phosphor traces and a phase portrait</span></li>
+              <li><code>/bars</code><span>Segmented spectral towers with peak markers</span></li>
+              <li><code>/mirror</code><span>Filaments woven inside the waveform</span></li>
+              <li><code>/dots</code><span>A curved, frequency-lit constellation</span></li>
+              <li><code>/ribbon</code><span>Five aurora-silk surfaces shaped by sound</span></li>
+              <li><code>/line</code><span>A receding topographic landscape of audio</span></li>
+              <li><code>/lens</code><span>Glass prisms with refracted seams</span></li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="band band-butter" aria-labelledby="console-title">
+      <div class="wrap split split-media">
+        <div>
+          <h2 id="console-title">Run the queue like you own the booth.</h2>
+          <p>Search your library, queue a track, play one right now, move it up or down, or
+            skip the current song. Recently played sits right there, so you can answer
+            "what was that?" in chat without guessing.</p>
+          <p>It works from the keyboard, and screen readers hear every status change.</p>
+        </div>
+        <img class="shot" src="shots/console-desktop.png" width="1440" height="1141" loading="lazy"
+             alt="Station console with the current track, a searchable music library and the upcoming queue" />
+      </div>
+    </section>
+
+    <section id="start" class="band band-night" aria-labelledby="start-title">
+      <div class="wrap">
+        <h2 id="start-title">On air in three steps</h2>
+        <p class="aside">You need Docker and a folder of MP3s.</p>
+        <ol class="steps">
+          <li>
+            <h3>Clone it</h3>
+            <div class="code">
+              <pre><code>git clone https://github.com/worxbend/twitch-musicplayer.git
+cd twitch-musicplayer</code></pre>
+              <button class="copy" type="button">Copy</button>
+            </div>
+          </li>
+          <li>
+            <h3>Point it at your music</h3>
+            <div class="code">
+              <pre><code>MUSIC_DIR=~/Music docker compose up -d --build</code></pre>
+              <button class="copy" type="button">Copy</button>
+            </div>
+          </li>
+          <li>
+            <h3>Add it to OBS</h3>
+            <p>Open <code>http://localhost:3000/scenes</code>, pick a scene, copy its overlay URL
+              into a browser source. The console lives at <code>/admin</code>.</p>
+          </li>
+        </ol>
+        <p class="note">Running it on another machine? Set <code>BASE_URL</code> and
+          <code>ALLOWED_ORIGINS</code> first. The
+          <a href="https://github.com/worxbend/twitch-musicplayer/blob/main/docs/deployment.md">deployment guide</a>
+          walks through it.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p class="footer-big">Bring your own music. Keep your own rules.</p>
+    <p>Use music you have permission to broadcast. Made by
+      <a href="https://github.com/worxbend">worxbend</a> with Go, SolidJS and PixiJS.</p>
+    <ul class="footer-links">
+      <li><a href="https://github.com/worxbend/twitch-musicplayer">Source on GitHub</a></li>
+      <li><a href="https://github.com/worxbend/twitch-musicplayer/tree/main/docs">Documentation</a></li>
+      <li><a href="https://github.com/worxbend/twitch-musicplayer/blob/main/docs/api.md">HTTP API</a></li>
+    </ul>
+  </footer>
+
+  <p class="visually-hidden" role="status" aria-live="polite" id="copy-status"></p>
+  <script src="tuner.js" defer></script>
+</body>
+</html>
