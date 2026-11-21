@@ -2,3 +2,7 @@ node_modules/
 dist/
 .env
 .env.*
+tests/
+playwright-report/
+test-results/
+*.log

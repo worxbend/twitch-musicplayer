@@ -94,3 +94,43 @@ jobs:
             frontend/test-results
           retention-days: 7
           if-no-files-found: ignore
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: build backend image
+        run: docker build -t lofi-backend:ci backend
+      - name: build frontend image
+        run: docker build -t lofi-frontend:ci frontend
+      - name: smoke backend
+        run: |
+          set -euo pipefail
+          docker run -d --name be -p 8080:8080 -e BASE_URL=http://127.0.0.1:8080 --tmpfs /music lofi-backend:ci
+          for i in $(seq 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/health
+          test "$(docker exec be id -u)" = 10001
+          # The Bloom autosave target must be writable by the non-root user.
+          docker exec be touch /data/probe
+      - name: smoke frontend
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          docker run -d --name fe -p 3000:80 -e BACKEND_URL=https://radio.example lofi-frontend:ci
+          for i in $(seq 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/ && break; sleep 1; done
+          curl -fsS http://127.0.0.1:3000/ > index.html
+          curl -fsS -D headers.txt http://127.0.0.1:3000/config.js > config.js
+          grep -F 'backendUrl: "https://radio.example"' config.js
+          grep -i '^cache-control:.*no-store' headers.txt
+          curl -fsS http://127.0.0.1:3000/admin > admin.html
+          grep -F '/assets/admin-' admin.html
+          if cmp -s index.html admin.html; then echo "/admin served the SPA index"; exit 1; fi
+          curl -fsS -o /dev/null http://127.0.0.1:3000/now-playing
+      - name: container logs
+        if: failure()
+        run: |
+          docker logs be || true
+          docker logs fe || true

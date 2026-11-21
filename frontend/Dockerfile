@@ -19,7 +19,7 @@ ENV VITE_AUTO_START_AUDIO=$VITE_AUTO_START_AUDIO
 RUN npm run build
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM nginx:alpine
+FROM nginx:1.30-alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf

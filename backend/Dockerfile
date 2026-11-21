@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /lofi-radio ./cmd/api/
 # Alpine rather than scratch. It costs about 8 MB, and buys a shell for
 # debugging, wget for the healthcheck below, and the ability to create /data
 # with the right ownership so the Bloom filter can be written by a non-root user.
-FROM alpine:3.21
+FROM alpine:3.24
 
 # wget comes from busybox in the base image, so only certificates and zone data
 # are actually needed here.
