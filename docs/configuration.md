@@ -22,7 +22,7 @@ port = 8080
 base_url = "http://localhost:8080"
 
 [bloom]
-path = "./lofi-radio.bloom"
+path = "./lofi-radio.bloom"  # play history: flushed every minute when it changed, and on clean shutdown
 
 [music]
 dir = "./music"

@@ -121,6 +121,7 @@ func main() {
 			log.Printf("watcher stopped: %v", err)
 		}
 	}()
+	go playedTracker.RunAutosave(ctx, cfg.BloomPath, time.Minute, log.Printf)
 
 	// ── Shutdown ──────────────────────────────────────────────────────────────
 	done := make(chan bool, 1)

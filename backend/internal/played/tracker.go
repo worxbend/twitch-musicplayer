@@ -1,11 +1,13 @@
 package played
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/bits-and-blooms/bloom/v3"
 )
@@ -19,6 +21,7 @@ type Tracker struct {
 	f      *bloom.BloomFilter
 	cap    uint
 	fpRate float64
+	dirty  bool // filter changed since the last successful SaveIfDirty or Load
 }
 
 // New creates a Tracker sized for n estimated items at the given false-positive rate.
@@ -35,6 +38,7 @@ func (t *Tracker) MarkPlayed(songID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.f.AddString(songID)
+	t.dirty = true
 }
 
 // HasPlayed reports whether songID has been played.
@@ -49,6 +53,7 @@ func (t *Tracker) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.f = bloom.NewWithEstimates(t.cap, t.fpRate)
+	t.dirty = true
 }
 
 // ApproxCount returns the estimated number of distinct songs played since last Reset.
@@ -64,6 +69,50 @@ func (t *Tracker) ApproxCount() uint32 {
 func (t *Tracker) Save(path string) error {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	return t.saveLocked(path)
+}
+
+// SaveIfDirty saves the filter to path only if it changed since the last
+// successful SaveIfDirty or Load. It reports whether it wrote the file. On error
+// the tracker stays dirty so the next call retries.
+//
+// It holds the write lock for the whole write so a concurrent MarkPlayed cannot
+// slip in between the save and the dirty reset. The filter is small, so the
+// pause for callers is short.
+func (t *Tracker) SaveIfDirty(path string) (bool, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.dirty {
+		return false, nil
+	}
+	if err := t.saveLocked(path); err != nil {
+		return false, err
+	}
+	t.dirty = false
+	return true, nil
+}
+
+// RunAutosave calls SaveIfDirty every interval until ctx is done, so a crash or
+// SIGKILL loses at most one interval of play history. Failures go to logf;
+// successful saves are not logged.
+func (t *Tracker) RunAutosave(ctx context.Context, path string, every time.Duration, logf func(string, ...any)) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := t.SaveIfDirty(path); err != nil {
+				logf("warning: bloom autosave failed: %v", err)
+			}
+		}
+	}
+}
+
+// saveLocked writes the filter to path atomically. The caller holds t.mu
+// (read or write).
+func (t *Tracker) saveLocked(path string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".bloom-*")
 	if err != nil {
 		return err
@@ -110,5 +159,6 @@ func (t *Tracker) Load(path string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.f = f
+	t.dirty = false
 	return nil
 }
