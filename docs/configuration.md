@@ -54,6 +54,7 @@ APP_ENV=local
 BLOOM_PATH=./lofi-radio.bloom
 MUSIC_DIR=./music
 BASE_URL=http://localhost:8080
+ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 ```
 
 Environment variables override TOML values:
@@ -63,6 +64,7 @@ Environment variables override TOML values:
 | `LOFI_CONFIG` | path to the TOML file itself | `config.toml` |
 | `PORT` | `server.port` | `8080` |
 | `BASE_URL` | `server.base_url` | `http://localhost:8080` |
+| `ALLOWED_ORIGINS` | `server.allowed_origins` (comma-separated) | `http://localhost:3000,http://127.0.0.1:3000` |
 | `MUSIC_DIR` | `music.dir` | `./music` |
 | `BLOOM_PATH` | `bloom.path` | `./lofi-radio.bloom` |
 
@@ -88,8 +90,21 @@ file is fine: defaults are used. These fail startup:
   or that has a `?query` or `#fragment`. Empty is allowed: stream URLs then stay relative and
   the frontend resolves them against `VITE_BACKEND_URL`.
 
+- A `server.allowed_origins` (or `ALLOWED_ORIGINS`) entry that is not exactly
+  `http(s)://host[:port]`: no path, query, fragment or user info, and no `*` wildcard.
+
 Extensions without a leading dot are accepted and normalized (`"mp3"` becomes `".mp3"`).
 Trailing slashes on `server.base_url` are trimmed (`http://host:8080/` becomes `http://host:8080`).
+Origins are lowercased and lose a trailing slash; blank entries in `ALLOWED_ORIGINS` are dropped.
+
+## 🔒 Allowed Origins
+
+`server.allowed_origins` lists the frontend addresses whose pages may open `/ws`, read API
+responses and send writes. A page from any other site gets `403`, and no
+`Access-Control-Allow-Origin`. Requests without an `Origin` header (curl, scripts, OBS
+plugins) are not affected, and the `server.base_url` origin is always allowed so
+`/swagger` keeps working. Opening the frontend at another address, such as
+`http://myserver:3000` or a moved port, needs that address added.
 
 ## 📝 OBS Now-Playing File
 

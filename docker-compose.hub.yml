@@ -9,7 +9,8 @@
 # Backend:  http://localhost:8080        Swagger: http://localhost:8080/swagger
 #
 # Deploying somewhere other than localhost? Set BASE_URL and BACKEND_URL to the
-# address your browser will use, for example https://radio.example.com:8080.
+# address your browser will use, for example https://radio.example.com:8080,
+# and ALLOWED_ORIGINS to the frontend's address, e.g. https://radio.example.com.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: lofi-radio
@@ -28,6 +29,9 @@ services:
       MUSIC_DIR: /music
       BLOOM_PATH: /data/lofi-radio.bloom
       BASE_URL: ${BASE_URL:-http://localhost:8080}
+      # Comma-separated frontend addresses, as the browser sees them, whose
+      # pages may control the station. Pages from anywhere else are refused.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-3000},http://127.0.0.1:${FRONTEND_PORT:-3000}}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 15s

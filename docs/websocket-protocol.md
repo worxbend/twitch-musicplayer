@@ -32,6 +32,10 @@ All messages use:
 The server reads at most 4096 bytes per client frame. A larger frame closes
 the connection with code 1009 (message too big).
 
+A browser upgrade whose `Origin` is not in `server.allowed_origins` (or the
+`server.base_url` origin) is refused with HTTP 403. Clients that send no
+`Origin` header connect normally.
+
 ## 📤 Client To Server
 
 ### `need_song`
@@ -154,7 +158,7 @@ Known reasons:
 
 ### `state`
 
-Sent after connection with a lightweight state snapshot. It is also broadcast to every
+Sent as the first frame after connection, with a lightweight state snapshot. It is also broadcast to every
 client when a `song_finished` meets an empty `manual_only` queue, or an empty library under
 an auto strategy; `current_song` is then absent, so overlays and the admin console stop
 showing the finished song. Because the player sends `song_finished` at the crossfade lead,

@@ -92,6 +92,7 @@ at all.
 | `BACKEND_PORT` | `8080` | Host port for the API and WebSocket |
 | `BASE_URL` | `http://localhost:8080` | Address the backend puts into stream URLs |
 | `BACKEND_URL` | *(empty)* | Address the page looks for the backend at |
+| `ALLOWED_ORIGINS` | `http://localhost:<FRONTEND_PORT>,http://127.0.0.1:<FRONTEND_PORT>` | Frontend addresses whose pages may control the station |
 | `VITE_BACKEND_URL` | *(empty)* | Compiles a backend URL into the bundle |
 | `VITE_AUTO_START_AUDIO` | `false` | Start audio without a click |
 | `DOCKERHUB_NAMESPACE` | `worxbend` | Docker Hub account for build/hub files |
@@ -125,6 +126,11 @@ BASE_URL=https://radio.example.com \
 BACKEND_URL=https://radio.example.com \
 docker compose -f docker-compose.hub.yml up -d
 ```
+
+`ALLOWED_ORIGINS` is not optional on a remote server either: set it to the address you
+open the frontend at (`ALLOWED_ORIGINS=http://myserver:3000`, or
+`https://radio.example.com` above). Otherwise the backend refuses the page's WebSocket
+with `403` and the player stays Offline.
 
 Changing it needs only a restart, never a rebuild. 🎉
 
@@ -230,10 +236,15 @@ Do not place these inside ephemeral container layers.
 
 ## 🔐 Security Notes
 
-The current backend CORS and WebSocket origin handling are permissive for local development. For production:
+There is no authentication. Only browser origins in `ALLOWED_ORIGINS` may open `/ws`,
+read API responses or send writes; pages from other sites get `403`. This matters even on
+a localhost-only install: any web page open in the streamer's browser, such as a link
+clicked in chat, can reach `http://localhost:8080`. Keep the list to your own frontend
+addresses, and never add a site you do not control. Clients without an `Origin` header,
+such as curl or anything on the LAN that can reach port 8080, are not restricted. For
+production:
 
-- Restrict allowed origins.
-- Restrict WebSocket origins.
+- Do not publish port 8080 beyond the machines that need it.
 - Add authentication for queue control endpoints if exposed publicly.
 - Consider read-only public song streaming and authenticated queue mutation.
 

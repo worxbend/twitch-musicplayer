@@ -113,6 +113,5 @@ Partially implemented. `/health` exists, but the response is minimal and should 
 ## Not Implemented Yet
 
 - Authentication/authorization for queue mutation.
-- Production-grade WebSocket origin restrictions (`CheckOrigin` accepts every origin).
 - An end-to-end WebSocket protocol test over a real socket (see the
   [Contributor Guide](contributor-guide.md#-testing-gaps-to-close)).

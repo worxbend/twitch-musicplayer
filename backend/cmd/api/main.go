@@ -90,14 +90,15 @@ func main() {
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	httpServer := server.New(server.Options{
-		Port:         cfg.Port,
-		Hub:          hub,
-		Songs:        songsH,
-		Queue:        queueH,
-		Player:       playerH,
-		BaseURL:      cfg.BaseURL,
-		QueueMgr:     queueMgr,
-		StateTracker: stateTracker,
+		Port:           cfg.Port,
+		Hub:            hub,
+		Songs:          songsH,
+		Queue:          queueH,
+		Player:         playerH,
+		BaseURL:        cfg.BaseURL,
+		QueueMgr:       queueMgr,
+		StateTracker:   stateTracker,
+		AllowedOrigins: cfg.Server.AllowedOrigins,
 	})
 
 	// ── Bootstrap ─────────────────────────────────────────────────────────────

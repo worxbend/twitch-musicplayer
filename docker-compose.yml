@@ -33,6 +33,9 @@ services:
       # Must be the address the *browser* uses, because stream URLs are built
       # from it and handed to the page.
       BASE_URL: ${BASE_URL:-http://localhost:8080}
+      # Comma-separated frontend addresses, as the browser sees them, whose
+      # pages may control the station. Pages from anywhere else are refused.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-3000},http://127.0.0.1:${FRONTEND_PORT:-3000}}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 15s

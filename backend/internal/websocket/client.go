@@ -28,14 +28,6 @@ const (
 	maxMessageSize = 4096
 )
 
-var upgrader = ws.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // CORS handled at HTTP layer
-	},
-}
-
 // QueueManager is the subset of queue.Manager the client uses.
 type QueueManager interface {
 	NextSong(ctx context.Context) (*models.Song, error)
@@ -67,7 +59,7 @@ type Client struct {
 	closeText string
 }
 
-// NewClient constructs a Client. Call ServeWS instead of this directly.
+// NewClient constructs a Client. Serve peers through Endpoint instead.
 func NewClient(hub *Hub, conn *ws.Conn, queueMgr QueueManager, baseURL string, st *player.StateTracker) *Client {
 	return &Client{
 		hub:          hub,
@@ -116,25 +108,46 @@ func (c *Client) trySend(msg Message) bool {
 	}
 }
 
-// ServeWS upgrades the HTTP connection to WebSocket, registers the client with
-// the hub and its initial state message, and starts the read/write pumps.
-func ServeWS(hub *Hub, queueMgr QueueManager, baseURL string, st *player.StateTracker, w http.ResponseWriter, r *http.Request) {
+// Endpoint is the /ws handler: it connects peers to one hub.
+type Endpoint struct {
+	Hub          *Hub
+	QueueMgr     QueueManager
+	BaseURL      string
+	StateTracker *player.StateTracker
+	// AllowOrigin reports whether a page at a browser origin may connect.
+	// Browsers do not apply CORS to WebSocket upgrades, so without this any
+	// page could drive the station. Nil refuses every browser origin.
+	AllowOrigin func(origin string) bool
+}
+
+// ServeHTTP upgrades the HTTP connection to WebSocket, registers the client
+// with the hub and its initial state message, and starts the read/write pumps.
+// An upgrade from a refused origin is answered 403.
+func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	upgrader := ws.Upgrader{ReadBufferSize: 1024, WriteBufferSize: 1024, CheckOrigin: e.checkOrigin}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("websocket upgrade error: %v", err)
 		return
 	}
 
-	c := NewClient(hub, conn, queueMgr, baseURL, st)
+	c := NewClient(e.Hub, conn, e.QueueMgr, e.BaseURL, e.StateTracker)
 	// Register queues the snapshot as the first frame, ahead of any
 	// broadcast. The request context is not used here: it is cancelled as
-	// soon as ServeWS returns, which would abort these lookups.
-	hub.Register(c, func() (Message, error) {
+	// soon as ServeHTTP returns, which would abort these lookups.
+	e.Hub.Register(c, func() (Message, error) {
 		return Encode(MsgState, c.snapshotState(context.Background()))
 	})
 
-	hub.goPump(c.writePump)
+	e.Hub.goPump(c.writePump)
 	go c.readPump()
+}
+
+// checkOrigin lets in requests without an Origin header, which only
+// non-browser clients send, and browser origins AllowOrigin accepts.
+func (e *Endpoint) checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	return origin == "" || (e.AllowOrigin != nil && e.AllowOrigin(origin))
 }
 
 // snapshotState builds the PlayerState sent to a peer on connect and

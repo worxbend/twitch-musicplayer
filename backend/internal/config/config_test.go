@@ -311,3 +311,39 @@ func TestLoadFromExpandsOBSFile(t *testing.T) {
 		t.Errorf("now_playing_format = %q, want default", cfg.OBS.NowPlayingFormat)
 	}
 }
+
+func TestLoadFromAllowedOrigins(t *testing.T) {
+	tests := []struct {
+		name, toml, env string
+		want            []string
+	}{
+		{name: "defaults to the local frontend", want: []string{"http://localhost:3000", "http://127.0.0.1:3000"}},
+		{name: "toml list", toml: `allowed_origins = ["https://radio.example"]`, want: []string{"https://radio.example"}},
+		{name: "env overrides toml", toml: `allowed_origins = ["https://toml"]`, env: "http://a:3000, https://b", want: []string{"http://a:3000", "https://b"}},
+		{name: "normalized", env: " HTTP://Radio.Example:3000/ ,,", want: []string{"http://radio.example:3000"}},
+		{name: "empty toml list allows no browser origin", toml: `allowed_origins = []`, want: []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeConfig(t, "[server]\n"+tt.toml+"\n")
+			cfg, err := loadFrom(path, fakeEnv(map[string]string{"ALLOWED_ORIGINS": tt.env}))
+			if err != nil {
+				t.Fatalf("loadFrom: %v", err)
+			}
+			if got := strings.Join(cfg.Server.AllowedOrigins, " "); got != strings.Join(tt.want, " ") {
+				t.Errorf("allowed origins = %q, want %q", cfg.Server.AllowedOrigins, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadFromRejectsBadAllowedOrigin(t *testing.T) {
+	for _, bad := range []string{"*", "localhost:3000", "ftp://x", "http://", "http://h/path", "http://h?x", "http://h#f", "http://u@h", "null"} {
+		t.Run(bad, func(t *testing.T) {
+			_, err := loadFrom(missingPath(t), fakeEnv(map[string]string{"ALLOWED_ORIGINS": bad}))
+			if err == nil || !strings.Contains(err.Error(), "server.allowed_origins: ") {
+				t.Errorf("loadFrom error = %v, want one naming server.allowed_origins", err)
+			}
+		})
+	}
+}

@@ -35,6 +35,10 @@ type Config struct {
 type ServerConfig struct {
 	Port    int    `toml:"port"`
 	BaseURL string `toml:"base_url"`
+	// AllowedOrigins lists the browser origins (scheme://host[:port]) whose
+	// pages may open /ws and send writes. Any web page the streamer has open
+	// can reach a localhost backend, so this is not left open to all.
+	AllowedOrigins []string `toml:"allowed_origins"`
 }
 
 type MusicConfig struct {
@@ -70,7 +74,11 @@ type OBSConfig struct {
 
 func defaults() *Config {
 	return &Config{
-		Server:  ServerConfig{Port: 8080, BaseURL: "http://localhost:8080"},
+		Server: ServerConfig{
+			Port:           8080,
+			BaseURL:        "http://localhost:8080",
+			AllowedOrigins: []string{"http://localhost:3000", "http://127.0.0.1:3000"},
+		},
 		Music:   MusicConfig{Dir: "./music", Extensions: []string{".mp3", ".MP3"}},
 		Bloom:   BloomConfig{Path: "./lofi-radio.bloom"},
 		Shuffle: ShuffleConfig{Strategy: "round_robin", RecentWindow: 0},
@@ -138,12 +146,16 @@ func loadFrom(path string, getenv func(string) string) (*Config, error) {
 	if v := getenv("BLOOM_PATH"); v != "" {
 		cfg.Bloom.Path = v
 	}
+	if v := getenv("ALLOWED_ORIGINS"); v != "" {
+		cfg.Server.AllowedOrigins = strings.Split(v, ",")
+	}
 
 	cfg.Music.Dir = expandHomePath(cfg.Music.Dir)
 	cfg.Bloom.Path = expandHomePath(cfg.Bloom.Path)
 	cfg.OBS.NowPlayingFile = expandHomePath(cfg.OBS.NowPlayingFile)
 	cfg.Music.Extensions = normalizeExtensions(cfg.Music.Extensions)
 	cfg.Server.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.Server.BaseURL), "/")
+	cfg.Server.AllowedOrigins = normalizeOrigins(cfg.Server.AllowedOrigins)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -181,6 +193,9 @@ func (c *Config) Validate() error {
 		checkNonNegative("queue.preload_size", c.Queue.PreloadSize),
 		checkBaseURL("server.base_url", c.Server.BaseURL),
 	)
+	for _, origin := range c.Server.AllowedOrigins {
+		errs = append(errs, checkOrigin("server.allowed_origins", origin))
+	}
 	errs = append(errs, checkOBS(c.OBS)...)
 	return errors.Join(errs...)
 }
@@ -254,6 +269,39 @@ func checkBaseURL(key, value string) error {
 		return fmt.Errorf("%s: %q must not contain a query or fragment", key, value)
 	}
 	return nil
+}
+
+// checkOrigin accepts a browser origin: http(s), a host and an optional port,
+// with nothing after it. Browsers send exactly that in the Origin header.
+func checkOrigin(key, value string) error {
+	u, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("%s: %q is not a valid origin: %w", key, value, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%s: %q must start with http:// or https://", key, value)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%s: %q has no host", key, value)
+	}
+	if u.User != nil || u.Path != "" || strings.ContainsAny(value, "?#") {
+		return fmt.Errorf("%s: %q must be scheme://host[:port] with nothing else", key, value)
+	}
+	return nil
+}
+
+// normalizeOrigins trims and lowercases each origin and drops a trailing
+// slash, so it compares equal to a browser's Origin header. Blank entries,
+// such as the one a trailing comma leaves, are dropped.
+func normalizeOrigins(origins []string) []string {
+	out := make([]string, 0, len(origins))
+	for _, origin := range origins {
+		origin = strings.ToLower(strings.TrimRight(strings.TrimSpace(origin), "/"))
+		if origin != "" {
+			out = append(out, origin)
+		}
+	}
+	return out
 }
 
 // normalizeExtensions trims each extension and ensures it starts with '.',

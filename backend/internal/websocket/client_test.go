@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -41,7 +40,7 @@ func (m listedQueueManager) ListQueue(context.Context) ([]*models.QueueItem, err
 	return m.items, nil
 }
 
-// dialTestServer starts ServeWS behind httptest and returns a connected peer
+// dialTestServer starts an Endpoint behind httptest and returns a connected peer
 // whose initial state frame has already been consumed.
 func dialTestServer(t *testing.T, queueMgr QueueManager) *ws.Conn {
 	t.Helper()
@@ -54,9 +53,7 @@ func dialTestHub(t *testing.T, queueMgr QueueManager) (*Hub, *ws.Conn) {
 	t.Helper()
 	hub := NewHub()
 	go hub.Run()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ServeWS(hub, queueMgr, "", player.NewStateTracker(), w, r)
-	}))
+	srv := httptest.NewServer(&Endpoint{Hub: hub, QueueMgr: queueMgr, StateTracker: player.NewStateTracker()})
 	t.Cleanup(srv.Close)
 
 	conn, _, err := ws.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
@@ -381,7 +378,7 @@ func TestNeedSongOnEmptyLibraryKeepsNowPlaying(t *testing.T) {
 }
 
 // racingQueueManager starts song b and broadcasts now_playing the first time
-// ListQueue runs, which is while ServeWS builds the connect snapshot. It then
+// ListQueue runs, which is while Endpoint builds the connect snapshot. It then
 // waits, giving the hub time to deliver that broadcast if it is allowed to.
 type racingQueueManager struct {
 	emptyQueueManager
@@ -411,9 +408,7 @@ func TestConnectSnapshotPrecedesRacingNowPlaying(t *testing.T) {
 	tracker := player.NewStateTracker()
 	tracker.SetCurrentSong(&models.Song{ID: "a"})
 	mgr := &racingQueueManager{hub: hub, tracker: tracker}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ServeWS(hub, mgr, "", tracker, w, r)
-	}))
+	srv := httptest.NewServer(&Endpoint{Hub: hub, QueueMgr: mgr, StateTracker: tracker})
 	t.Cleanup(srv.Close)
 
 	conn, _, err := ws.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)

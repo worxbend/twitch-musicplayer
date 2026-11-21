@@ -179,7 +179,9 @@ container start from `BACKEND_URL`, falling back to the host that served the pag
 8080, and moving the backend behind TLS needs a restart, not a rebuild. On any host other
 than localhost, set `BASE_URL` to the backend address your browser uses (for example
 `BASE_URL=http://myserver:8080`): it defaults to `http://localhost:8080`, so stream URLs
-would point at the viewer's own machine and nothing would play.
+would point at the viewer's own machine and nothing would play. Set `ALLOWED_ORIGINS` to
+the frontend address you open (for example `http://myserver:3000`) too: the backend
+refuses WebSocket and write requests from pages at any other address.
 
 📖 Full details → **[Deployment Guide](docs/deployment.md)**
 

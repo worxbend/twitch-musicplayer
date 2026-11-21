@@ -3,6 +3,10 @@
 [server]
 port = 8080
 base_url = "http://localhost:8080"
+# Browser origins (frontend addresses) whose pages may open /ws and send
+# writes. Requests from other pages get 403; clients without an Origin header,
+# such as curl, are not affected. The base_url origin is always allowed.
+allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 [bloom]
 # Bloom filter persisting which songs have been played (the only on-disk state).

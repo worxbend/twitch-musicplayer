@@ -25,6 +25,9 @@ type Options struct {
 	BaseURL      string
 	QueueMgr     websocket.QueueManager
 	StateTracker *player.StateTracker
+	// AllowedOrigins are the browser origins allowed to open /ws, read API
+	// responses and send writes. BaseURL's own origin is always allowed.
+	AllowedOrigins []string
 }
 
 // New wires up the Chi router and returns a configured *http.Server.
@@ -61,16 +64,18 @@ func logExcept(paths ...string) func(http.Handler) http.Handler {
 }
 
 func buildRoutes(opts Options) http.Handler {
+	allowOrigin := newOriginPolicy(opts.AllowedOrigins, opts.BaseURL)
 	r := chi.NewRouter()
 	r.Use(logExcept("/health"))
 	r.Use(middleware.Recoverer)
+	// No credentials: no endpoint uses cookies or HTTP auth.
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*", "http://*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
-		AllowCredentials: true,
-		MaxAge:           300,
+		AllowOriginFunc: func(_ *http.Request, origin string) bool { return allowOrigin(origin) },
+		AllowedMethods:  []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders:  []string{"Accept", "Authorization", "Content-Type"},
+		MaxAge:          300,
 	}))
+	r.Use(rejectForeignWrites(allowOrigin))
 
 	// HEAD is registered alongside GET because probes commonly use it —
 	// `wget --spider` and most load balancers send HEAD, and chi would
@@ -86,8 +91,12 @@ func buildRoutes(opts Options) http.Handler {
 	r.Get("/health", health)
 	r.Head("/health", health)
 
-	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
-		websocket.ServeWS(opts.Hub, opts.QueueMgr, opts.BaseURL, opts.StateTracker, w, r)
+	r.Method(http.MethodGet, "/ws", &websocket.Endpoint{
+		Hub:          opts.Hub,
+		QueueMgr:     opts.QueueMgr,
+		BaseURL:      opts.BaseURL,
+		StateTracker: opts.StateTracker,
+		AllowOrigin:  allowOrigin,
 	})
 
 	r.Get("/swagger", api.ServeSwagger)

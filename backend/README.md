@@ -50,6 +50,7 @@ Environment variables take precedence over TOML values:
 | `LOFI_CONFIG` | config file location | `config.toml` |
 | `PORT` | `server.port` | `8080` |
 | `BASE_URL` | `server.base_url` | `http://localhost:8080` |
+| `ALLOWED_ORIGINS` | `server.allowed_origins` (comma-separated) | `http://localhost:3000,http://127.0.0.1:3000` |
 | `MUSIC_DIR` | `music.dir` | `./music` |
 | `BLOOM_PATH` | `bloom.path` | `./lofi-radio.bloom` |
 
