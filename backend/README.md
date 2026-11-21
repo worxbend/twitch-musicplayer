@@ -76,7 +76,7 @@ Shuffle and queue strategies are TOML-only. See `.env.example` and `config.examp
 | `GET` | `/v1/queue` | Current queue, song metadata included |
 | `POST` | `/v1/queue` | Append a song — body `{"song_id":"..."}` |
 | `DELETE` | `/v1/queue/{id}` | Remove one queue entry by **queue item** ID |
-| `POST` | `/v1/queue:skip` | Advance to the next song |
+| `POST` | `/v1/queue:skip` | Broadcast `skip_now` and return the upcoming song (no dequeue) |
 | `POST` | `/v1/queue:clear` | Empty the queue |
 | `POST` | `/v1/queue:play-next` | Jump a song to the front and broadcast `skip_now` |
 

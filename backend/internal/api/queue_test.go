@@ -23,6 +23,7 @@ type fakeQueueManager struct {
 	playNextErr  error
 	listErr      error
 	clearErr     error
+	autoSelects  bool
 	addedID      string
 	playNextID   string
 	addedSource  models.QueueSource
@@ -47,6 +48,8 @@ func (f *fakeQueueManager) PlayNext(_ context.Context, songID string) error {
 func (f *fakeQueueManager) ListQueue(context.Context) ([]*models.QueueItem, error) {
 	return f.items, f.listErr
 }
+
+func (f *fakeQueueManager) AutoSelects() bool { return f.autoSelects }
 
 func (f *fakeQueueManager) ClearQueue(context.Context) error {
 	f.clearedCalls++
@@ -215,18 +218,21 @@ func TestQueueSkip(t *testing.T) {
 	front := &models.QueueItem{ID: "q1", SongID: "n", Song: &models.Song{ID: "n"}}
 	behind := &models.QueueItem{ID: "q2", SongID: "m", Song: &models.Song{ID: "m"}}
 	tests := []struct {
-		name     string
-		items    []*models.QueueItem
-		listErr  error
-		wantCode int
+		name        string
+		items       []*models.QueueItem
+		listErr     error
+		autoSelects bool
+		wantCode    int
+		wantSongID  string
 	}{
-		{name: "non-empty queue", items: []*models.QueueItem{front, behind}, wantCode: http.StatusOK},
-		{name: "empty queue", wantCode: http.StatusConflict},
+		{name: "non-empty queue", items: []*models.QueueItem{front, behind}, wantCode: http.StatusOK, wantSongID: "n"},
+		{name: "empty queue, manual_only", wantCode: http.StatusConflict},
+		{name: "empty queue, auto-select", autoSelects: true, wantCode: http.StatusOK},
 		{name: "list error", listErr: errors.New("boom"), wantCode: http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mgr := &fakeQueueManager{items: tt.items, listErr: tt.listErr}
+			mgr := &fakeQueueManager{items: tt.items, listErr: tt.listErr, autoSelects: tt.autoSelects}
 			b := &fakeBroadcaster{}
 			rec := serve(t, queueRouter(mgr, &fakeQueueRepo{}, b), http.MethodPost, "/v1/queue:skip", "", nil)
 			if rec.Code != tt.wantCode {
@@ -242,11 +248,14 @@ func TestQueueSkip(t *testing.T) {
 				return
 			}
 			var got struct {
-				Song models.Song `json:"song"`
+				Song *models.Song `json:"song"`
 			}
 			decodeBody(t, rec, &got)
-			if got.Song.ID != front.Song.ID {
-				t.Fatalf("song = %+v, want id %s", got.Song, front.Song.ID)
+			switch {
+			case tt.wantSongID == "" && got.Song != nil:
+				t.Fatalf("song = %+v, want null", got.Song)
+			case tt.wantSongID != "" && (got.Song == nil || got.Song.ID != tt.wantSongID):
+				t.Fatalf("song = %+v, want id %s", got.Song, tt.wantSongID)
 			}
 			if len(b.msgs) != 2 || b.msgs[0].Type != websocket.MsgSkipNow {
 				t.Fatalf("broadcasts = %v, want %s then %s", b.types(), websocket.MsgSkipNow, websocket.MsgQueueUpdated)

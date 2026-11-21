@@ -192,7 +192,7 @@ paths:
       tags: [queue]
       responses:
         "200":
-          description: Skip broadcast sent; `song` is the upcoming song (null if its entry is stale)
+          description: Skip broadcast sent; `song` is the upcoming queued song (null when the queue is empty and the strategy auto-selects, or the entry is stale)
           content:
             application/json:
               schema:
@@ -203,7 +203,7 @@ paths:
                     allOf:
                       - $ref: "#/components/schemas/Song"
         "409":
-          description: Queue is empty; nothing is broadcast
+          description: Queue is empty under manual_only; nothing is broadcast
           content:
             application/json:
               schema:

@@ -189,6 +189,12 @@ func (m *Manager) initialQueueTarget() int {
 	}
 }
 
+// AutoSelects reports whether NextSong picks a song itself when the queue is
+// empty, which every fill strategy except manual_only does.
+func (m *Manager) AutoSelects() bool {
+	return m.cfg.Fill.Strategy != FillManualOnly
+}
+
 // NextSong selects the next song according to the configured fill and shuffle strategies.
 // It marks the song as played in the tracker and returns it.
 func (m *Manager) NextSong(ctx context.Context) (*models.Song, error) {

@@ -87,7 +87,8 @@ POST /v1/queue:skip
 
 Interrupts the current track on every connected player by broadcasting `skip_now`, and
 returns the upcoming song as `{"song": {...}}` without dequeuing it; the player's `need_song`
-request dequeues it. Returns `409 {"error":"queue is empty"}` when nothing is queued.
+request dequeues it. With an empty queue, `song` is `null` and the player auto-selects, except
+under `manual_only`, which returns `409 {"error":"queue is empty"}` and broadcasts nothing.
 
 ```http
 POST /v1/queue:clear

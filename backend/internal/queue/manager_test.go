@@ -162,4 +162,7 @@ func TestNewKeepsFillConfigWhenShuffleEmpty(t *testing.T) {
 	if _, err := m.NextSong(ctx); err != ErrQueueEmpty {
 		t.Errorf("NextSong err = %v, want ErrQueueEmpty (manual_only must not auto-select)", err)
 	}
+	if m.AutoSelects() {
+		t.Error("AutoSelects = true, want false for manual_only")
+	}
 }
