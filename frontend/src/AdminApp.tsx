@@ -1,5 +1,6 @@
 import { createSignal, createEffect, onMount, onCleanup, For, Show } from 'solid-js';
 import { getBackendURL, getWebSocketURL } from './config/backend';
+import { reconnectDelay, HEARTBEAT_MS, isStale } from './config/reconnect';
 import { TerminalHeader } from './components/TerminalHeader';
 
 interface Song {
@@ -85,18 +86,39 @@ export function AdminApp() {
   let socket: WebSocket | null = null;
   let heartbeatInterval = 0;
   let reconnectTimeout = 0;
+  let reconnectAttempts = 0;
+  let lastMessageAt = 0;
+  function dropSocket() {
+    window.clearInterval(heartbeatInterval);
+    if (socket) {
+      socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null;
+      socket.close();
+      socket = null;
+    }
+    setConnected(false);
+  }
+  function scheduleReconnect() {
+    window.clearTimeout(reconnectTimeout);
+    reconnectTimeout = window.setTimeout(connectWS, reconnectDelay(reconnectAttempts++));
+  }
   function connectWS() {
     if (disposed || (socket && socket.readyState <= WebSocket.OPEN)) return;
-    socket = new WebSocket(getWebSocketURL());
-    socket.onopen = () => {
+    const ws = new WebSocket(getWebSocketURL());
+    socket = ws;
+    ws.onopen = () => {
+      reconnectAttempts = 0;
+      lastMessageAt = Date.now();
       setConnected(true);
       void fetchQueue(); void fetchPlayerState();
       window.clearInterval(heartbeatInterval);
       heartbeatInterval = window.setInterval(() => {
-        if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'heartbeat' }));
-      }, 25000);
+        // Half-open socket: no heartbeat_ack or update for too long.
+        if (isStale(lastMessageAt, Date.now())) { dropSocket(); scheduleReconnect(); return; }
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'heartbeat' }));
+      }, HEARTBEAT_MS);
     };
-    socket.onmessage = e => {
+    ws.onmessage = e => {
+      lastMessageAt = Date.now();
       try {
         const msg = JSON.parse(e.data) as { type: string; payload?: { song?: Song; current_song?: Song } };
         if (msg.type === 'queue_updated') void fetchQueue();
@@ -104,12 +126,11 @@ export function AdminApp() {
         if (msg.type === 'state') { setCurrentSong(msg.payload?.current_song ?? null); void fetchQueue(); }
       } catch { /* Ignore malformed protocol messages. */ }
     };
-    socket.onclose = () => {
-      setConnected(false);
-      window.clearInterval(heartbeatInterval);
-      if (!disposed) reconnectTimeout = window.setTimeout(connectWS, 3000);
+    ws.onclose = () => {
+      dropSocket();
+      if (!disposed) scheduleReconnect();
     };
-    socket.onerror = () => socket?.close();
+    ws.onerror = () => ws.close();
   }
   createEffect(() => {
     const q = searchQuery();
@@ -127,7 +148,7 @@ export function AdminApp() {
     window.clearTimeout(reconnectTimeout);
     window.clearTimeout(notifTimer);
     window.clearTimeout(searchTimer);
-    if (socket) { socket.onclose = null; socket.close(); }
+    dropSocket();
   });
 
   return (
