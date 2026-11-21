@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -156,8 +157,13 @@ func main() {
 // logged, not fatal: on Windows OBS may briefly hold the file open.
 func setupNowPlayingFile(tracker *player.StateTracker, obs config.OBSConfig) {
 	file := player.NewNowPlayingFile(obs.NowPlayingFile, obs.NowPlayingFormat)
-	write := func(song *models.Song) {
-		if err := file.Write(song); err != nil {
+	var writeMu sync.Mutex
+	// Hooks from concurrent song changes can run out of order, so each write
+	// re-reads the tracker under writeMu and the last write is always current.
+	write := func(*models.Song) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		if err := file.Write(tracker.GetCurrentSong()); err != nil {
 			log.Printf("warning: %v", err)
 		}
 	}
