@@ -151,6 +151,7 @@ export class BackendPlaybackClient {
     this.awaitingSong = false;
     this.resetStreamRetries();
     window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = 0;
     window.clearInterval(this.heartbeatTimer);
     window.clearTimeout(this.streamRetryTimer);
     window.clearTimeout(this.errorRetryTimer);
@@ -240,7 +241,10 @@ export class BackendPlaybackClient {
     const delay = Math.min(reconnectBaseMs * 2 ** this.reconnectAttempts, reconnectMaxMs);
     this.reconnectAttempts += 1;
     window.clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = window.setTimeout(() => this.connect(), delay);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = 0;
+      this.connect();
+    }, delay);
   }
 
   private async handleMessage(msg: SocketMessage) {
@@ -454,7 +458,9 @@ export class BackendPlaybackClient {
     if (this.outbox.length > maxOutboxMessages) {
       this.outbox.splice(0, this.outbox.length - maxOutboxMessages);
     }
-    this.reconnectNow();
+    // A live socket flushes the outbox on open and a pending timer reconnects;
+    // forcing a reconnect here would abort the handshake or lengthen the backoff.
+    if (!this.socket && !this.reconnectTimer) this.connect();
   }
 
   private send(message: SocketMessage) {
@@ -472,6 +478,7 @@ export class BackendPlaybackClient {
     this.report({ connection: 'reconnecting' }, reason);
     window.clearInterval(this.heartbeatTimer);
     window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = 0;
     if (this.socket) {
       // Detach first so this socket's own close/error events cannot schedule a second reconnect.
       detachSocket(this.socket);

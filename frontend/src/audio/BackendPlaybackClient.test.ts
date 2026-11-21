@@ -409,6 +409,45 @@ test('a song_finished lost with its socket is followed by need_song on the next 
   assert.equal(needSongCount(socket(1)), 1);
 });
 
+function songFinishedCount(ws: FakeWebSocket) {
+  return ws.sent.filter(m => (m as { type: string }).type === 'song_finished').length;
+}
+
+// Plays song a on socket(0), then drops that socket so a 900 ms reconnect is pending.
+async function playThenDisconnect() {
+  socket(0).open();
+  socket(0).message(playSong('a'));
+  audio.plays[0].settle.resolve();
+  await flush();
+  socket(0).close();
+}
+
+test('a message queued during the handshake does not abort it', async () => {
+  await playThenDisconnect();
+  mock.timers.tick(900);
+  const handshake = socket(1);
+  assert.equal(handshake.readyState, FakeWebSocket.CONNECTING);
+
+  audio.plays[0].callbacks.onNearEnd();
+  assert.equal(FakeWebSocket.instances.length, 2, 'no new socket');
+  assert.equal(handshake.readyState, FakeWebSocket.CONNECTING, 'handshake not closed');
+
+  handshake.open();
+  assert.equal(songFinishedCount(handshake), 1);
+});
+
+test('a message queued during backoff keeps the pending timer', async () => {
+  await playThenDisconnect();
+  audio.plays[0].callbacks.onNearEnd();
+  mock.timers.tick(899);
+  assert.equal(FakeWebSocket.instances.length, 1, 'no reconnect before 900ms');
+  mock.timers.tick(1);
+  assert.equal(FakeWebSocket.instances.length, 2, 'one reconnect at 900ms');
+
+  socket(1).open();
+  assert.equal(songFinishedCount(socket(1)), 1);
+});
+
 test('a need_song still in the outbox is sent once on reconnect', () => {
   socket(0).open();
   socket(0).message({ type: 'error', payload: { message: 'queue empty' } });
