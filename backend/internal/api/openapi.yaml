@@ -36,6 +36,13 @@ paths:
                     example: up
         "503":
           description: Service is unhealthy
+    head:
+      summary: Health check (headers only)
+      description: Same as GET without a body. Used by probes such as `wget --spider`.
+      operationId: headHealth
+      responses:
+        "200":
+          description: Service is healthy
 
   /v1/songs:
     get:
@@ -88,6 +95,37 @@ paths:
       summary: Stream song audio
       description: Returns the raw MP3 file. Supports `Range` headers for seeking.
       operationId: streamSong
+      tags: [songs]
+      parameters:
+        - $ref: "#/components/parameters/songId"
+        - name: Range
+          in: header
+          schema:
+            type: string
+            example: "bytes=0-"
+      responses:
+        "200":
+          description: Full audio file
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial content (range response)
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/songs/{id}:stream:
+    get:
+      summary: Stream song audio (alias)
+      description: Alias of `/v1/songs/{id}/content`. Returns the raw MP3 file. Supports `Range` headers for seeking.
+      operationId: streamSongAlias
       tags: [songs]
       parameters:
         - $ref: "#/components/parameters/songId"
