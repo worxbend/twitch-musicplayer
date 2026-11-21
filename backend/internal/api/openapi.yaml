@@ -458,7 +458,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     BadRequest:
-      description: Malformed JSON or missing song_id
+      description: Malformed JSON or a missing or invalid request field
       content:
         application/json:
           schema:
