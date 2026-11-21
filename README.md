@@ -228,6 +228,7 @@ size it, done.
 | `/` | 🌧️ Orbital record, spectral needles, fine rain, and a floating track deck |
 | `/overlay` | 🪟 Same scene, chrome stripped out |
 | `/logo-overlay` | ✨ Transparent orbital composition, with no controls |
+| `/now-playing` | 🏷️ Transparent title and artist text only; never advances the queue |
 | `/admin` | 🎚️ Library browser, live queue, skip & play-now |
 
 **Seven audio-reactive scenes**, each with a transparent `-overlay` twin:
@@ -245,6 +246,10 @@ size it, done.
 Recolour any instrument, including the ambient scene, with
 `?ramp=SPECTRUM|AURORA|EMBER|NEON|VU` — for example `/bars?ramp=EMBER` or
 `/spectrum-overlay?ramp=NEON`. Scene switching preserves the selected ramp.
+
+`/now-playing` takes `?align=left|center|right` and `?size=12–120` (title size in px), for
+example `http://<host>/now-playing?align=center&size=40`. It plays no audio, so pair it with
+one audio source page. It only listens to the backend, so it never takes songs off the queue.
 
 > 💡 **Pro tip:** append `?transparent=1` to force transparency on any of the seven scene routes.
 > `?autoplay=1` requests autoplay; the browser may still require a user gesture.

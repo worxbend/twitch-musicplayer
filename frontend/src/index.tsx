@@ -1,5 +1,7 @@
 import { render } from 'solid-js/web';
 import { App } from './App';
+import { NowPlayingOverlay } from './NowPlayingOverlay';
+import { parseNowPlayingOptions } from './nowPlaying';
 import { OverlayApp } from './OverlayApp';
 import { SceneApp } from './SceneApp';
 import { ScenesIndex } from './ScenesIndex';
@@ -11,6 +13,7 @@ const { pathname, search } = window.location;
 const isOverlay = pathname === '/overlay';
 const isLogoOverlay = ['/logo', '/logo-overlay'].includes(pathname);
 const isScenesIndex = ['/scenes', '/scenes/'].includes(pathname);
+const isNowPlaying = ['/now-playing', '/now-playing/'].includes(pathname);
 
 // Any visualizer in the catalogue, opaque at /<slug> and transparent at
 // /<slug>-overlay. Adding a scene to viz/scenes.ts routes it automatically.
@@ -22,6 +25,7 @@ render(
     if (isLogoOverlay) return <OverlayApp transparent showBackground={false} />;
     if (isOverlay) return <OverlayApp />;
     if (isScenesIndex) return <ScenesIndex />;
+    if (isNowPlaying) return <NowPlayingOverlay {...parseNowPlayingOptions(search)} />;
     if (sceneRoute) {
       return (
         <SceneApp

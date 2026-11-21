@@ -73,6 +73,13 @@ Plus the two original pages:
 | `/` | 🌧️ Full lofi rain scene with now-playing card, progress bar and clock | Opaque |
 | `/overlay` | 🪟 The same scene with the chrome removed | Opaque |
 | `/logo-overlay` | ✨ Logo only | **Transparent** |
+| `/now-playing` | 🏷️ Current title and artist as text | **Transparent** |
+
+`/now-playing` is a text-only overlay, for example
+`http://<host>/now-playing?align=center&size=40`. `align` is `left`, `center` or `right`
+(default `left`); `size` is the title size in px from 12 to 120 (default 32). It plays no
+audio, so pair it with the audio source page. It only listens to the backend and never
+advances the queue, so it is safe to add alongside a playing page.
 
 ### 🎨 Recolouring
 
