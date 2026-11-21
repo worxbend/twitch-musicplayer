@@ -21,8 +21,8 @@ Example: `backend/config.example.toml`.
 port = 8080
 base_url = "http://localhost:8080"
 
-[database]
-path = "./lofi-radio.db"
+[bloom]
+path = "./lofi-radio.bloom"
 
 [music]
 dir = "./music"
@@ -76,6 +76,7 @@ and prints every problem it found, each one naming its TOML key. A missing TOML
 file is fine: defaults are used. These fail startup:
 
 - A TOML file that does not parse.
+- Unknown keys or sections (a typo such as `queue.min_ahed`); the error names each one.
 - A `PORT` that is not an integer, or a `server.port` outside `1..65535`.
 - An unknown `shuffle.strategy`. Allowed: `random`, `weighted_history`, `round_robin`, `least_played`.
 - An unknown `queue.strategy`. Allowed: `manual_only`, `auto_refill`, `preload`.

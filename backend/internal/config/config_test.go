@@ -106,6 +106,9 @@ func TestLoadFromErrors(t *testing.T) {
 		{name: "malformed toml", body: "[server\nport = ", wantSub: []string{"parse ", "config.toml"}},
 		{name: "unparsable PORT", env: map[string]string{"PORT": "80a"}, wantSub: []string{"PORT", `"80a"`}},
 		{name: "invalid value", body: "[queue]\nstrategy = \"auto-refill\"\n", wantSub: []string{"queue.strategy"}},
+		{name: "unknown section", body: "[database]\npath = \"x\"\n", wantSub: []string{"unknown config keys", "database.path"}},
+		{name: "misspelled key", body: "[queue]\nmin_ahed = 2\n", wantSub: []string{"unknown config keys", "queue.min_ahed"}},
+		{name: "top-level flat field", body: "Port = 9\n", wantSub: []string{"unknown config keys", "Port"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

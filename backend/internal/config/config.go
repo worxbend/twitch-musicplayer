@@ -23,11 +23,12 @@ type Config struct {
 	Shuffle ShuffleConfig `toml:"shuffle"`
 	Queue   QueueConfig   `toml:"queue"`
 
-	// Flat accessors populated by Load.
-	Port      int
-	MusicDir  string
-	BloomPath string
-	BaseURL   string
+	// Flat accessors populated by Load. Tagged "-" so a top-level TOML key
+	// such as `Port = 9` is reported as unknown instead of decoding here.
+	Port      int    `toml:"-"`
+	MusicDir  string `toml:"-"`
+	BloomPath string `toml:"-"`
+	BaseURL   string `toml:"-"`
 }
 
 type ServerConfig struct {
@@ -100,8 +101,12 @@ func loadFrom(path string, getenv func(string) string) (*Config, error) {
 	cfg := defaults()
 
 	if _, err := os.Stat(path); err == nil {
-		if _, err := toml.DecodeFile(path, cfg); err != nil {
+		md, err := toml.DecodeFile(path, cfg)
+		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		if err := checkNoUnknownKeys(path, md); err != nil {
+			return nil, err
 		}
 		log.Printf("config loaded from %s", path)
 	}
@@ -166,6 +171,20 @@ func (c *Config) Validate() error {
 		checkBaseURL("server.base_url", c.Server.BaseURL),
 	)
 	return errors.Join(errs...)
+}
+
+// checkNoUnknownKeys rejects keys the Config struct does not define, so a
+// typo or a removed section fails startup instead of being ignored.
+func checkNoUnknownKeys(path string, md toml.MetaData) error {
+	undecoded := md.Undecoded()
+	if len(undecoded) == 0 {
+		return nil
+	}
+	keys := make([]string, len(undecoded))
+	for i, key := range undecoded {
+		keys[i] = key.String()
+	}
+	return fmt.Errorf("%s: unknown config keys: %s", path, strings.Join(keys, ", "))
 }
 
 func checkOneOf(key, value string, allowed []string) error {

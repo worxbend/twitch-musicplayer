@@ -62,7 +62,6 @@ The frontend starts at `http://localhost:3000`.
 - `internal/config`: TOML and environment loading.
 - `internal/repository`: in-memory song and queue stores.
 - `internal/played`: Bloom-filter play-history tracker, persisted to a single file.
-- `internal/repository`: database access for songs, queue, and history.
 - `internal/queue`: song selection, queue operations, history start/finish.
 - `internal/watcher`: startup scan and fsnotify create-event handling.
 - `internal/api`: HTTP handlers under `/v1`.
