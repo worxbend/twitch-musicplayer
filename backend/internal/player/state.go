@@ -30,8 +30,9 @@ type StateTracker struct {
 
 func NewStateTracker() *StateTracker { return &StateTracker{now: time.Now} }
 
-// OnSongChange registers fn to run after every SetCurrentSong, replacing any
-// earlier hook. fn runs outside the tracker's lock, so it may call back in.
+// OnSongChange registers fn to run after every SetCurrentSong and every
+// UpdateSong that changed the song, replacing any earlier hook. fn runs
+// outside the tracker's lock, so it may call back in.
 func (t *StateTracker) OnSongChange(fn func(*models.Song)) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -56,6 +57,30 @@ func (t *StateTracker) SetCurrentSong(song *models.Song) {
 	if onChange != nil {
 		onChange(song)
 	}
+}
+
+// UpdateSong replaces the current song's metadata when song has the same ID,
+// for example after a retag. It does not add a history entry. The newest
+// history entry is updated too when it is the same song. It returns whether
+// anything changed, and runs the change hook outside the lock when it did.
+func (t *StateTracker) UpdateSong(song *models.Song) bool {
+	t.mu.Lock()
+	if song == nil || t.currentSong == nil || t.currentSong.ID != song.ID {
+		t.mu.Unlock()
+		return false
+	}
+	updated := *song
+	t.currentSong = &updated
+	if last := len(t.history) - 1; last >= 0 && t.history[last].Song.ID == song.ID {
+		t.history[last].Song = updated
+	}
+	onChange := t.onChange
+	t.mu.Unlock()
+
+	if onChange != nil {
+		onChange(&updated)
+	}
+	return true
 }
 
 func (t *StateTracker) GetCurrentSong() *models.Song {

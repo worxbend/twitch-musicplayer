@@ -170,3 +170,92 @@ func TestOnSongChangeMayCallBackIn(t *testing.T) {
 		t.Fatalf("calls = %d, current = %v, want 2 and second", calls, tr.GetCurrentSong())
 	}
 }
+
+// trackHook registers a change hook that records every song it is called with.
+func trackHook(tr *StateTracker) *[]*models.Song {
+	var calls []*models.Song
+	tr.OnSongChange(func(s *models.Song) { calls = append(calls, s) })
+	return &calls
+}
+
+func TestUpdateSongReplacesCurrentAndHistoryHead(t *testing.T) {
+	tr := newFakeClockTracker()
+	tr.SetCurrentSong(&models.Song{ID: "a", Title: "Old"})
+	startedAt := tr.History(1)[0].StartedAt
+	calls := trackHook(tr)
+
+	if !tr.UpdateSong(&models.Song{ID: "a", Title: "New"}) {
+		t.Fatal("UpdateSong = false, want true")
+	}
+	if got := tr.GetCurrentSong().Title; got != "New" {
+		t.Fatalf("current title = %q, want New", got)
+	}
+	hist := tr.History(10)
+	if len(hist) != 1 || hist[0].Song.Title != "New" || !hist[0].StartedAt.Equal(startedAt) {
+		t.Fatalf("history = %+v, want one entry titled New started at %v", hist, startedAt)
+	}
+	if len(*calls) != 1 || (*calls)[0].Title != "New" {
+		t.Fatalf("hook calls = %v, want one with title New", *calls)
+	}
+}
+
+func TestUpdateSongIgnoresNonMatchingAndNil(t *testing.T) {
+	tests := []struct {
+		name    string
+		current *models.Song
+		update  *models.Song
+	}{
+		{name: "different id", current: &models.Song{ID: "a", Title: "Old"}, update: &models.Song{ID: "b", Title: "New"}},
+		{name: "no current song", update: &models.Song{ID: "a", Title: "New"}},
+		{name: "nil argument", current: &models.Song{ID: "a", Title: "Old"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := newFakeClockTracker()
+			if tt.current != nil {
+				tr.SetCurrentSong(tt.current)
+			}
+			before := tr.History(10)
+			calls := trackHook(tr)
+
+			if tr.UpdateSong(tt.update) {
+				t.Fatal("UpdateSong = true, want false")
+			}
+			if got := tr.GetCurrentSong(); got != tt.current {
+				t.Fatalf("current = %+v, want %+v", got, tt.current)
+			}
+			if after := tr.History(10); fmt.Sprint(after) != fmt.Sprint(before) {
+				t.Fatalf("history = %+v, want %+v", after, before)
+			}
+			if len(*calls) != 0 {
+				t.Fatalf("hook fired %d times, want 0", len(*calls))
+			}
+		})
+	}
+}
+
+func TestUpdateSongCopiesArgument(t *testing.T) {
+	tr := newFakeClockTracker()
+	tr.SetCurrentSong(&models.Song{ID: "a", Title: "Old"})
+	update := &models.Song{ID: "a", Title: "New"}
+	tr.UpdateSong(update)
+	update.Title = "mutated via caller pointer"
+
+	if got := tr.GetCurrentSong().Title; got != "New" {
+		t.Fatalf("current title = %q, want New", got)
+	}
+}
+
+func TestUpdateSongLeavesHistoryWhenSongIsNotCurrent(t *testing.T) {
+	tr := newFakeClockTracker()
+	tr.SetCurrentSong(&models.Song{ID: "a", Title: "Old"})
+	tr.SetCurrentSong(&models.Song{ID: "b", Title: "B"})
+	before := tr.History(10)
+
+	if tr.UpdateSong(&models.Song{ID: "a", Title: "New"}) {
+		t.Fatal("UpdateSong = true, want false")
+	}
+	if after := tr.History(10); fmt.Sprint(after) != fmt.Sprint(before) {
+		t.Fatalf("history = %+v, want %+v", after, before)
+	}
+}

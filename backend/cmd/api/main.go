@@ -76,7 +76,12 @@ func main() {
 		log.Fatalf("watcher init failed: %v", err)
 	}
 	fsWatcher.OnRemoved = func(_ []*models.Song) { broadcastQueueUpdated(hub, "file_removed") }
-	fsWatcher.OnUpdated = func(_ *models.Song) { broadcastQueueUpdated(hub, "file_updated") }
+	fsWatcher.OnUpdated = func(song *models.Song) {
+		if stateTracker.UpdateSong(song) {
+			broadcastNowPlaying(context.Background(), hub, queueMgr, song)
+		}
+		broadcastQueueUpdated(hub, "file_updated")
+	}
 
 	// ── HTTP API handlers ─────────────────────────────────────────────────────
 	songsH := api.NewSongsHandler(songRepo, cfg.MusicDir)
@@ -179,6 +184,21 @@ func broadcastQueueUpdated(hub *websocket.Hub, reason string) {
 	msg, err := websocket.Encode(websocket.MsgQueueUpdated, websocket.QueueUpdatedPayload{Reason: reason})
 	if err != nil {
 		log.Printf("encode queue_updated (%s): %v", reason, err)
+		return
+	}
+	hub.Broadcast(msg)
+}
+
+// broadcastNowPlaying re-announces the current song, for example after a
+// retag, so overlays and the admin console show the new metadata at once.
+func broadcastNowPlaying(ctx context.Context, hub *websocket.Hub, queueMgr *queue.Manager, song *models.Song) {
+	items, err := queueMgr.ListQueue(ctx)
+	if err != nil {
+		log.Printf("list queue for now_playing: %v", err)
+	}
+	msg, err := websocket.Encode(websocket.MsgNowPlaying, websocket.NowPlayingPayload{Song: *song, QueueDepth: len(items)})
+	if err != nil {
+		log.Printf("encode now_playing: %v", err)
 		return
 	}
 	hub.Broadcast(msg)

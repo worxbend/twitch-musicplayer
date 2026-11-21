@@ -104,7 +104,7 @@ now_playing_format = "{artist} - {title}"
 
 | Key | Default | Meaning |
 |:--|:--|:--|
-| `now_playing_file` | `""` (off) | File to rewrite on every song change. `~` expands to your home. The directory must exist. |
+| `now_playing_file` | `""` (off) | File to rewrite on every song change and when the current song is retagged. `~` expands to your home. The directory must exist. |
 | `now_playing_format` | `{artist} - {title}` | Text template. Placeholders: `{title}`, `{artist}`, `{album}`. |
 
 - A song with no artist tag writes just its title, so no stray ` - ` appears.
