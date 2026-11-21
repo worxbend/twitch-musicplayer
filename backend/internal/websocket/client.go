@@ -49,8 +49,6 @@ type Client struct {
 	queueMgr     QueueManager
 	baseURL      string
 	stateTracker *player.StateTracker
-	currentSong  *models.Song
-	mu           sync.Mutex
 
 	// closed is closed exactly once, when the hub drops this client. The send
 	// channel itself is deliberately never closed: the read pump, the hub's
@@ -231,10 +229,6 @@ func (c *Client) sendNextSong(ctx context.Context) {
 		c.stateTracker.SetCurrentSong(song)
 	}
 
-	c.mu.Lock()
-	c.currentSong = song
-	c.mu.Unlock()
-
 	if !c.trySend(playMsg) {
 		log.Printf("send buffer full or client closed, dropping play_song")
 	}
@@ -248,15 +242,15 @@ func (c *Client) sendNextSong(ctx context.Context) {
 	}
 }
 
-// sendPrebuffer peeks at the front of the queue and sends the next song's URL to this
+// sendPrebuffer peeks at the first playable queue entry and sends the next song's URL to this
 // client for prebuffering. It does NOT dequeue or update shared state.
 func (c *Client) sendPrebuffer(ctx context.Context) {
 	items, err := c.queueMgr.ListQueue(ctx)
-	if err != nil || len(items) == 0 {
+	if err != nil {
 		return
 	}
-	first := items[0]
-	if first.Song == nil {
+	first := models.FirstPlayable(items)
+	if first == nil {
 		return
 	}
 	payload := PlaySongPayload{

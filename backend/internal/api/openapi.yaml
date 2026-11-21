@@ -223,14 +223,14 @@ paths:
       summary: Skip current song
       description: >
         Broadcasts `skip_now` over WebSocket so every connected audio client
-        interrupts the current track, then returns the song at the front of the
-        queue. The queue is not modified here; the client's `need_song` →
+        interrupts the current track, then returns the first queued song still
+        in the library (entries whose file was removed are skipped). The queue is not modified here; the client's `need_song` →
         `NextSong` flow dequeues that song when it asks for the next track.
       operationId: skipCurrent
       tags: [queue]
       responses:
         "200":
-          description: Skip broadcast sent; `song` is the upcoming queued song (null when the queue is empty and the strategy auto-selects, or the entry is stale)
+          description: Skip broadcast sent; `song` is the upcoming queued song (null when no queued entry is playable)
           content:
             application/json:
               schema:

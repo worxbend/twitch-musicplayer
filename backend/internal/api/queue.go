@@ -124,8 +124,8 @@ func (h *QueueHandler) Skip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var next *models.Song
-	if len(items) > 0 {
-		next = items[0].Song
+	if first := models.FirstPlayable(items); first != nil {
+		next = first.Song
 	}
 	if msg, err := websocket.Encode(websocket.MsgSkipNow, nil); err == nil {
 		h.broadcaster.Broadcast(msg)

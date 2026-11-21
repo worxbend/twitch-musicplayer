@@ -217,6 +217,8 @@ func TestQueuePlayNext(t *testing.T) {
 func TestQueueSkip(t *testing.T) {
 	front := &models.QueueItem{ID: "q1", SongID: "n", Song: &models.Song{ID: "n"}}
 	behind := &models.QueueItem{ID: "q2", SongID: "m", Song: &models.Song{ID: "m"}}
+	// dead is an entry whose song left the library: ListQueue reports Song=nil.
+	dead := &models.QueueItem{ID: "q3", SongID: "gone"}
 	tests := []struct {
 		name        string
 		items       []*models.QueueItem
@@ -226,6 +228,8 @@ func TestQueueSkip(t *testing.T) {
 		wantSongID  string
 	}{
 		{name: "non-empty queue", items: []*models.QueueItem{front, behind}, wantCode: http.StatusOK, wantSongID: "n"},
+		{name: "dead head skipped", items: []*models.QueueItem{dead, behind}, wantCode: http.StatusOK, wantSongID: "m"},
+		{name: "all entries dead", items: []*models.QueueItem{dead}, wantCode: http.StatusOK},
 		{name: "empty queue, manual_only", wantCode: http.StatusConflict},
 		{name: "empty queue, auto-select", autoSelects: true, wantCode: http.StatusOK},
 		{name: "list error", listErr: errors.New("boom"), wantCode: http.StatusInternalServerError},

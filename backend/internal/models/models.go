@@ -33,6 +33,17 @@ type QueueItem struct {
 	AddedAt  time.Time   `json:"added_at"`
 }
 
+// FirstPlayable returns the first item whose Song is still in the library, or nil.
+// It mirrors the dead-entry skip the queue manager applies at play time.
+func FirstPlayable(items []*QueueItem) *QueueItem {
+	for _, item := range items {
+		if item.Song != nil {
+			return item
+		}
+	}
+	return nil
+}
+
 // PlayerState is the snapshot of current playback state sent over WebSocket.
 type PlayerState struct {
 	CurrentSong *Song `json:"current_song,omitempty"`
