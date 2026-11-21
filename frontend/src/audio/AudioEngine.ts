@@ -1,4 +1,4 @@
-import { clamp, lerp } from '../viz/util';
+import { clamp, lerp } from '../viz/util.ts';
 import type { AudioBands } from '../viz/types';
 
 const BINS = 512;
@@ -153,6 +153,8 @@ export class AudioEngine {
     const clamped = clamp(value, 0, 1);
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
+    // A fade curve may still be running; setValueAtTime inside it throws NotSupportedError.
+    channel.gain.gain.cancelScheduledValues(now);
     channel.gain.gain.setValueAtTime(clamped, now);
   }
 
@@ -399,10 +401,13 @@ export class AudioEngine {
 
   update(dt: number, intensity = 1) {
     if (this._disposed) return;
+    const el = this._activeAudioElement();
+    // `playing` is not cleared when a track ends, so also check the element itself.
     const usingReal =
       this.mode === 'backend' &&
-      this.analyser &&
-      this.playing;
+      !!this.analyser &&
+      this.playing &&
+      !!el && !el.paused && !el.ended;
 
     if (usingReal) {
       this.analyser!.getByteFrequencyData(this._real);
