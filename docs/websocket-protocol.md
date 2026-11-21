@@ -158,8 +158,8 @@ Sent after connection with a lightweight state snapshot. It is also broadcast to
 client when a `song_finished` meets an empty `manual_only` queue, or an empty library under
 an auto strategy; `current_song` is then absent, so overlays and the admin console stop
 showing the finished song. Because the player sends `song_finished` at the crossfade lead,
-this happens up to ~3s before the audio ends. A `need_song` on an empty queue never clears it: a second player tab sends one on
-connect while the first may still be playing.
+this happens up to ~3s before the audio ends. A `need_song` on an empty queue never clears
+it: a second player tab sends one on connect while the first may still be playing.
 
 ```json
 {
