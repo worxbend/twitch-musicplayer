@@ -268,3 +268,17 @@ test('audio starts when PixiJS has no renderer at all', async ({ page }) => {
   await needSong;
   await content;
 });
+
+test('now-playing hold fades the title out; no hold keeps it visible', async ({ page }) => {
+  await page.routeWebSocket('**/ws', ws => {
+    ws.send(JSON.stringify({ type: 'now_playing', payload: { song: songs[0], queue_depth: 1 } }));
+  });
+  const overlay = page.locator('.now-playing-overlay');
+  await page.goto('/now-playing?hold=1');
+  await expect(page.getByText('Midnight compiler')).toBeAttached();
+  await expect(overlay).toHaveClass(/np-hidden/, { timeout: 3000 });
+  await page.goto('/now-playing');
+  await expect(page.getByText('Midnight compiler')).toBeVisible();
+  await page.waitForTimeout(1500);
+  await expect(overlay).not.toHaveClass(/np-hidden/);
+});

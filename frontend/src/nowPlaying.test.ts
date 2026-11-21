@@ -59,17 +59,30 @@ test('a missing artist becomes an empty string', () => {
 });
 
 test('options default to left and 32px', () => {
-  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32 });
+  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0 });
 });
 
 test('options accept valid align and size values', () => {
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40 });
-  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12 });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0 });
+  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0 });
   assert.equal(parseNowPlayingOptions('?size=120').size, 120);
 });
 
 test('invalid options fall back to the defaults', () => {
   for (const search of ['?align=middle&size=11', '?align=LEFT&size=121', '?size=40.5', '?size=-20', '?size=abc', '?size=']) {
-    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32 }, search);
+    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0 }, search);
+  }
+});
+
+test('hold accepts whole seconds from 1 to 600', () => {
+  assert.equal(parseNowPlayingOptions('?hold=5').hold, 5);
+  assert.equal(parseNowPlayingOptions('?hold=1').hold, 1);
+  assert.equal(parseNowPlayingOptions('?hold=600').hold, 600);
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10 });
+});
+
+test('invalid or missing hold means always visible', () => {
+  for (const search of ['', '?hold=', '?hold=0', '?hold=601', '?hold=-3', '?hold=abc', '?hold=1.5']) {
+    assert.equal(parseNowPlayingOptions(search).hold, 0, search);
   }
 });

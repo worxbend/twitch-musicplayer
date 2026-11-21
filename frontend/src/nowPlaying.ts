@@ -9,7 +9,8 @@
 
 export type NowPlayingSong = { title: string; artist: string };
 export type NowPlayingAlign = 'left' | 'center' | 'right';
-export type NowPlayingOptions = { align: NowPlayingAlign; size: number };
+/** `hold` is seconds the title stays visible after each change; 0 keeps it visible. */
+export type NowPlayingOptions = { align: NowPlayingAlign; size: number; hold: number };
 
 type JsonObject = Record<string, unknown>;
 
@@ -56,14 +57,23 @@ const alignments: readonly NowPlayingAlign[] = ['left', 'center', 'right'];
 const defaultSizePx = 32;
 const minSizePx = 12;
 const maxSizePx = 120;
+const maxHoldSecs = 600;
 
-/** Reads `?align=` and `?size=` (px); anything invalid falls back to left / 32. */
+function parseWholeNumber(raw: string | null): number {
+  return raw !== null && /^\d+$/.test(raw) ? Number(raw) : NaN;
+}
+
+/**
+ * Reads `?align=`, `?size=` (px) and `?hold=` (seconds, 1..600). Anything invalid
+ * falls back to left / 32 / 0, where hold 0 means always visible.
+ */
 export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const params = new URLSearchParams(search);
   const rawAlign = params.get('align');
   const align = alignments.find(value => value === rawAlign) ?? 'left';
-  const rawSize = params.get('size') ?? '';
-  const px = /^\d+$/.test(rawSize) ? Number(rawSize) : NaN;
+  const px = parseWholeNumber(params.get('size'));
   const size = px >= minSizePx && px <= maxSizePx ? px : defaultSizePx;
-  return { align, size };
+  const secs = parseWholeNumber(params.get('hold'));
+  const hold = secs >= 1 && secs <= maxHoldSecs ? secs : 0;
+  return { align, size, hold };
 }

@@ -76,8 +76,11 @@ Plus the two original pages:
 | `/now-playing` | 🏷️ Current title and artist as text | **Transparent** |
 
 `/now-playing` is a text-only overlay, for example
-`http://<host>/now-playing?align=center&size=40`. `align` is `left`, `center` or `right`
-(default `left`); `size` is the title size in px from 12 to 120 (default 32). It plays no
+`http://<host>/now-playing?align=center&size=40&hold=10`. `align` is `left`, `center` or
+`right` (default `left`); `size` is the title size in px from 12 to 120 (default 32);
+`hold` is seconds from 1 to 600: the title shows for that long after each song change,
+then fades out (default 0, always visible). If the connection drops silently, the overlay
+notices within about a minute and reconnects by itself. It plays no
 audio, so pair it with the audio source page. It only listens to the backend and never
 advances the queue, so it is safe to add alongside a playing page.
 

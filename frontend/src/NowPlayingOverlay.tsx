@@ -1,22 +1,25 @@
-import { Show, createSignal, onCleanup, onMount } from 'solid-js';
+import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { getWebSocketURL } from './config/backend';
+import { HEARTBEAT_MS, isStale, reconnectDelay } from './config/reconnect';
 import { reduceNowPlaying, type NowPlayingOptions, type NowPlayingSong } from './nowPlaying';
 
 type Props = NowPlayingOptions;
 
-// Same reconnect curve as BackendPlaybackClient.
-const reconnectBaseMs = 900;
-const reconnectMaxMs = 8000;
-const heartbeatMs = 25000;
 const heartbeatFrame = JSON.stringify({ type: 'heartbeat' });
 
 /**
  * Transparent text overlay for OBS. It only listens: the server dequeues on
  * need_song or song_finished, and this socket sends nothing but heartbeat, so
- * it can never advance the queue.
+ * it can never advance the queue. Silence past STALE_AFTER_MS (no heartbeat_ack)
+ * means a half-open socket, so it reconnects. With `hold` > 0 the text fades out
+ * that many seconds after each title change.
  */
 export function NowPlayingOverlay(props: Props) {
   const [song, setSong] = createSignal<NowPlayingSong | null>(null);
+  const [visible, setVisible] = createSignal(true);
+  let shownTitle = '';
+  let hideTimer = 0;
+  let lastMessageAt = 0;
   let socket: WebSocket | null = null;
   let reconnectTimer = 0;
   let heartbeatTimer = 0;
@@ -32,7 +35,7 @@ export function NowPlayingOverlay(props: Props) {
   };
 
   const scheduleReconnect = () => {
-    const delay = Math.min(reconnectBaseMs * 2 ** reconnectAttempts, reconnectMaxMs);
+    const delay = reconnectDelay(reconnectAttempts);
     reconnectAttempts += 1;
     window.clearTimeout(reconnectTimer);
     reconnectTimer = window.setTimeout(connect, delay);
@@ -44,10 +47,20 @@ export function NowPlayingOverlay(props: Props) {
     socket = ws;
     ws.onopen = () => {
       reconnectAttempts = 0;
+      lastMessageAt = Date.now();
       window.clearInterval(heartbeatTimer);
-      heartbeatTimer = window.setInterval(() => ws.send(heartbeatFrame), heartbeatMs);
+      heartbeatTimer = window.setInterval(() => {
+        if (isStale(lastMessageAt, Date.now())) {
+          // closeSocket drops onclose, so the reconnect is scheduled here.
+          closeSocket();
+          scheduleReconnect();
+          return;
+        }
+        ws.send(heartbeatFrame);
+      }, HEARTBEAT_MS);
     };
     ws.onmessage = event => {
+      lastMessageAt = Date.now();
       if (typeof event.data === 'string') setSong(prev => reduceNowPlaying(prev, event.data));
     };
     ws.onclose = () => {
@@ -55,6 +68,16 @@ export function NowPlayingOverlay(props: Props) {
       if (running) scheduleReconnect();
     };
   }
+
+  // Acts only on a new title, so a repeated `state` frame after reconnect keeps a hidden title hidden.
+  createEffect(() => {
+    const title = song()?.title ?? '';
+    if (!title || title === shownTitle) return;
+    shownTitle = title;
+    setVisible(true);
+    window.clearTimeout(hideTimer);
+    if (props.hold > 0) hideTimer = window.setTimeout(() => setVisible(false), props.hold * 1000);
+  });
 
   onMount(() => {
     document.documentElement.classList.add('logo-overlay-page');
@@ -64,12 +87,13 @@ export function NowPlayingOverlay(props: Props) {
   onCleanup(() => {
     running = false;
     window.clearTimeout(reconnectTimer);
+    window.clearTimeout(hideTimer);
     closeSocket();
     document.documentElement.classList.remove('logo-overlay-page');
   });
 
   return (
-    <div class="now-playing-overlay" style={{ 'text-align': props.align, '--np-size': `${props.size}px` }}>
+    <div class="now-playing-overlay" classList={{ 'np-hidden': !visible() }} style={{ 'text-align': props.align, '--np-size': `${props.size}px` }}>
       <Show when={song()?.title} keyed>
         {title => (
           <div class="np-track">
