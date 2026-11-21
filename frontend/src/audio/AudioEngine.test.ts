@@ -217,3 +217,57 @@ test('visuals fall back to the synth once the active track ends', async () => {
   engine.update(0.016);
   assert.equal(readSpectrum.mock.callCount(), 1);
 });
+
+// Swaps the next channel's play() for one the test settles by hand.
+function holdNextPlay() {
+  const el = engine['_nextChannel']().audioEl as unknown as FakeAudioElement;
+  let settle!: { resolve: () => void; reject: (error: unknown) => void };
+  mock.method(el, 'play', () => {
+    el.paused = false;
+    return new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
+  });
+  return () => settle;
+}
+
+test('onStarted fires once when play() resolves, before the crossfade ends', async () => {
+  await playFirstTrack();
+  const onStarted = mock.fn();
+  const second = engine.playStream('/stream/b', 'B', { onStarted });
+  await flush();
+
+  assert.equal(onStarted.mock.callCount(), 1);
+  mock.timers.tick(FADE_MS);
+  await second;
+  assert.equal(onStarted.mock.callCount(), 1);
+});
+
+test('a superseded playStream does not fire onStarted', async () => {
+  await playFirstTrack();
+  const settleSecond = holdNextPlay();
+  const superseded = mock.fn();
+  const second = engine.playStream('/stream/b', 'B', { onStarted: superseded });
+  await flush();
+
+  const newer = mock.fn();
+  const third = engine.playStream('/stream/c', 'C', { onStarted: newer });
+  await flush();
+  settleSecond().resolve();
+  await flush();
+  mock.timers.tick(FADE_MS);
+  await Promise.all([second, third]);
+
+  assert.equal(superseded.mock.callCount(), 0);
+  assert.equal(newer.mock.callCount(), 1);
+});
+
+test('a play() rejection does not fire onStarted', async () => {
+  await playFirstTrack();
+  const settleSecond = holdNextPlay();
+  const onStarted = mock.fn();
+  const second = engine.playStream('/stream/b', 'B', { onStarted });
+  await flush();
+
+  settleSecond().reject(new DOMException('blocked', 'NotAllowedError'));
+  await assert.rejects(second, { name: 'NotAllowedError' });
+  assert.equal(onStarted.mock.callCount(), 0);
+});

@@ -12,8 +12,6 @@ export function App() {
   const [wsStatus, setWsStatus]     = createSignal<ConnectionStatus>('disconnected');
   const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
   let backendClient: BackendPlaybackClient | null = null;
-  // Debounce the brief null between tracks so crossfades don't flash "waiting".
-  let gapTimer = 0;
 
   const onReady = (a: AudioEngine) => {
     setAudio(a);
@@ -24,27 +22,17 @@ export function App() {
       // human-readable message instead used to show "Live" for the status
       // "radio connection error", because that string contains "connect".
       onStatus: (status) => { setWsStatus(status.connection); setPlaybackStatus(status.playback); },
+      // The client keeps the title up through a crossfade and sends null only
+      // once a track has really ended, so no debounce is needed here.
       onSongChange: (song) => {
-        window.clearTimeout(gapTimer);
-        if (song) {
-          setTrackName(song.title || 'untitled');
-          setTrackArtist(song.artist || 'lofi radio · 24/7');
-        } else {
-          // Only fall back to the idle label if no new track arrives shortly.
-          gapTimer = window.setTimeout(() => {
-            setTrackName('waiting for track…');
-            setTrackArtist('lofi radio · 24/7');
-          }, 2500);
-        }
+        setTrackName(song ? song.title || 'untitled' : 'waiting for track…');
+        setTrackArtist(song?.artist || 'lofi radio · 24/7');
       },
     });
     backendClient.start();
   };
 
-  onCleanup(() => {
-    window.clearTimeout(gapTimer);
-    backendClient?.dispose();
-  });
+  onCleanup(() => backendClient?.dispose());
 
   return (
     <>

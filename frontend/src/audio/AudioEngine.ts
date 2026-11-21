@@ -241,6 +241,7 @@ export class AudioEngine {
       onError?: (error: Event) => void;
       onPrefetch?: () => void;   // fired PREFETCH_THRESHOLD_SECS before end — request next song URL
       onNearEnd?: () => void;    // fired NEAR_END_THRESHOLD_SECS before end — start crossfade
+      onStarted?: () => void;    // fired once the new track is audible, before the crossfade completes
     } = {},
   ): Promise<void> {
     await this.resume();
@@ -279,6 +280,7 @@ export class AudioEngine {
       await incoming.audioEl.play();
       if (superseded()) return;
       this.playing = true;
+      handlers.onStarted?.();
 
       // Wire up near-end monitoring (prefetch + crossfade triggers).
       if (handlers.onPrefetch || handlers.onNearEnd) {

@@ -61,15 +61,24 @@ interface PlayCallbacks {
   onEnded: () => void;
   onError: () => void;
   onNearEnd: () => void;
+  onStarted?: () => void;
 }
 
 class FakeAudio {
   allowAutoplay = false;
-  plays: { url: string; name: string; settle: Deferred; callbacks: PlayCallbacks }[] = [];
+  plays: { url: string; name: string; start: () => void; settle: Deferred; callbacks: PlayCallbacks }[] = [];
 
+  // start() is the moment play() resolves and the track is audible; settle.resolve()
+  // ends the crossfade, and starts the track first if the test did not.
   playStream(url: string, name: string, callbacks: PlayCallbacks): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.plays.push({ url, name, settle: { resolve, reject }, callbacks });
+      let started = false;
+      const start = () => {
+        if (started) return;
+        started = true;
+        callbacks.onStarted?.();
+      };
+      this.plays.push({ url, name, start, settle: { resolve: () => { start(); resolve(); }, reject }, callbacks });
     });
   }
 
@@ -493,4 +502,39 @@ test('skip_now resets the stream retry count', async () => {
   ws.message({ type: 'skip_now' });
   assert.equal(internals().streamRetryHistoryId, null);
   assert.equal(internals().streamRetryAttempts, 0);
+});
+
+test('a near-end crossfade switches the title when the next song starts, with no gap', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a', 'A'));
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  audio.plays[0].callbacks.onNearEnd();
+  ws.message(playSong('b', 'B'));
+  audio.plays[1].start();
+  assert.deepEqual(songs, [{ title: 'A', artist: undefined }, { title: 'B', artist: undefined }], 'B shows while the fade runs');
+  assert.equal(lastPlayback(), 'playing');
+
+  audio.plays[1].settle.resolve();
+  await flush();
+  audio.plays[0].callbacks.onEnded();
+  assert.deepEqual(songs, [{ title: 'A', artist: undefined }, { title: 'B', artist: undefined }]);
+  assert.equal(internals().current?.history_id, 'h-b');
+});
+
+test('the title clears only when a song with no replacement really ends', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a', 'A'));
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  audio.plays[0].callbacks.onNearEnd();
+  ws.message({ type: 'error', payload: { message: 'queue empty' } });
+  assert.deepEqual(songs, [{ title: 'A', artist: undefined }], 'A is still audible');
+
+  audio.plays[0].callbacks.onEnded();
+  assert.deepEqual(songs, [{ title: 'A', artist: undefined }, null]);
 });

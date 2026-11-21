@@ -113,6 +113,9 @@ export class BackendPlaybackClient {
   // Bumped by every play(); a play that settles after a newer one started is ignored.
   private playToken = 0;
   private playInFlight = false;
+  // history_id of the song whose title is on screen; it can outlive `current`
+  // through the near-end handoff, while the old track is still audible.
+  private displayedHistoryId: string | null = null;
 
   constructor(options: BackendPlaybackOptions) {
     this.audio = options.audio;
@@ -154,7 +157,7 @@ export class BackendPlaybackClient {
     this.socket = null;
     this.connecting = false;
     this.report({ connection: 'disconnected', playback: 'idle' }, 'radio stopped');
-    this.onSongChange?.(null);
+    this.clearDisplayedSong();
   }
 
   /** Retries a play the browser blocked; called from a user gesture. */
@@ -294,10 +297,17 @@ export class BackendPlaybackClient {
 
     try {
       await this.audio.playStream(resolveStreamURL(payload.stream_url), songName, {
-        onEnded: () => this.finishCurrent(payload),
+        onEnded: () => this.handleEnded(payload),
         onError: () => this.retryStream(payload),
         onPrefetch: () => this.handlePrefetch(payload),
         onNearEnd: () => this.handleNearEnd(payload),
+        // Show the title as soon as the track is audible, not after the crossfade.
+        onStarted: () => {
+          if (token !== this.playToken) return;
+          this.displayedHistoryId = payload.history_id;
+          this.onSongChange?.({ title: songName, artist: payload.song.artist });
+          this.report({ playback: 'playing' }, 'playing');
+        },
       });
     } catch (error) {
       if (token !== this.playToken) return;
@@ -312,8 +322,6 @@ export class BackendPlaybackClient {
     window.clearTimeout(this.streamRetryTimer);
     this.errorRetryAttempts = 0;
     this.resetStreamRetries();
-    this.onSongChange?.({ title: songName, artist: payload.song.artist });
-    this.report({ playback: 'playing' }, 'playing');
   }
 
   // Only an autoplay refusal waits for a click; anything else (404, undecodable
@@ -347,12 +355,19 @@ export class BackendPlaybackClient {
     this.finishCurrent(payload, { awaitReplacement: true });
   }
 
+  // After the near-end handoff `current` is already null and finishCurrent does
+  // nothing; the title still has to go if no newer song has taken the screen.
+  private handleEnded(payload: PlaySongPayload) {
+    this.finishCurrent(payload);
+    if (this.displayedHistoryId === payload.history_id) this.clearDisplayedSong();
+  }
+
+  // The title stays up: the track is still audible until it ends or the next one starts.
   private finishCurrent(payload: PlaySongPayload, options: { awaitReplacement?: boolean } = {}) {
     if (this.current?.history_id !== payload.history_id) return;
     // Set before sending so a synchronous reply cannot clear it first.
     if (options.awaitReplacement) this.startAwaitingSong();
     this.current = null;
-    this.onSongChange?.(null);
     this.queueOrSend({
       type: 'song_finished',
       payload: {
@@ -384,7 +399,7 @@ export class BackendPlaybackClient {
     if (this.current?.history_id !== payload.history_id && this.pendingPlay?.history_id !== payload.history_id) return;
     window.clearTimeout(this.streamRetryTimer);
     this.current = null;
-    this.onSongChange?.(null);
+    this.clearDisplayedSong();
     if (payload.history_id === this.streamRetryHistoryId && this.streamRetryAttempts >= maxStreamRetries) {
       this.skipUnplayableStream();
       return;
@@ -410,6 +425,11 @@ export class BackendPlaybackClient {
     this.resetStreamRetries();
     this.report({ playback: 'error' }, 'stream unplayable, skipping');
     this.requestSong();
+  }
+
+  private clearDisplayedSong() {
+    this.displayedHistoryId = null;
+    this.onSongChange?.(null);
   }
 
   private resetStreamRetries() {
@@ -470,7 +490,7 @@ export class BackendPlaybackClient {
     this.pendingPlay = null;
     this.current = null;
     this.awaitingSong = false;
-    this.onSongChange?.(null);
+    this.clearDisplayedSong();
   }
 }
 
