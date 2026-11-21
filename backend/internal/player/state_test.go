@@ -259,3 +259,26 @@ func TestUpdateSongLeavesHistoryWhenSongIsNotCurrent(t *testing.T) {
 		t.Fatalf("history = %+v, want %+v", after, before)
 	}
 }
+
+func TestClearCurrentSongIsIdempotent(t *testing.T) {
+	tr := newFakeClockTracker()
+	pushSongs(tr, 1)
+	var calls []*models.Song
+	tr.OnSongChange(func(s *models.Song) { calls = append(calls, s) })
+
+	if !tr.ClearCurrentSong() {
+		t.Fatal("first ClearCurrentSong = false, want true")
+	}
+	if tr.ClearCurrentSong() {
+		t.Fatal("second ClearCurrentSong = true, want false")
+	}
+	if len(calls) != 1 || calls[0] != nil {
+		t.Fatalf("hook calls = %v, want exactly one with nil", calls)
+	}
+	if tr.GetCurrentSong() != nil {
+		t.Fatal("current song not cleared")
+	}
+	if got := tr.History(10); fmt.Sprint(ids(got)) != "[s0]" {
+		t.Fatalf("History = %v, want [s0]", ids(got))
+	}
+}

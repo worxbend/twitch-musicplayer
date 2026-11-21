@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"lofi-radio-backend/internal/models"
 	"lofi-radio-backend/internal/player"
+	"lofi-radio-backend/internal/queue"
 )
 
 const (
@@ -137,19 +139,20 @@ func ServeWS(hub *Hub, queueMgr QueueManager, baseURL string, st *player.StateTr
 	go c.readPump()
 }
 
-// snapshotState builds the PlayerState sent to a peer on connect. Lookup
+// snapshotState builds the PlayerState sent to a peer on connect and
+// broadcast when now-playing is cleared. Lookup
 // failures degrade to zero counts rather than withholding the whole snapshot.
 func (c *Client) snapshotState(ctx context.Context) models.PlayerState {
 	state := models.PlayerState{CurrentSong: c.stateTracker.GetCurrentSong()}
 	if items, err := c.queueMgr.ListQueue(ctx); err == nil {
 		state.QueueLength = len(items)
 	} else {
-		log.Printf("websocket initial state: list queue: %v", err)
+		log.Printf("websocket state: list queue: %v", err)
 	}
 	if total, err := c.queueMgr.TotalSongs(ctx); err == nil {
 		state.TotalSongs = total
 	} else {
-		log.Printf("websocket initial state: count songs: %v", err)
+		log.Printf("websocket state: count songs: %v", err)
 	}
 	return state
 }
@@ -196,8 +199,12 @@ func (c *Client) handleMessage(msg Message) {
 		c.sendNextSong(ctx)
 
 	case MsgSongFinished:
-		// Song is already marked played when it starts; just request the next one.
-		c.sendNextSong(ctx)
+		// Song is already marked played when it starts; just request the next
+		// one. Only a finished song may clear now-playing: need_song also comes
+		// from a second player tab while the first is still playing.
+		if errors.Is(c.sendNextSong(ctx), queue.ErrQueueEmpty) {
+			c.clearNowPlaying(ctx)
+		}
 
 	case MsgPeekNext:
 		// Client wants to prebuffer the next song without dequeuing it.
@@ -216,11 +223,13 @@ func (c *Client) handleMessage(msg Message) {
 // (client closed meanwhile or send buffer full) the song goes back to the
 // front of the queue and shared state is left untouched. Only after a
 // successful send does it update the state tracker and broadcast now_playing
-// and queue_updated so management UIs stay in sync.
-func (c *Client) sendNextSong(ctx context.Context) {
+// and queue_updated so management UIs stay in sync. It returns the NextSong
+// error, after sending it to this client as an error message, and nil on
+// every other path.
+func (c *Client) sendNextSong(ctx context.Context) error {
 	select {
 	case <-c.closed:
-		return
+		return nil
 	default:
 	}
 
@@ -230,7 +239,7 @@ func (c *Client) sendNextSong(ctx context.Context) {
 		if errMsg, encErr := Encode(MsgError, ErrorPayload{Message: err.Error()}); encErr == nil {
 			c.trySend(errMsg)
 		}
-		return
+		return err
 	}
 
 	items, _ := c.queueMgr.ListQueue(ctx)
@@ -246,7 +255,7 @@ func (c *Client) sendNextSong(ctx context.Context) {
 	playMsg, err := Encode(MsgPlaySong, payload)
 	if err != nil {
 		log.Printf("encode play_song: %v", err)
-		return
+		return nil
 	}
 
 	if !c.trySend(playMsg) {
@@ -254,7 +263,7 @@ func (c *Client) sendNextSong(ctx context.Context) {
 		if err := c.queueMgr.Requeue(ctx, song.ID); err != nil {
 			log.Printf("requeue undelivered song: %v", err)
 		}
-		return
+		return nil
 	}
 
 	// Update shared state tracker so the REST player endpoint is current.
@@ -268,6 +277,21 @@ func (c *Client) sendNextSong(ctx context.Context) {
 	}
 	if queueMsg, encErr := Encode(MsgQueueUpdated, QueueUpdatedPayload{QueueDepth: queueDepth, Reason: "song_started"}); encErr == nil {
 		c.hub.Broadcast(queueMsg)
+	}
+	return nil
+}
+
+// clearNowPlaying clears the tracked current song and broadcasts a state
+// snapshot without current_song, so overlays and the admin console stop
+// showing the finished song. It does nothing when no song was set.
+func (c *Client) clearNowPlaying(ctx context.Context) {
+	if c.stateTracker == nil || !c.stateTracker.ClearCurrentSong() {
+		return
+	}
+	if msg, err := Encode(MsgState, c.snapshotState(ctx)); err == nil {
+		c.hub.Broadcast(msg)
+	} else {
+		log.Printf("encode state: %v", err)
 	}
 }
 

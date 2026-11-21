@@ -15,12 +15,13 @@ import (
 
 	"lofi-radio-backend/internal/models"
 	"lofi-radio-backend/internal/player"
+	"lofi-radio-backend/internal/queue"
 )
 
 type emptyQueueManager struct{}
 
 func (emptyQueueManager) NextSong(context.Context) (*models.Song, error) {
-	return nil, errors.New("queue is empty")
+	return nil, queue.ErrQueueEmpty
 }
 
 func (emptyQueueManager) ListQueue(context.Context) ([]*models.QueueItem, error) { return nil, nil }
@@ -242,4 +243,89 @@ func TestSendNextSongDeliversAndPublishes(t *testing.T) {
 			t.Fatalf("broadcast missing %s", want)
 		}
 	}
+}
+
+// failingQueueManager fails NextSong with an error other than ErrQueueEmpty.
+type failingQueueManager struct{ emptyQueueManager }
+
+func (failingQueueManager) NextSong(context.Context) (*models.Song, error) {
+	return nil, errors.New("disk on fire")
+}
+
+// newDryTestClient builds an unconnected client, like newSendTestClient, whose
+// tracker is already playing song-1 and whose queue manager is mgr.
+func newDryTestClient(mgr QueueManager) *Client {
+	st := player.NewStateTracker()
+	st.SetCurrentSong(&models.Song{ID: "song-1", Title: "Rain"})
+	return NewClient(NewHub(), nil, mgr, "", st)
+}
+
+// drainSent asserts c.send holds exactly one message of type want and removes it.
+func drainSent(t *testing.T, c *Client, want string) {
+	t.Helper()
+	if n := len(c.send); n != 1 {
+		t.Fatalf("send buffer holds %d messages, want 1", n)
+	}
+	if got := <-c.send; got.Type != want {
+		t.Fatalf("sent = %s, want %s", got.Type, want)
+	}
+}
+
+func assertSongKept(t *testing.T, c *Client) {
+	t.Helper()
+	if cur := c.stateTracker.GetCurrentSong(); cur == nil || cur.ID != "song-1" {
+		t.Fatalf("current song = %v, want song-1", cur)
+	}
+	if n := len(c.hub.broadcast); n != 0 {
+		t.Fatalf("hub.broadcast holds %d messages, want 0", n)
+	}
+}
+
+func TestSongFinishedOnEmptyQueueClearsNowPlaying(t *testing.T) {
+	c := newDryTestClient(emptyQueueManager{})
+
+	c.handleMessage(Message{Type: MsgSongFinished})
+
+	drainSent(t, c, MsgError)
+	if cur := c.stateTracker.GetCurrentSong(); cur != nil {
+		t.Fatalf("current song = %s, want nil", cur.ID)
+	}
+	if n := len(c.hub.broadcast); n != 1 {
+		t.Fatalf("hub.broadcast holds %d messages, want 1", n)
+	}
+	got := <-c.hub.broadcast
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(got.Payload, &fields); err != nil || got.Type != MsgState {
+		t.Fatalf("broadcast = %s (%v), want %s", got.Type, err, MsgState)
+	}
+	if _, ok := fields["current_song"]; ok {
+		t.Fatalf("state payload %s has current_song, want none", got.Payload)
+	}
+
+	// A second song_finished on the still-empty queue errors again but
+	// broadcasts nothing: the clear is idempotent.
+	c.handleMessage(Message{Type: MsgSongFinished})
+
+	drainSent(t, c, MsgError)
+	if n := len(c.hub.broadcast); n != 0 {
+		t.Fatalf("hub.broadcast holds %d messages after second finish, want 0", n)
+	}
+}
+
+func TestNeedSongOnEmptyQueueKeepsNowPlaying(t *testing.T) {
+	c := newDryTestClient(emptyQueueManager{})
+
+	c.handleMessage(Message{Type: MsgNeedSong})
+
+	drainSent(t, c, MsgError)
+	assertSongKept(t, c)
+}
+
+func TestSongFinishedOnOtherErrorKeepsNowPlaying(t *testing.T) {
+	c := newDryTestClient(failingQueueManager{})
+
+	c.handleMessage(Message{Type: MsgSongFinished})
+
+	drainSent(t, c, MsgError)
+	assertSongKept(t, c)
 }
