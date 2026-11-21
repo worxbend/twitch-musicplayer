@@ -121,11 +121,14 @@ class FakeAudioElement {
   play() {
     this.paused = false;
     this.ended = false;
+    this.dispatch('play');
     return Promise.resolve();
   }
 
   pause() {
+    if (this.paused) return;
     this.paused = true;
+    this.dispatch('pause');
   }
 
   loads = 0;
@@ -137,8 +140,17 @@ class FakeAudioElement {
     if (name === 'src') this.src = '';
   }
 
-  addEventListener() {}
-  removeEventListener() {}
+  private listeners = new Map<string, Set<() => void>>();
+  addEventListener(type: string, fn: () => void) {
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+    this.listeners.get(type)!.add(fn);
+  }
+  removeEventListener(type: string, fn: () => void) {
+    this.listeners.get(type)?.delete(fn);
+  }
+  dispatch(type: string) {
+    for (const fn of this.listeners.get(type) ?? []) fn();
+  }
 }
 
 Object.assign(globalThis, {
@@ -421,4 +433,58 @@ test('a new play that claims the fading-out channel drops the waiting preload', 
   assert.equal(activeElement(), first);
   assert.equal(first.src, '/stream/d');
   assert.equal(inactiveElement().src, '');
+});
+
+function recordPlayStates() {
+  const states: MediaSessionPlaybackState[] = [];
+  engine.onPlayStateChange = state => states.push(state);
+  return states;
+}
+
+test('the play state is playing once a track starts and paused after pause()', async () => {
+  const states = recordPlayStates();
+  await playFirstTrack();
+  assert.deepEqual(states, ['playing']);
+  engine.pause();
+  assert.deepEqual(states, ['playing', 'paused']);
+});
+
+test('the play state is none once the active track ends', async () => {
+  const states = recordPlayStates();
+  const el = await playFirstTrack();
+  el.paused = true;
+  el.ended = true;
+  el.dispatch('ended');
+  assert.deepEqual(states, ['playing', 'none']);
+});
+
+test('play() does not restart an ended track', async () => {
+  const el = await playFirstTrack();
+  el.paused = true;
+  el.ended = true;
+  const play = mock.method(el, 'play');
+  engine.play();
+  assert.equal(play.mock.callCount(), 0);
+});
+
+test('the outgoing channel stopping after a crossfade does not report paused', async () => {
+  const first = await playFirstTrack();
+  const states = recordPlayStates();
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+  mock.timers.tick(FADE_MS);
+  await second;
+
+  assert.equal(first.paused, true);
+  assert.deepEqual(states, []);
+});
+
+test('the same play state is reported once', async () => {
+  const states = recordPlayStates();
+  const el = await playFirstTrack();
+  el.dispatch('play');
+  engine.pause();
+  engine.pause();
+  el.dispatch('pause');
+  assert.deepEqual(states, ['playing', 'paused']);
 });

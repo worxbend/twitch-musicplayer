@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import {
   bindMediaSession,
   getMediaSession,
-  setMediaPlaybackState,
+  mediaStateOf,
+  setMediaPlayState,
   updateMediaMetadata,
   type MediaSessionLike,
 } from './mediaSession.ts';
@@ -76,23 +77,27 @@ test('updateMediaMetadata does nothing without MediaMetadata or a session', () =
   assert.doesNotThrow(() => updateMediaMetadata(null, { title: 'Rain' }));
 });
 
-test('the play and pause handlers call onPlay and onPause and track the state', () => {
+test('the play and pause handlers call onPlay and onPause and leave playbackState alone', () => {
   const calls: string[] = [];
   bindMediaSession(session, { onPlay: () => calls.push('play'), onPause: () => calls.push('pause') });
+  session.playbackState = 'playing';
   fire('pause');
-  assert.equal(session.playbackState, 'paused');
-  fire('play');
   assert.equal(session.playbackState, 'playing');
+  session.playbackState = 'none';
+  fire('play');
+  assert.equal(session.playbackState, 'none');
   assert.deepEqual(calls, ['pause', 'play']);
 });
 
-test('unbind nulls both handlers and clears the metadata', () => {
+test('unbind nulls both handlers and clears the metadata and state', () => {
   const unbind = bindMediaSession(session, { onPlay() {}, onPause() {} });
   updateMediaMetadata(session, { title: 'Rain' });
+  session.playbackState = 'playing';
   unbind();
   assert.equal(session.handlers.get('play'), null);
   assert.equal(session.handlers.get('pause'), null);
   assert.equal(session.metadata, null);
+  assert.equal(session.playbackState, 'none');
 });
 
 test('a setActionHandler that throws does not escape', () => {
@@ -109,12 +114,22 @@ test('getMediaSession returns null without navigator.mediaSession', () => {
   assert.equal(getMediaSession(), null);
 });
 
-test('setMediaPlaybackState maps playing to playing and the rest to paused', () => {
-  setMediaPlaybackState(session, 'playing');
-  assert.equal(session.playbackState, 'playing');
-  for (const status of ['idle', 'blocked', 'error'] as const) {
-    setMediaPlaybackState(session, status);
-    assert.equal(session.playbackState, 'paused');
-  }
-  assert.doesNotThrow(() => setMediaPlaybackState(null, 'playing'));
+const stateCases: Array<[string, Parameters<typeof mediaStateOf>[0], MediaSessionPlaybackState]> = [
+  ['no element', null, 'none'],
+  ['no source', { paused: false, ended: false, hasSource: false }, 'none'],
+  ['ended', { paused: true, ended: true, hasSource: true }, 'none'],
+  ['paused', { paused: true, ended: false, hasSource: true }, 'paused'],
+  ['playing', { paused: false, ended: false, hasSource: true }, 'playing'],
+];
+
+for (const [name, el, want] of stateCases) {
+  test(`mediaStateOf: ${name} is ${want}`, () => {
+    assert.equal(mediaStateOf(el), want);
+  });
+}
+
+test('setMediaPlayState writes the state and ignores a null session', () => {
+  setMediaPlayState(session, 'paused');
+  assert.equal(session.playbackState, 'paused');
+  assert.doesNotThrow(() => setMediaPlayState(null, 'playing'));
 });

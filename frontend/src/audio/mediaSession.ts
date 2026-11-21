@@ -2,8 +2,6 @@
  *
  * Kept free of client and engine code so it runs under node --test with a fake session.
  */
-import type { PlaybackStatus } from './BackendPlaybackClient';
-
 export type MediaSessionLike = Pick<MediaSession, 'metadata' | 'playbackState' | 'setActionHandler'>;
 
 const RADIO_NAME = 'lofi radio';
@@ -23,8 +21,17 @@ export function updateMediaMetadata(
     : null;
 }
 
-export function setMediaPlaybackState(session: MediaSessionLike | null, playback: PlaybackStatus): void {
-  if (session) session.playbackState = playback === 'playing' ? 'playing' : 'paused';
+// The OS state for one <audio> element. An ended track reads as 'none', not 'paused',
+// so a play key cannot claim it can resume a finished track.
+export function mediaStateOf(
+  el: { paused: boolean; ended: boolean; hasSource: boolean } | null,
+): MediaSessionPlaybackState {
+  if (!el || !el.hasSource || el.ended) return 'none';
+  return el.paused ? 'paused' : 'playing';
+}
+
+export function setMediaPlayState(session: MediaSessionLike | null, state: MediaSessionPlaybackState): void {
+  if (session) session.playbackState = state;
 }
 
 function setHandler(session: MediaSessionLike, action: MediaSessionAction, handler: MediaSessionActionHandler | null) {
@@ -41,13 +48,14 @@ export function bindMediaSession(
   handlers: { onPlay: () => void; onPause: () => void },
 ): () => void {
   if (!session) return () => {};
-  // The OS picks play or pause for a toggle key from playbackState, so it must follow a
-  // local pause even though the radio itself still reports 'playing'.
-  setHandler(session, 'play', () => { handlers.onPlay(); session.playbackState = 'playing'; });
-  setHandler(session, 'pause', () => { handlers.onPause(); session.playbackState = 'paused'; });
+  // playbackState is not written here: the OS picks play or pause for a toggle key from
+  // it, so it follows the audio element's own events (see mediaStateOf), not key presses.
+  setHandler(session, 'play', handlers.onPlay);
+  setHandler(session, 'pause', handlers.onPause);
   return () => {
     setHandler(session, 'play', null);
     setHandler(session, 'pause', null);
     session.metadata = null;
+    session.playbackState = 'none';
   };
 }

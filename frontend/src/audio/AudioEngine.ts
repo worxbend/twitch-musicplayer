@@ -1,5 +1,6 @@
 import { clamp, lerp } from '../viz/util.ts';
 import type { AudioBands } from '../viz/types';
+import { mediaStateOf } from './mediaSession.ts';
 
 const BINS = 512;
 const DEFAULT_FADE_OUT_MS = 2500;
@@ -58,7 +59,10 @@ export class AudioEngine {
   hasUserSource = false;
   playing = false;
   sourceName = '';
+  // Called when the active track's OS media state changes; feeds navigator.mediaSession.
+  onPlayStateChange?: (state: MediaSessionPlaybackState) => void;
 
+  private _playState: MediaSessionPlaybackState = 'none';
   private _bassAvg = 0;
   private _beatCooldown = 0;
   private _channelA: PlaybackChannel | null = null;
@@ -156,8 +160,21 @@ export class AudioEngine {
     gain.gain.value = 1;
     mediaSource.connect(gain);
     gain.connect(this.analyser);
+    for (const type of ['play', 'pause', 'ended', 'emptied']) {
+      audioEl.addEventListener(type, () => this._emitPlayState());
+    }
 
     return { audioEl, mediaSource, gain, _nearEndCleanup: null };
+  }
+
+  // Reads the active channel only, so the outgoing channel stopping after a crossfade
+  // does not report 'paused'.
+  private _emitPlayState() {
+    const el = this._activeAudioElement();
+    const state = mediaStateOf(el && { paused: el.paused, ended: el.ended, hasSource: !!el.src });
+    if (state === this._playState) return;
+    this._playState = state;
+    this.onPlayStateChange?.(state);
   }
 
   private _nextChannel(): PlaybackChannel {
@@ -318,7 +335,10 @@ export class AudioEngine {
     this.sourceName = sourceName;
     this._activeChannel = incoming;
     try {
-      await incoming.audioEl.play();
+      const started = incoming.audioEl.play();
+      // play() clears paused at once, so a track change reports 'playing' with no 'paused' blip.
+      this._emitPlayState();
+      await started;
       if (superseded()) return;
       this.playing = true;
       handlers.onStarted?.();
@@ -376,6 +396,7 @@ export class AudioEngine {
         this.playing = false;
       }
       this.mode = hadSource ? 'backend' : 'idle';
+      this._emitPlayState();
       throw error;
     }
   }
@@ -389,10 +410,11 @@ export class AudioEngine {
     if (url) this._loadIntoChannel(channel, url);
   }
 
-  // Resumes the active track. Does nothing when no track is loaded or it is already playing.
+  // Resumes the active track. Does nothing when no track is loaded, it is already playing,
+  // or it has ended (an ended element is paused too, and play() would restart it from 0).
   play(): boolean {
     const active = this._activeAudioElement();
-    if (this.mode === 'backend' && active?.paused) {
+    if (this.mode === 'backend' && active?.paused && !active.ended && active.src) {
       void active.play().catch(() => { this.playing = false; });
       this.playing = true;
     }

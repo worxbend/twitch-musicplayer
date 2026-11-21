@@ -4,7 +4,7 @@ import { PlayerUI } from './components/PlayerUI';
 import { BackendPlaybackClient } from './audio/BackendPlaybackClient';
 import type { ConnectionStatus, PlaybackStatus } from './audio/BackendPlaybackClient';
 import type { AudioEngine } from './audio/AudioEngine';
-import { bindMediaSession, getMediaSession, setMediaPlaybackState, updateMediaMetadata } from './audio/mediaSession';
+import { bindMediaSession, getMediaSession, setMediaPlayState, updateMediaMetadata } from './audio/mediaSession';
 
 export function App() {
   const [audio, setAudio]           = createSignal<AudioEngine | null>(null);
@@ -28,7 +28,6 @@ export function App() {
       onStatus: (status) => {
         setWsStatus(status.connection);
         setPlaybackStatus(status.playback);
-        setMediaPlaybackState(session, status.playback);
       },
       // The client keeps the title up through a crossfade and sends null only
       // once a track has really ended, so no debounce is needed here.
@@ -38,10 +37,13 @@ export function App() {
         updateMediaMetadata(session, song);
       },
     });
-    unbindMediaSession = bindMediaSession(session, {
+    const unbindHandlers = bindMediaSession(session, {
       onPlay: () => playbackStatus() === 'blocked' ? backendClient?.retryPendingPlay() : a.play(),
       onPause: () => a.pause(),
     });
+    // The OS play/pause state follows the audio element, not the radio's connection reports.
+    a.onPlayStateChange = (state) => setMediaPlayState(session, state);
+    unbindMediaSession = () => { a.onPlayStateChange = undefined; unbindHandlers(); };
     backendClient.start();
   };
 

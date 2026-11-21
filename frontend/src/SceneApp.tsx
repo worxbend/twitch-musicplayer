@@ -5,7 +5,7 @@ import { BackendPlaybackClient } from './audio/BackendPlaybackClient';
 import type { ConnectionStatus, PlaybackStatus } from './audio/BackendPlaybackClient';
 import type { AudioEngine } from './audio/AudioEngine';
 import type { SceneDef } from './viz/scenes';
-import { bindMediaSession, getMediaSession, setMediaPlaybackState, updateMediaMetadata } from './audio/mediaSession';
+import { bindMediaSession, getMediaSession, setMediaPlayState, updateMediaMetadata } from './audio/mediaSession';
 
 interface Props {
   scene: SceneDef;
@@ -62,7 +62,6 @@ export function SceneApp(props: Props) {
       onStatus: (status) => {
         setWsStatus(status.connection);
         setPlaybackStatus(status.playback);
-        setMediaPlaybackState(session, status.playback);
       },
       onSongChange: (song) => {
         setTrackName(song?.title || 'Waiting for a track…');
@@ -70,10 +69,13 @@ export function SceneApp(props: Props) {
         updateMediaMetadata(session, song);
       },
     });
-    unbindMediaSession = bindMediaSession(session, {
+    const unbindHandlers = bindMediaSession(session, {
       onPlay: () => playbackStatus() === 'blocked' ? backendClient?.retryPendingPlay() : audio.play(),
       onPause: () => audio.pause(),
     });
+    // The OS play/pause state follows the audio element, not the radio's connection reports.
+    audio.onPlayStateChange = (state) => setMediaPlayState(session, state);
+    unbindMediaSession = () => { audio.onPlayStateChange = undefined; unbindHandlers(); };
     backendClient.start();
   };
 
