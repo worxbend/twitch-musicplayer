@@ -301,16 +301,12 @@ test('a song_finished lost with its socket is followed by need_song on the next 
 
 test('a need_song still in the outbox is sent once on reconnect', () => {
   socket(0).open();
+  socket(0).message({ type: 'error', payload: { message: 'queue empty' } });
   socket(0).close();
-  mock.timers.tick(900);
-  assert.equal(FakeWebSocket.instances.length, 2, 'socket 1 stays connecting');
-
-  // The reply timeout queues need_song while socket 1 is still connecting,
-  // which drops socket 1 and reconnects after the 1800 ms backoff.
-  mock.timers.tick(15000 - 900);
-  mock.timers.tick(1800);
+  // The 900 ms error retry fires while disconnected and queues need_song.
+  for (let ms = 0; ms < 5000; ms += 100) mock.timers.tick(100);
   const reopened = socket();
-  assert.notEqual(reopened, socket(1));
+  assert.notEqual(reopened, socket(0));
   reopened.open();
   assert.equal(needSongCount(reopened), 1);
 });
@@ -352,4 +348,15 @@ test('error retries back off to 30s and reset after a successful play', async ()
   ws.message({ type: 'error', payload: { message: 'queue empty' } });
   mock.timers.tick(900);
   assert.equal(needSongCount(ws), before + 1, 'backoff resets after a play');
+});
+
+test('the reply timeout does not pile up need_song while disconnected', () => {
+  socket(0).open();
+  socket(0).close();
+  // No socket opens for a minute; reconnects keep backing off.
+  for (let ms = 0; ms < 58000; ms += 100) mock.timers.tick(100);
+  const reopened = socket();
+  reopened.open();
+  const sent = FakeWebSocket.instances.slice(1).reduce((n, ws) => n + needSongCount(ws), 0);
+  assert.equal(sent, 1);
 });

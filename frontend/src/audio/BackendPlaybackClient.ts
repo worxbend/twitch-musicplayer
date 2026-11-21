@@ -357,11 +357,15 @@ export class BackendPlaybackClient {
   }
 
   // The backend may drop a reply when this client's send buffer is full; ask again.
+  // While disconnected, only re-arm: onopen already re-requests a lost song, and
+  // queueing here would flush one extra need_song per timeout on reconnect.
   private startAwaitingSong() {
     this.awaitingSong = true;
     window.clearTimeout(this.awaitSongTimer);
     this.awaitSongTimer = window.setTimeout(() => {
-      if (this.shouldRun && this.awaitingSong && !this.current && !this.pendingPlay) this.requestSong();
+      if (!this.shouldRun || !this.awaitingSong || this.current || this.pendingPlay) return;
+      if (this.socket?.readyState === WebSocket.OPEN) this.requestSong();
+      else this.startAwaitingSong();
     }, awaitSongTimeoutMs);
   }
 
