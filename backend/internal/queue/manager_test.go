@@ -552,3 +552,56 @@ func TestRequeuePutsSongAtFront(t *testing.T) {
 		t.Fatalf("NextSong after Requeue = (%v, %v), want (%s, nil)", again, err, handedOut.ID)
 	}
 }
+
+// A song carried over into a new cycle whose queue entry is then removed
+// belongs to the new cycle: once it plays it must count as played there, or it
+// is picked again before the cycle covers the library.
+func TestRemovedCarryoverEntryDoesNotRepeatInCycle(t *testing.T) {
+	for run := 0; run < 100; run++ {
+		assertRemovedCarryoverNoRepeat(t)
+	}
+}
+
+func assertRemovedCarryoverNoRepeat(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	const n = 6
+	cfg := ManagerConfig{
+		Shuffle: ShuffleConfig{Strategy: ShuffleRoundRobin},
+		Fill:    FillConfig{Strategy: FillPreload, PreloadSize: 2},
+	}
+	m := buildManager(t, cfg, library(n))
+	if _, err := m.PrepareInitialQueue(ctx); err != nil {
+		t.Fatalf("PrepareInitialQueue: %v", err)
+	}
+	// The fifth play picks the seventh song, which completes the first cycle
+	// while the queue head is still in flight, so that song is carried over.
+	for i := 0; i < n-1; i++ {
+		if _, err := m.NextSong(ctx); err != nil {
+			t.Fatalf("NextSong[%d]: %v", i, err)
+		}
+	}
+	items := listQueue(t, m)
+	if len(items) != 2 {
+		t.Fatalf("queue length = %d, want 2", len(items))
+	}
+	if _, ok := m.carryover[items[0].SongID]; !ok {
+		t.Fatalf("setup: %s not carried over (carryover %v)", items[0].SongID, m.carryover)
+	}
+	if err := m.queue.Remove(ctx, items[0].ID); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// The next n plays are exactly the new cycle's picks.
+	seen := make(map[string]bool, n)
+	for i := 0; i < n; i++ {
+		s, err := m.NextSong(ctx)
+		if err != nil {
+			t.Fatalf("NextSong after remove [%d]: %v", i, err)
+		}
+		if seen[s.ID] {
+			t.Fatalf("%s repeated within one cycle", s.ID)
+		}
+		seen[s.ID] = true
+	}
+}

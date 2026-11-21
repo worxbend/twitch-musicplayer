@@ -478,6 +478,13 @@ func (m *Manager) fillQueue(ctx context.Context, targetDepth int, prevArtist str
 			queued[id] = struct{}{}
 		}
 	}
+	// A carried-over song whose entry left the queue (removed by an admin or
+	// purged with its file) belongs to the new cycle once it is picked again.
+	for id := range m.carryover {
+		if _, ok := queued[id]; !ok {
+			delete(m.carryover, id)
+		}
+	}
 
 	// Seed adjacency avoidance with the song that plays just before the first
 	// new entry (the queue tail, else prevArtist), then chain through the batch.
