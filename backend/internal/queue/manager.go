@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"strings"
 	"sync"
@@ -201,56 +202,61 @@ func (m *Manager) NextSong(ctx context.Context) (*models.Song, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var song *models.Song
+	song, err := m.dequeueLive(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	// manual_only: only dequeue; never auto-select.
-	if m.cfg.Fill.Strategy == FillManualOnly {
-		item, err := m.queue.Dequeue(ctx)
-		if errors.Is(err, sql.ErrNoRows) || item == nil {
+	if song == nil {
+		// manual_only: only dequeue; never auto-select.
+		if !m.AutoSelects() {
 			return nil, ErrQueueEmpty
 		}
+		song, err = m.autoSelect(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("dequeue: %w", err)
+			return nil, fmt.Errorf("auto-select: %w", err)
 		}
-		s, err := m.songs.GetByID(ctx, item.SongID)
-		if err != nil {
-			return nil, fmt.Errorf("get queued song: %w", err)
-		}
-		song = s
-	} else {
-		// Try the queue first; auto-select if empty.
-		item, err := m.queue.Dequeue(ctx)
-		if errors.Is(err, sql.ErrNoRows) || item == nil {
-			var selErr error
-			song, selErr = m.autoSelect(ctx)
-			if selErr != nil {
-				return nil, fmt.Errorf("auto-select: %w", selErr)
-			}
-		} else if err != nil {
-			return nil, fmt.Errorf("dequeue: %w", err)
-		} else {
-			var getErr error
-			song, getErr = m.songs.GetByID(ctx, item.SongID)
-			if getErr != nil {
-				return nil, fmt.Errorf("get queued song: %w", getErr)
-			}
-		}
+	}
 
-		switch m.cfg.Fill.Strategy {
-		case FillPreload:
-			if err := m.fillQueue(ctx, m.cfg.Fill.PreloadSize, song.ID); err != nil {
-				return nil, fmt.Errorf("preload queue: %w", err)
-			}
-		case FillAutoRefill:
-			if err := m.fillQueue(ctx, m.cfg.Fill.MinAhead, song.ID); err != nil {
-				return nil, fmt.Errorf("auto-refill queue: %w", err)
-			}
+	switch m.cfg.Fill.Strategy {
+	case FillPreload:
+		if err := m.fillQueue(ctx, m.cfg.Fill.PreloadSize, song.ID); err != nil {
+			return nil, fmt.Errorf("preload queue: %w", err)
+		}
+	case FillAutoRefill:
+		if err := m.fillQueue(ctx, m.cfg.Fill.MinAhead, song.ID); err != nil {
+			return nil, fmt.Errorf("auto-refill queue: %w", err)
 		}
 	}
 
 	m.tracker.MarkPlayed(song.ID)
 	m.recordPlay(song)
 	return song, nil
+}
+
+// dequeueLive pops queue entries until one still points at an indexed song.
+// Entries whose song left the library (a dropped fsnotify event, or a delete
+// racing a dequeue) are logged and skipped. It returns (nil, nil) when the
+// queue runs dry. Must be called with m.mu held.
+func (m *Manager) dequeueLive(ctx context.Context) (*models.Song, error) {
+	for {
+		item, err := m.queue.Dequeue(ctx)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && item == nil) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("dequeue: %w", err)
+		}
+		song, err := m.songs.GetByID(ctx, item.SongID)
+		if errors.Is(err, sql.ErrNoRows) {
+			log.Printf("queue: skipping entry %s, song %s is no longer in the library", item.ID, item.SongID)
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get queued song: %w", err)
+		}
+		return song, nil
+	}
 }
 
 // recordPlay updates the recency history and last-artist tracking.
@@ -506,10 +512,10 @@ func (m *Manager) AddToQueue(ctx context.Context, songID string, source models.Q
 		return nil, err
 	}
 	item := newQueueItem(songID, source)
+	item.Song = song
 	if err := m.queue.Enqueue(ctx, item); err != nil {
 		return nil, fmt.Errorf("enqueue song %s: %w", songID, err)
 	}
-	item.Song = song
 	return item, nil
 }
 

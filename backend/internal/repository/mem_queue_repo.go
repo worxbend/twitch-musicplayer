@@ -20,20 +20,24 @@ func NewMemQueueRepo(songs *MemSongRepo) *MemQueueRepo {
 	return &MemQueueRepo{songs: songs}
 }
 
+// Enqueue appends a copy of item and writes its position back to the caller.
+// Storing a copy keeps later caller writes from racing with List.
 func (r *MemQueueRepo) Enqueue(_ context.Context, item *models.QueueItem) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	item.Position = len(r.items) + 1
-	r.items = append(r.items, item)
+	cp := *item
+	r.items = append(r.items, &cp)
 	return nil
 }
 
-// EnqueueFront inserts the item at position 0 so Dequeue picks it up next.
+// EnqueueFront inserts a copy of item at position 0 so Dequeue picks it up next.
 func (r *MemQueueRepo) EnqueueFront(_ context.Context, item *models.QueueItem) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	item.Position = 0
-	r.items = append([]*models.QueueItem{item}, r.items...)
+	cp := *item
+	r.items = append([]*models.QueueItem{&cp}, r.items...)
 	return nil
 }
 

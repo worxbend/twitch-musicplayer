@@ -2,6 +2,9 @@ package queue
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"lofi-radio-backend/internal/models"
@@ -13,6 +16,14 @@ import (
 // tracker, seeded with the given songs.
 func buildManager(t *testing.T, cfg ManagerConfig, songs []*models.Song) *Manager {
 	t.Helper()
+	m, _ := buildManagerWithSongs(t, cfg, songs)
+	return m
+}
+
+// buildManagerWithSongs is buildManager that also returns the song repo so a
+// test can change the library after queueing.
+func buildManagerWithSongs(t *testing.T, cfg ManagerConfig, songs []*models.Song) (*Manager, *repository.MemSongRepo) {
+	t.Helper()
 	ctx := context.Background()
 	songRepo := repository.NewMemSongRepo()
 	for _, s := range songs {
@@ -22,7 +33,7 @@ func buildManager(t *testing.T, cfg ManagerConfig, songs []*models.Song) *Manage
 	}
 	queueRepo := repository.NewMemQueueRepo(songRepo)
 	tracker := played.New(1000, 0.01)
-	return New(songRepo, tracker, queueRepo, cfg)
+	return New(songRepo, tracker, queueRepo, cfg), songRepo
 }
 
 func song(id, title, artist string) *models.Song {
@@ -165,4 +176,173 @@ func TestNewKeepsFillConfigWhenShuffleEmpty(t *testing.T) {
 	if m.AutoSelects() {
 		t.Error("AutoSelects = true, want false for manual_only")
 	}
+}
+
+// TestAddToQueueListQueueNoRace guards against AddToQueue writing to a queue
+// entry the repo already shares with concurrent ListQueue readers. Run with -race.
+func TestAddToQueueListQueueNoRace(t *testing.T) {
+	ctx := context.Background()
+	m := buildManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, []*models.Song{
+		song("a1", "A One", "Artist A"),
+	})
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		defer close(done)
+		for i := 0; i < 5000; i++ {
+			if _, err := m.AddToQueue(ctx, "a1", models.QueueSourceManual); err != nil {
+				t.Errorf("AddToQueue: %v", err)
+				return
+			}
+			if i%8 == 0 {
+				if err := m.ClearQueue(ctx); err != nil {
+					t.Errorf("ClearQueue: %v", err)
+					return
+				}
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			if _, err := m.ListQueue(ctx); err != nil {
+				t.Errorf("ListQueue: %v", err)
+				return
+			}
+		}
+	}()
+	wg.Wait()
+}
+
+// library returns n songs with distinct IDs, artists and paths.
+func library(n int) []*models.Song {
+	out := make([]*models.Song, n)
+	for i := range out {
+		id := fmt.Sprintf("s%d", i)
+		out[i] = song(id, "Title "+id, "Artist "+id)
+		out[i].Path = "/music/" + id + ".mp3"
+	}
+	return out
+}
+
+// queueStale queues every song, then deletes stale from the library so its
+// queue entry points at nothing.
+func queueStale(t *testing.T, m *Manager, songs *repository.MemSongRepo, stale *models.Song, queued ...*models.Song) {
+	t.Helper()
+	ctx := context.Background()
+	for _, s := range queued {
+		if _, err := m.AddToQueue(ctx, s.ID, models.QueueSourceManual); err != nil {
+			t.Fatalf("AddToQueue %s: %v", s.ID, err)
+		}
+	}
+	if _, found, err := songs.DeleteByPath(ctx, stale.Path); err != nil || !found {
+		t.Fatalf("DeleteByPath %s = (%v, %v), want (true, nil)", stale.Path, found, err)
+	}
+}
+
+func listQueue(t *testing.T, m *Manager) []*models.QueueItem {
+	t.Helper()
+	items, err := m.ListQueue(context.Background())
+	if err != nil {
+		t.Fatalf("ListQueue: %v", err)
+	}
+	return items
+}
+
+func TestNextSongManualOnlySkipsStaleEntry(t *testing.T) {
+	lib := library(2)
+	m, songs := buildManagerWithSongs(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, lib)
+	queueStale(t, m, songs, lib[0], lib[0], lib[1])
+
+	got, err := m.NextSong(context.Background())
+	if err != nil || got.ID != lib[1].ID {
+		t.Fatalf("NextSong = (%v, %v), want (%s, nil)", got, err, lib[1].ID)
+	}
+}
+
+func TestNextSongManualOnlyOnlyStaleEntryIsEmpty(t *testing.T) {
+	lib := library(2)
+	m, songs := buildManagerWithSongs(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, lib)
+	queueStale(t, m, songs, lib[0], lib[0])
+
+	if _, err := m.NextSong(context.Background()); !errors.Is(err, ErrQueueEmpty) {
+		t.Fatalf("NextSong err = %v, want ErrQueueEmpty", err)
+	}
+}
+
+func TestNextSongAutoRefillStaleEntryFallsBackToAutoSelect(t *testing.T) {
+	lib := library(2)
+	m, songs := buildManagerWithSongs(t, autoRefillCfg(ShuffleRoundRobin), lib)
+	queueStale(t, m, songs, lib[0], lib[0])
+
+	got, err := m.NextSong(context.Background())
+	if err != nil || got.ID != lib[1].ID {
+		t.Fatalf("NextSong = (%v, %v), want live song %s", got, err, lib[1].ID)
+	}
+}
+
+func TestNextSongPreloadFillsQueueWithoutCurrentSong(t *testing.T) {
+	cfg := ManagerConfig{Fill: FillConfig{Strategy: FillPreload, PreloadSize: 3}}
+	m := buildManager(t, cfg, library(5))
+
+	got, err := m.NextSong(context.Background())
+	if err != nil {
+		t.Fatalf("NextSong: %v", err)
+	}
+	items := listQueue(t, m)
+	if len(items) != 3 {
+		t.Fatalf("queue length = %d, want PreloadSize 3", len(items))
+	}
+	for _, item := range items {
+		if item.SongID == got.ID {
+			t.Fatalf("queue contains just-returned song %s", got.ID)
+		}
+	}
+}
+
+func TestNextSongAutoRefillKeepsMinAhead(t *testing.T) {
+	cfg := ManagerConfig{Fill: FillConfig{Strategy: FillAutoRefill, MinAhead: 2}}
+	for _, tc := range []struct{ librarySize, want int }{{5, 2}, {2, 1}} {
+		t.Run(fmt.Sprintf("library_%d", tc.librarySize), func(t *testing.T) {
+			m := buildManager(t, cfg, library(tc.librarySize))
+			if _, err := m.NextSong(context.Background()); err != nil {
+				t.Fatalf("NextSong: %v", err)
+			}
+			if got := len(listQueue(t, m)); got != tc.want {
+				t.Fatalf("queue length = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrepareInitialQueue(t *testing.T) {
+	ctx := context.Background()
+	t.Run("preload", func(t *testing.T) {
+		m := buildManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillPreload, PreloadSize: 3}}, library(5))
+		added, err := m.PrepareInitialQueue(ctx)
+		if err != nil || added != 3 {
+			t.Fatalf("PrepareInitialQueue = (%d, %v), want (3, nil)", added, err)
+		}
+		if got := len(listQueue(t, m)); got != 3 {
+			t.Fatalf("queue length = %d, want 3", got)
+		}
+	})
+	t.Run("manual_only", func(t *testing.T) {
+		m := buildManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, library(5))
+		added, err := m.PrepareInitialQueue(ctx)
+		if err != nil || added != 0 {
+			t.Fatalf("PrepareInitialQueue = (%d, %v), want (0, nil)", added, err)
+		}
+		if got := len(listQueue(t, m)); got != 0 {
+			t.Fatalf("queue length = %d, want 0", got)
+		}
+	})
 }
