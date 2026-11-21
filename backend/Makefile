@@ -1,12 +1,13 @@
 # Simple Makefile for a Go project
 
+GOVULNCHECK_VERSION ?= v1.10.0
+AIR_VERSION ?= v1.67.4
+
 # Build the application
 all: build test
 
 build:
 	@echo "Building..."
-	
-	
 	@go build -o main cmd/api/main.go
 
 # Run the application
@@ -16,7 +17,20 @@ run:
 # Test the application
 test:
 	@echo "Testing..."
-	@go test ./... -v
+	@go test -race ./...
+
+# Fail if any file needs gofmt
+fmt-check:
+	@test -z "$$(gofmt -l .)" || (gofmt -l .; exit 1)
+
+vet:
+	@go vet ./...
+
+vulncheck:
+	@go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+# Same gates as the CI backend job, in the same order
+check: fmt-check vet test vulncheck build
 
 # Clean the binary
 clean:
@@ -25,19 +39,6 @@ clean:
 
 # Live Reload
 watch:
-	@if command -v air > /dev/null; then \
-            air; \
-            echo "Watching...";\
-        else \
-            read -p "Go's 'air' is not installed on your machine. Do you want to install it? [Y/n] " choice; \
-            if [ "$$choice" != "n" ] && [ "$$choice" != "N" ]; then \
-                go install github.com/air-verse/air@latest; \
-                air; \
-                echo "Watching...";\
-            else \
-                echo "You chose not to install air. Exiting..."; \
-                exit 1; \
-            fi; \
-        fi
+	@go run github.com/air-verse/air@$(AIR_VERSION)
 
-.PHONY: all build run test clean watch
+.PHONY: all build run test fmt-check vet vulncheck check clean watch

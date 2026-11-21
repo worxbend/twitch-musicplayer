@@ -27,11 +27,15 @@ picked up live by the filesystem watcher — including files added to nested sub
 ## 🔨 Make Targets
 
 ```bash
-make build   # compile the binary
-make run     # build and run
-make test    # go test ./...
-make watch   # live reload during development
-make clean   # remove build artifacts
+make check      # CI gates: fmt-check, vet, test, vulncheck, build
+make build      # compile the binary
+make run        # build and run
+make test       # go test -race ./...
+make fmt-check  # fail if gofmt would change a file
+make vet        # go vet ./...
+make vulncheck  # govulncheck at the CI-pinned version
+make watch      # live reload with pinned air (no global install)
+make clean      # remove build artifacts
 ```
 
 ## ⚙️ Configuration
