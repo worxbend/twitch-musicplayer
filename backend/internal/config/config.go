@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -126,6 +127,7 @@ func loadFrom(path string, getenv func(string) string) (*Config, error) {
 	cfg.Music.Dir = expandHomePath(cfg.Music.Dir)
 	cfg.Bloom.Path = expandHomePath(cfg.Bloom.Path)
 	cfg.Music.Extensions = normalizeExtensions(cfg.Music.Extensions)
+	cfg.Server.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.Server.BaseURL), "/")
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -161,6 +163,7 @@ func (c *Config) Validate() error {
 		checkNonNegative("shuffle.recent_window", c.Shuffle.RecentWindow),
 		checkNonNegative("queue.min_ahead", c.Queue.MinAhead),
 		checkNonNegative("queue.preload_size", c.Queue.PreloadSize),
+		checkBaseURL("server.base_url", c.Server.BaseURL),
 	)
 	return errors.Join(errs...)
 }
@@ -177,6 +180,31 @@ func checkNonNegative(key string, value int) error {
 		return nil
 	}
 	return fmt.Errorf("%s: %d must not be negative", key, value)
+}
+
+// checkBaseURL accepts an absolute http(s) origin with an optional path prefix.
+// Empty is allowed: stream URLs then stay relative ("/v1/songs/...") and the
+// frontend resolves them against its own backend URL.
+func checkBaseURL(key, value string) error {
+	if value == "" {
+		return nil
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("%s: %q is not a valid URL: %w", key, value, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%s: %q must start with http:// or https://", key, value)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%s: %q has no host", key, value)
+	}
+	// ContainsAny also catches a bare "?" or "#", which leave RawQuery and
+	// Fragment empty yet still break the appended "/v1/songs/..." path.
+	if strings.ContainsAny(value, "?#") {
+		return fmt.Errorf("%s: %q must not contain a query or fragment", key, value)
+	}
+	return nil
 }
 
 // normalizeExtensions trims each extension and ensures it starts with '.',

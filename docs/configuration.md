@@ -81,8 +81,12 @@ file is fine: defaults are used. These fail startup:
 - An unknown `queue.strategy`. Allowed: `manual_only`, `auto_refill`, `preload`.
 - A negative `shuffle.recent_window`, `queue.min_ahead` or `queue.preload_size`.
 - An empty `music.dir`, or an empty or blank-entry `music.extensions` list.
+- A `server.base_url` (or `BASE_URL`) that is not an `http://` or `https://` URL with a host,
+  or that has a `?query` or `#fragment`. Empty is allowed: stream URLs then stay relative and
+  the frontend resolves them against `VITE_BACKEND_URL`.
 
 Extensions without a leading dot are accepted and normalized (`"mp3"` becomes `".mp3"`).
+Trailing slashes on `server.base_url` are trimmed (`http://host:8080/` becomes `http://host:8080`).
 
 ## 🖼️ Frontend Environment
 

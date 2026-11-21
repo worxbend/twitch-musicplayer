@@ -167,6 +167,42 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestLoadFromNormalizesBaseURL(t *testing.T) {
+	tests := []struct {
+		name, toml, env, want string
+	}{
+		{name: "trailing slash trimmed", toml: "http://host:8080/", want: "http://host:8080"},
+		{name: "path prefix kept", toml: "https://radio.example/sub/", want: "https://radio.example/sub"},
+		{name: "spaces and slashes trimmed", toml: " http://host// ", want: "http://host"},
+		{name: "env trailing slash trimmed", toml: "http://toml", env: "http://env:8080/", want: "http://env:8080"},
+		{name: "empty allowed for relative stream urls", toml: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeConfig(t, "[server]\nbase_url = \""+tt.toml+"\"\n")
+			cfg, err := loadFrom(path, fakeEnv(map[string]string{"BASE_URL": tt.env}))
+			if err != nil {
+				t.Fatalf("loadFrom: %v", err)
+			}
+			if cfg.Server.BaseURL != tt.want || cfg.BaseURL != tt.want {
+				t.Errorf("base url = %q/%q, want %q", cfg.Server.BaseURL, cfg.BaseURL, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadFromRejectsBadBaseURL(t *testing.T) {
+	for _, bad := range []string{"localhost:8080", "ftp://x", "http://", "http://h?x=1", "http://h#f", "http://h?", "http://h/%zz"} {
+		t.Run(bad, func(t *testing.T) {
+			path := writeConfig(t, "[server]\nbase_url = \""+bad+"\"\n")
+			_, err := loadFrom(path, fakeEnv(nil))
+			if err == nil || !strings.Contains(err.Error(), "server.base_url: ") {
+				t.Errorf("loadFrom error = %v, want one naming server.base_url", err)
+			}
+		})
+	}
+}
+
 func TestValidateDefaultsOK(t *testing.T) {
 	if err := defaults().Validate(); err != nil {
 		t.Fatalf("defaults invalid: %v", err)
