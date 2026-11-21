@@ -127,11 +127,20 @@ func (w *Watcher) ScanExisting(ctx context.Context) (*ScanSummary, error) {
 
 // walkTree watches every directory under root and calls onMusicFile for each
 // music file. The library root is skipped because New already watches it.
+// An unreadable entry below root (lost+found, NAS #recycle) is logged and
+// skipped so it cannot leave the library half indexed; root itself still fails.
 func (w *Watcher) walkTree(ctx context.Context, root string, onMusicFile func(path string) error) (int, error) {
 	watched := 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			if path == root {
+				return err
+			}
+			w.logger.Printf("skip %s: %v", path, err)
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if err := ctx.Err(); err != nil {
 			return err

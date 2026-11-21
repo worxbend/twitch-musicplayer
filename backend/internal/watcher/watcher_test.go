@@ -227,6 +227,82 @@ func TestWatcherIndexesMovedNestedDirectory(t *testing.T) {
 	waitFor(t, 3*time.Second, "a/b/d.mp3 indexed", func() bool { return h.count(t) == 2 })
 }
 
+// lockedDir creates parent/name holding one music file, then removes every
+// permission on it. Root ignores permissions, so the test is skipped as root.
+func lockedDir(t *testing.T, parent, name string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	locked := filepath.Join(parent, name)
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(locked, "hidden.mp3"))
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+}
+
+func TestScanExistingSkipsUnreadableDir(t *testing.T) {
+	dir := t.TempDir()
+	lockedDir(t, dir, "a_locked")
+	if err := os.Mkdir(filepath.Join(dir, "z"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	song := filepath.Join(dir, "z", "song.mp3")
+	writeFile(t, song)
+
+	h := startWatcher(t, dir)
+
+	if n := h.count(t); n != 1 {
+		t.Fatalf("indexed %d songs, want 1", n)
+	}
+	if ok, _ := h.songs.ExistsByPath(context.Background(), song); !ok {
+		t.Fatal("z/song.mp3 not indexed")
+	}
+}
+
+func TestScanExistingFailsWhenRootIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	songs := repository.NewMemSongRepo()
+	w, err := New(dir, nil, songs, nil, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { w.fsWatcher.Close() })
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := w.ScanExisting(context.Background()); err == nil {
+		t.Fatal("ScanExisting on a missing root returned nil error")
+	}
+}
+
+func TestWatcherIndexesReadableFilesInDroppedTreeWithUnreadableDir(t *testing.T) {
+	dir := t.TempDir()
+	tree := filepath.Join(t.TempDir(), "drop")
+	if err := os.MkdirAll(filepath.Join(tree, "ok"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lockedDir(t, tree, "locked")
+	writeFile(t, filepath.Join(tree, "ok", "song.mp3"))
+	h := startWatcher(t, dir)
+
+	if err := os.Rename(tree, filepath.Join(dir, "drop")); err != nil {
+		t.Fatal(err)
+	}
+	// lockedDir restores the old path; TempDir cleanup needs the moved one open too.
+	t.Cleanup(func() { os.Chmod(filepath.Join(dir, "drop", "locked"), 0o755) })
+	song := filepath.Join(dir, "drop", "ok", "song.mp3")
+	waitFor(t, 3*time.Second, "drop/ok/song.mp3 indexed", func() bool {
+		ok, _ := h.songs.ExistsByPath(context.Background(), song)
+		return ok
+	})
+}
+
 func TestWatcherWaitsForFileToSettle(t *testing.T) {
 	const chunk = 64 << 10
 	dir := t.TempDir()
