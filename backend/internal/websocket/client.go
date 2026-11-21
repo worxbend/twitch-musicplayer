@@ -200,9 +200,11 @@ func (c *Client) handleMessage(msg Message) {
 
 	case MsgSongFinished:
 		// Song is already marked played when it starts; just request the next
-		// one. Only a finished song may clear now-playing: need_song also comes
-		// from a second player tab while the first is still playing.
-		if errors.Is(c.sendNextSong(ctx), queue.ErrQueueEmpty) {
+		// one. A dry queue (manual_only) or an empty library (auto strategies)
+		// clears now-playing. Only a finished song may clear it: need_song also
+		// comes from a second player tab while the first is still playing.
+		err := c.sendNextSong(ctx)
+		if errors.Is(err, queue.ErrQueueEmpty) || errors.Is(err, queue.ErrLibraryEmpty) {
 			c.clearNowPlaying(ctx)
 		}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -268,6 +269,14 @@ func (failingQueueManager) NextSong(context.Context) (*models.Song, error) {
 	return nil, errors.New("disk on fire")
 }
 
+// emptyLibraryQueueManager fails NextSong the way an auto strategy does when
+// the library is empty.
+type emptyLibraryQueueManager struct{ emptyQueueManager }
+
+func (emptyLibraryQueueManager) NextSong(context.Context) (*models.Song, error) {
+	return nil, fmt.Errorf("auto-select: %w", queue.ErrLibraryEmpty)
+}
+
 // newDryTestClient builds an unconnected client, like newSendTestClient, whose
 // tracker is already playing song-1 and whose queue manager is mgr.
 func newDryTestClient(mgr QueueManager) *Client {
@@ -297,12 +306,10 @@ func assertSongKept(t *testing.T, c *Client) {
 	}
 }
 
-func TestSongFinishedOnEmptyQueueClearsNowPlaying(t *testing.T) {
-	c := newDryTestClient(emptyQueueManager{})
-
-	c.handleMessage(Message{Type: MsgSongFinished})
-
-	drainSent(t, c, MsgError)
+// assertNowPlayingCleared asserts the tracker has no current song and exactly
+// one state broadcast without current_song went out.
+func assertNowPlayingCleared(t *testing.T, c *Client) {
+	t.Helper()
 	if cur := c.stateTracker.GetCurrentSong(); cur != nil {
 		t.Fatalf("current song = %s, want nil", cur.ID)
 	}
@@ -317,6 +324,15 @@ func TestSongFinishedOnEmptyQueueClearsNowPlaying(t *testing.T) {
 	if _, ok := fields["current_song"]; ok {
 		t.Fatalf("state payload %s has current_song, want none", got.Payload)
 	}
+}
+
+func TestSongFinishedOnEmptyQueueClearsNowPlaying(t *testing.T) {
+	c := newDryTestClient(emptyQueueManager{})
+
+	c.handleMessage(Message{Type: MsgSongFinished})
+
+	drainSent(t, c, MsgError)
+	assertNowPlayingCleared(t, c)
 
 	// A second song_finished on the still-empty queue errors again but
 	// broadcasts nothing: the clear is idempotent.
@@ -341,6 +357,24 @@ func TestSongFinishedOnOtherErrorKeepsNowPlaying(t *testing.T) {
 	c := newDryTestClient(failingQueueManager{})
 
 	c.handleMessage(Message{Type: MsgSongFinished})
+
+	drainSent(t, c, MsgError)
+	assertSongKept(t, c)
+}
+
+func TestSongFinishedOnEmptyLibraryClearsNowPlaying(t *testing.T) {
+	c := newDryTestClient(emptyLibraryQueueManager{})
+
+	c.handleMessage(Message{Type: MsgSongFinished})
+
+	drainSent(t, c, MsgError)
+	assertNowPlayingCleared(t, c)
+}
+
+func TestNeedSongOnEmptyLibraryKeepsNowPlaying(t *testing.T) {
+	c := newDryTestClient(emptyLibraryQueueManager{})
+
+	c.handleMessage(Message{Type: MsgNeedSong})
 
 	drainSent(t, c, MsgError)
 	assertSongKept(t, c)

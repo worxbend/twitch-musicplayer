@@ -19,6 +19,9 @@ import (
 // ErrQueueEmpty is returned by NextSong when using manual_only strategy and no songs are queued.
 var ErrQueueEmpty = errors.New("queue is empty")
 
+// ErrLibraryEmpty is returned by NextSong when an auto strategy has no songs to pick from.
+var ErrLibraryEmpty = errors.New("no songs available")
+
 // ErrSongNotFound is returned by AddToQueue when the requested song does not exist.
 var ErrSongNotFound = errors.New("song not found")
 
@@ -384,7 +387,7 @@ func (m *Manager) autoSelect(ctx context.Context) (*models.Song, error) {
 		return nil, fmt.Errorf("list songs: %w", err)
 	}
 	if len(allSongs) == 0 {
-		return nil, fmt.Errorf("no songs available")
+		return nil, ErrLibraryEmpty
 	}
 
 	m.resetCycleIfComplete(allSongs, nil)
@@ -503,7 +506,7 @@ func (m *Manager) autoSelectExcluding(ctx context.Context, queued map[string]str
 		return nil, fmt.Errorf("list songs: %w", err)
 	}
 	if len(allSongs) == 0 {
-		return nil, fmt.Errorf("no songs available")
+		return nil, ErrLibraryEmpty
 	}
 	m.resetCycleIfComplete(allSongs, queued)
 

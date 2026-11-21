@@ -143,12 +143,27 @@ func TestWeightedHistoryFavoursStaleSongs(t *testing.T) {
 	}
 }
 
-// TestNextSongEmptyLibrary ensures a graceful error when nothing is indexed.
+// TestNextSongEmptyLibrary ensures every auto strategy reports ErrLibraryEmpty
+// when nothing is indexed, so callers can tell it apart from other failures.
 func TestNextSongEmptyLibrary(t *testing.T) {
-	ctx := context.Background()
-	m := buildManager(t, autoRefillCfg(ShuffleRoundRobin), nil)
-	if _, err := m.NextSong(ctx); err == nil {
-		t.Fatal("expected error selecting from empty library")
+	tests := []struct {
+		name string
+		cfg  ManagerConfig
+	}{
+		{name: "auto_refill random", cfg: autoRefillCfg(ShuffleRandom)},
+		{name: "auto_refill round_robin", cfg: autoRefillCfg(ShuffleRoundRobin)},
+		{name: "preload round_robin", cfg: ManagerConfig{
+			Shuffle: ShuffleConfig{Strategy: ShuffleRoundRobin},
+			Fill:    FillConfig{Strategy: FillPreload, PreloadSize: 3},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := buildManager(t, tt.cfg, nil)
+			if _, err := m.NextSong(context.Background()); !errors.Is(err, ErrLibraryEmpty) {
+				t.Fatalf("NextSong error = %v, want ErrLibraryEmpty", err)
+			}
+		})
 	}
 }
 
