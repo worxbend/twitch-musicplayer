@@ -98,12 +98,38 @@ func (h *SongsHandler) StreamContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Audio downloads progressively and outlives the server-wide WriteTimeout;
-	// IdleTimeout and client disconnect still bound the connection.
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		log.Printf("stream %s: clear write deadline: %v", id, err)
+	// Each write gets a fresh stall deadline so long downloads outlive
+	// WriteTimeout but a client that stops reading is dropped.
+	sw := &stallWriter{ResponseWriter: w, rc: http.NewResponseController(w), songID: id}
+	sw.extendDeadline()
+	http.ServeFile(sw, r, path)
+}
+
+// streamStallTimeout bounds how long one write to a song stream may block.
+var streamStallTimeout = 30 * time.Second
+
+// stallWriter renews the connection write deadline before every write.
+type stallWriter struct {
+	http.ResponseWriter
+	rc       *http.ResponseController
+	songID   string
+	reported bool
+}
+
+func (sw *stallWriter) Write(p []byte) (int, error) {
+	sw.extendDeadline()
+	return sw.ResponseWriter.Write(p)
+}
+
+func (sw *stallWriter) Unwrap() http.ResponseWriter { return sw.ResponseWriter }
+
+func (sw *stallWriter) extendDeadline() {
+	err := sw.rc.SetWriteDeadline(time.Now().Add(streamStallTimeout))
+	if err == nil || errors.Is(err, http.ErrNotSupported) || sw.reported {
+		return
 	}
-	http.ServeFile(w, r, path)
+	sw.reported = true
+	log.Printf("stream %s: set write deadline: %v", sw.songID, err)
 }
 
 func streamPathUnderMusicDir(musicDir, songPath string) (string, error) {

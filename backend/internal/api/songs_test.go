@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -310,5 +311,55 @@ func TestSongsStreamContentLookupErrors(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
 			}
 		})
+	}
+}
+
+// A client that requests a song and then stops reading must not pin the
+// handler, its open file and the socket forever.
+func TestStreamContentDropsStalledClient(t *testing.T) {
+	prev := streamStallTimeout
+	streamStallTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { streamStallTimeout = prev })
+
+	musicDir := t.TempDir()
+	songPath := filepath.Join(musicDir, "song.mp3")
+	f, err := os.Create(songPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(64 << 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &fakeSongRepo{songs: []*models.Song{{ID: "s", Path: songPath}}}
+	router := chi.NewRouter()
+	router.Use(middleware.Logger)
+	RegisterRoutes(router, NewSongsHandler(repo, musicDir), nil, nil)
+	done := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		router.ServeHTTP(w, r)
+		done <- struct{}{}
+	}))
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close() // runs before srv.Close, which waits for the handler
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetReadBuffer(4 << 10)
+	}
+	if _, err := io.WriteString(conn, "GET /v1/songs/s/content HTTP/1.1\r\nHost: test\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream handler still writing to a client that stopped reading")
 	}
 }
