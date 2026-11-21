@@ -139,6 +139,15 @@ jobs:
           grep -F '/assets/admin-' admin.html
           if cmp -s index.html admin.html; then echo "/admin served the SPA index"; exit 1; fi
           curl -fsS -o /dev/null http://127.0.0.1:3000/now-playing
+          # HTML entry points must revalidate; hashed assets stay long-cached.
+          for path in / /admin /admin.html /now-playing; do
+            curl -fsS -D html-headers.txt -o /dev/null "http://127.0.0.1:3000$path"
+            grep -i '^cache-control:.*no-cache' html-headers.txt
+          done
+          asset="$(grep -o '/assets/[^"]*\.js' index.html | head -n1)"
+          test -n "$asset"
+          curl -fsS -D asset-headers.txt -o /dev/null "http://127.0.0.1:3000$asset"
+          grep -i '^cache-control:.*immutable' asset-headers.txt
       - name: container logs
         if: failure()
         run: |
