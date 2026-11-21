@@ -1,10 +1,11 @@
 package repository
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -160,11 +161,9 @@ func (r *MemSongRepo) deleteLocked(id string) *models.Song {
 	return song
 }
 
+// sortSongs orders by Title, then Artist, then Path. Path is unique per song, so the order is total.
 func sortSongs(songs []*models.Song) {
-	sort.Slice(songs, func(i, j int) bool {
-		if songs[i].Title != songs[j].Title {
-			return songs[i].Title < songs[j].Title
-		}
-		return songs[i].Artist < songs[j].Artist
+	slices.SortFunc(songs, func(a, b *models.Song) int {
+		return cmp.Or(cmp.Compare(a.Title, b.Title), cmp.Compare(a.Artist, b.Artist), cmp.Compare(a.Path, b.Path))
 	})
 }
