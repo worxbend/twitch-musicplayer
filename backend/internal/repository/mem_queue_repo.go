@@ -52,8 +52,9 @@ func (r *MemQueueRepo) Dequeue(_ context.Context) (*models.QueueItem, error) {
 	return item, nil
 }
 
-// List returns all items with Position set to their 1-based index and Song
-// populated via the song repo.
+// List returns all items with Position set to their 1-based index. Song is
+// reloaded from the song repo, so it reflects the current library (a retagged
+// file shows its new tags) and is nil when the song has left the library.
 func (r *MemQueueRepo) List(ctx context.Context) ([]*models.QueueItem, error) {
 	r.mu.Lock()
 	snapshot := make([]*models.QueueItem, len(r.items))
@@ -64,10 +65,9 @@ func (r *MemQueueRepo) List(ctx context.Context) ([]*models.QueueItem, error) {
 	for i, item := range snapshot {
 		cp := *item
 		cp.Position = i + 1
-		if cp.Song == nil {
-			if s, err := r.songs.GetByID(ctx, item.SongID); err == nil {
-				cp.Song = s
-			}
+		cp.Song = nil
+		if s, err := r.songs.GetByID(ctx, item.SongID); err == nil {
+			cp.Song = s
 		}
 		out[i] = &cp
 	}

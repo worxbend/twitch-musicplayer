@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	id3 "github.com/bogem/id3v2/v2"
 	"github.com/google/uuid"
 	"lofi-radio-backend/internal/models"
 	"lofi-radio-backend/internal/played"
@@ -24,6 +25,7 @@ type harness struct {
 	mgr      *queue.Manager
 	w        *Watcher
 	removals atomic.Int32
+	updates  atomic.Int32
 }
 
 // startWatcher indexes dir, then runs Start until the test ends.
@@ -46,6 +48,7 @@ func startWatcherWith(t *testing.T, dir string, configure func(*Watcher)) *harne
 		t.Fatalf("New: %v", err)
 	}
 	w.OnRemoved = func(_ []*models.Song) { h.removals.Add(1) }
+	w.OnUpdated = func(_ *models.Song) { h.updates.Add(1) }
 	w.settlePoll = 300 * time.Millisecond
 	if configure != nil {
 		configure(w)
@@ -377,5 +380,126 @@ func TestWatcherCapsConcurrentSettling(t *testing.T) {
 	waitFor(t, 10*time.Second, "burst indexed", func() bool { return h.count(t) == files })
 	if p := peak.Load(); p < 1 || p > 2 {
 		t.Fatalf("peak concurrent settle waits = %d, want 1..2", p)
+	}
+}
+
+// taggedMP3 returns audio-ish bytes behind an ID3v2 tag titled title. The tag
+// is built outside the library: id3v2's Save renames a temp file over its target.
+func taggedMP3(t *testing.T, title string) []byte {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "tagged.mp3")
+	if err := os.WriteFile(path, make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tag, err := id3.Open(path, id3.Options{Parse: false})
+	if err != nil {
+		t.Fatalf("id3 open: %v", err)
+	}
+	tag.SetTitle(title)
+	if err := tag.Save(); err != nil {
+		tag.Close()
+		t.Fatalf("id3 save: %v", err)
+	}
+	if err := tag.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func (h *harness) song(t *testing.T, path string) *models.Song {
+	t.Helper()
+	song, err := h.songs.GetByID(context.Background(), uuid.NewSHA1(uuid.NameSpaceURL, []byte(path)).String())
+	if err != nil {
+		t.Fatalf("GetByID(%s): %v", path, err)
+	}
+	return song
+}
+
+func (h *harness) queueDepth(t *testing.T) int {
+	t.Helper()
+	n, err := h.queue.Count(context.Background())
+	if err != nil {
+		t.Fatalf("queue Count: %v", err)
+	}
+	return n
+}
+
+func TestWatcherRefreshesRetaggedFileInPlace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp3")
+	if err := os.WriteFile(path, taggedMP3(t, "Old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := startWatcher(t, dir)
+	h.queueAll(t)
+	before := h.song(t, path)
+
+	if err := os.WriteFile(path, taggedMP3(t, "New"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 3*time.Second, "title refreshed", func() bool { return h.song(t, path).Title == "New" })
+	if got := h.song(t, path).AddedAt; !got.Equal(before.AddedAt) {
+		t.Fatalf("AddedAt = %v, want unchanged %v", got, before.AddedAt)
+	}
+	if n := h.queueDepth(t); n != 1 {
+		t.Fatalf("queue depth = %d, want 1 (refresh must not re-queue)", n)
+	}
+}
+
+func TestWatcherRefreshesFileReplacedByRename(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp3")
+	if err := os.WriteFile(path, taggedMP3(t, "Old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := startWatcher(t, dir)
+	h.queueAll(t)
+
+	tmp := filepath.Join(dir, ".a.mp3.tmp")
+	if err := os.WriteFile(tmp, taggedMP3(t, "New"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 3*time.Second, "title refreshed", func() bool { return h.song(t, path).Title == "New" })
+	if n := h.count(t); n != 1 {
+		t.Fatalf("indexed %d songs, want 1", n)
+	}
+	if n := h.queueDepth(t); n != 1 {
+		t.Fatalf("queue depth = %d, want 1 (refresh must not re-queue)", n)
+	}
+}
+
+func TestWatcherOnUpdatedFiresOnlyWhenMetadataChanges(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp3")
+	old := taggedMP3(t, "Old")
+	if err := os.WriteFile(path, old, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := startWatcher(t, dir)
+
+	if err := os.WriteFile(path, old, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * h.w.settlePoll)
+	if n := h.updates.Load(); n != 0 {
+		t.Fatalf("OnUpdated fired %d times for identical bytes, want 0", n)
+	}
+
+	if err := os.WriteFile(path, taggedMP3(t, "New"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, "OnUpdated", func() bool { return h.updates.Load() > 0 })
+	time.Sleep(3 * h.w.settlePoll)
+	if n := h.updates.Load(); n != 1 {
+		t.Fatalf("OnUpdated fired %d times, want 1", n)
 	}
 }

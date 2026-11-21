@@ -53,3 +53,47 @@ func TestMemQueueRepoEnqueueStoresCopy(t *testing.T) {
 		t.Fatalf("queue = %+v, want [B A] unaffected by caller writes", items)
 	}
 }
+
+func TestMemQueueRepoListReflectsRetaggedSong(t *testing.T) {
+	ctx := context.Background()
+	songs := NewMemSongRepo()
+	repo := NewMemQueueRepo(songs)
+	old := &models.Song{ID: "A", Path: "/m/a.mp3", Title: "Old"}
+	if err := songs.Create(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Enqueue(ctx, &models.QueueItem{ID: "1", SongID: "A", Song: old}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := songs.Create(ctx, &models.Song{ID: "A", Path: "/m/a.mp3", Title: "New"}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, _ := repo.List(ctx)
+	if len(items) != 1 || items[0].Song == nil || items[0].Song.Title != "New" {
+		t.Fatalf("queue = %+v, want song A titled New", items)
+	}
+}
+
+func TestMemQueueRepoListDropsSongRemovedFromLibrary(t *testing.T) {
+	ctx := context.Background()
+	songs := NewMemSongRepo()
+	repo := NewMemQueueRepo(songs)
+	song := &models.Song{ID: "A", Path: "/m/a.mp3", Title: "Old"}
+	if err := songs.Create(ctx, song); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Enqueue(ctx, &models.QueueItem{ID: "1", SongID: "A", Song: song}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := songs.DeleteByPath(ctx, "/m/a.mp3"); err != nil {
+		t.Fatal(err)
+	}
+
+	items, _ := repo.List(ctx)
+	if len(items) != 1 || items[0].Song != nil {
+		t.Fatalf("queue = %+v, want one item with nil Song", items)
+	}
+}

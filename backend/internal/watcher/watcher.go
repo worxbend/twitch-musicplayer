@@ -2,6 +2,8 @@ package watcher
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"io/fs"
 	"log"
 	"os"
@@ -19,6 +21,7 @@ import (
 // SongRepository is the subset needed by the watcher.
 type SongRepository interface {
 	ExistsByPath(ctx context.Context, path string) (bool, error)
+	GetByID(ctx context.Context, id string) (*models.Song, error)
 	Create(ctx context.Context, song *models.Song) error
 	DeleteByPath(ctx context.Context, path string) (*models.Song, bool, error)
 	DeleteUnderDir(ctx context.Context, dir string) ([]*models.Song, error)
@@ -71,6 +74,9 @@ type Watcher struct {
 
 	// OnRemoved, when set before Start, is notified after songs are dropped.
 	OnRemoved OnSongsRemoved
+	// OnUpdated, when set before Start, is notified after an indexed file is
+	// rewritten or replaced. It fires only when the song's metadata changed.
+	OnUpdated func(*models.Song)
 }
 
 // New creates a Watcher. extensions is the list of file suffixes to index (e.g. [".mp3"]).
@@ -171,7 +177,8 @@ func (w *Watcher) walkTree(ctx context.Context, root string, onMusicFile func(pa
 	return watched, err
 }
 
-// Start watches the directory tree for new and removed files. Blocks until ctx is done.
+// Start watches the directory tree for new, rewritten and removed files.
+// Blocks until ctx is done.
 func (w *Watcher) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer w.fsWatcher.Close()
@@ -189,10 +196,12 @@ func (w *Watcher) Start(ctx context.Context) error {
 				w.unregisterPath(ctx, event.Name)
 				continue
 			}
-			if !event.Has(fsnotify.Create) {
-				continue
+			if event.Has(fsnotify.Create) {
+				w.handleCreate(ctx, event.Name)
+			} else if event.Has(fsnotify.Write) && w.isMusicFile(event.Name) {
+				// An in-place tag save; claim collapses the burst of Writes.
+				w.registerWhenSettled(ctx, event.Name)
 			}
-			w.handleCreate(ctx, event.Name)
 
 		case err, ok := <-w.fsWatcher.Errors:
 			if !ok {
@@ -306,36 +315,49 @@ func (w *Watcher) waitSettled(ctx context.Context, path string) error {
 	}
 }
 
-// registerFile inserts a new song record and optionally queues it.
+// songID is a UUIDv5 derived from the absolute path — stable across restarts
+// so the Bloom filter stays valid without a persistent database.
+func songID(path string) string {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(path)).String()
+}
+
+// withFileMetadata returns song with the fields read from the file at path.
+func withFileMetadata(song models.Song, path string) (models.Song, error) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return song, err
+	}
+	m := meta.Extract(path)
+	song.Title = m.Title
+	song.Artist = m.Artist
+	song.Album = m.Album
+	song.DurationSecs = m.DurationSecs
+	song.SizeBytes = stat.Size()
+	return song, nil
+}
+
+// registerFile inserts a new song record and optionally queues it. A path
+// already indexed is refreshed instead and reported as not created.
 func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool) (*models.Song, bool, error) {
 	exists, err := w.songRepo.ExistsByPath(ctx, path)
 	if err != nil {
 		return nil, false, err
 	}
 	if exists {
-		return nil, false, nil
+		song, err := w.refreshFile(ctx, path)
+		return song, false, err
 	}
 
-	stat, err := os.Stat(path)
+	fresh, err := withFileMetadata(models.Song{
+		ID:       songID(path),
+		Filename: filepath.Base(path),
+		Path:     path,
+		AddedAt:  time.Now(),
+	}, path)
 	if err != nil {
 		return nil, false, err
 	}
-
-	m := meta.Extract(path)
-
-	song := &models.Song{
-		// UUIDv5 derived from the absolute path — stable across restarts so
-		// the Bloom filter stays valid without a persistent database.
-		ID:           uuid.NewSHA1(uuid.NameSpaceURL, []byte(path)).String(),
-		Filename:     filepath.Base(path),
-		Path:         path,
-		Title:        m.Title,
-		Artist:       m.Artist,
-		Album:        m.Album,
-		DurationSecs: m.DurationSecs,
-		SizeBytes:    stat.Size(),
-		AddedAt:      time.Now(),
-	}
+	song := &fresh
 
 	if err := w.songRepo.Create(ctx, song); err != nil {
 		return nil, false, err
@@ -352,6 +374,36 @@ func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool
 	}
 
 	return song, true, nil
+}
+
+// refreshFile re-reads the metadata of an indexed file that was rewritten or
+// replaced, so a retag shows up without a restart. It never re-queues, and it
+// writes and notifies OnUpdated only when the metadata changed. It returns
+// (nil, nil) when the song left the library meanwhile, so it is not revived.
+func (w *Watcher) refreshFile(ctx context.Context, path string) (*models.Song, error) {
+	current, err := w.songRepo.GetByID(ctx, songID(path))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	updated, err := withFileMetadata(*current, path)
+	if err != nil {
+		return nil, err
+	}
+	// Only file-derived fields can differ; ID, Path and AddedAt are copied.
+	if updated == *current {
+		return current, nil
+	}
+	if err := w.songRepo.Create(ctx, &updated); err != nil {
+		return nil, err
+	}
+	w.logger.Printf("updated: %s", updated.Title)
+	if w.OnUpdated != nil {
+		w.OnUpdated(&updated)
+	}
+	return &updated, nil
 }
 
 // unregisterPath drops songs for a path that no longer exists, purges them

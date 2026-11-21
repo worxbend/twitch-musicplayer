@@ -76,6 +76,7 @@ func main() {
 		log.Fatalf("watcher init failed: %v", err)
 	}
 	fsWatcher.OnRemoved = func(_ []*models.Song) { broadcastQueueUpdated(hub, "file_removed") }
+	fsWatcher.OnUpdated = func(_ *models.Song) { broadcastQueueUpdated(hub, "file_updated") }
 
 	// ── HTTP API handlers ─────────────────────────────────────────────────────
 	songsH := api.NewSongsHandler(songRepo, cfg.MusicDir)

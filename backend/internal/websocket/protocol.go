@@ -49,7 +49,7 @@ type SongFinishedPayload struct {
 // QueueUpdatedPayload is broadcast when the queue changes.
 type QueueUpdatedPayload struct {
 	QueueDepth int    `json:"queue_depth"`
-	Reason     string `json:"reason"` // "song_added" | "song_removed" | "cleared" | "new_file" | "file_removed" | "song_started"
+	Reason     string `json:"reason"` // "song_added" | "song_removed" | "cleared" | "new_file" | "file_removed" | "file_updated" | "song_started"
 }
 
 // NowPlayingPayload is broadcast whenever a new song starts playing.

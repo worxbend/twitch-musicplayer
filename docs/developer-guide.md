@@ -63,7 +63,7 @@ The frontend starts at `http://localhost:3000`.
 - `internal/repository`: in-memory song and queue stores.
 - `internal/played`: Bloom-filter play-history tracker, persisted to a single file.
 - `internal/queue`: song selection, queue operations, history start/finish.
-- `internal/watcher`: startup scan and fsnotify create-event handling.
+- `internal/watcher`: startup scan, fsnotify create and remove handling, and metadata refresh when an indexed file is rewritten or replaced.
 - `internal/api`: HTTP handlers under `/v1`.
 - `internal/websocket`: protocol messages, hub, client session loop.
 - `internal/meta`: ID3 metadata extraction.

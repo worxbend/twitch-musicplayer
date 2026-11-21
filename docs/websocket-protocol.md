@@ -113,6 +113,7 @@ Known reasons:
 - `cleared`
 - `new_file`
 - `file_removed` (a library file or directory was deleted or renamed away)
+- `file_updated` (a library file was rewritten or replaced and its tags changed)
 
 ### `error`
 
