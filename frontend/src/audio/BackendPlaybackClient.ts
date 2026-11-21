@@ -363,21 +363,25 @@ export class BackendPlaybackClient {
     // sent song_finished. Setting it here instead would strand the client
     // whenever finishCurrent returned early at its own guard: every recovery
     // path checks !awaitingSong, so nothing would ever request a song again.
-    this.finishCurrent(payload, { awaitReplacement: true });
+    this.finishCurrent(payload);
   }
 
-  // After the near-end handoff `current` is already null and finishCurrent does
-  // nothing; the title still has to go if no newer song has taken the screen.
+  // A track can end with no near-end handoff (unknown duration, missed
+  // timeupdate); finishCurrent then sends song_finished and awaits the reply.
+  // After the handoff `current` is already null and finishCurrent does nothing;
+  // the title still has to go if no newer song has taken the screen.
   private handleEnded(payload: PlaySongPayload) {
     this.finishCurrent(payload);
     if (this.displayedHistoryId === payload.history_id) this.clearDisplayedSong();
   }
 
-  // The title stays up: the track is still audible until it ends or the next one starts.
-  private finishCurrent(payload: PlaySongPayload, options: { awaitReplacement?: boolean } = {}) {
+  // The server answers song_finished with play_song, like need_song, so the
+  // reply is awaited and re-requested on timeout. The title stays up: the track
+  // is still audible until it ends or the next one starts.
+  private finishCurrent(payload: PlaySongPayload) {
     if (this.current?.history_id !== payload.history_id) return;
     // Set before sending so a synchronous reply cannot clear it first.
-    if (options.awaitReplacement) this.startAwaitingSong();
+    this.startAwaitingSong();
     this.current = null;
     this.queueOrSend({
       type: 'song_finished',

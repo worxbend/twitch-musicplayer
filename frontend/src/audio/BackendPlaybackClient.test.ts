@@ -156,6 +156,7 @@ function lastPlayback() {
 function internals() {
   return client as unknown as {
     current: { history_id: string } | null;
+    awaitingSong: boolean;
     connecting: boolean;
     streamRetryHistoryId: string | null;
     streamRetryAttempts: number;
@@ -475,6 +476,63 @@ test('a play_song before 15s cancels the reply timeout', () => {
   socket().message(playSong('a'));
   mock.timers.tick(10000);
   assert.equal(needSongCount(socket()), 1);
+});
+
+// Plays song a and lets it settle, so it is current and no request is pending.
+async function playAndSettle(ws: FakeWebSocket) {
+  ws.open();
+  ws.message(playSong('a'));
+  audio.plays[0].settle.resolve();
+  await flush();
+}
+
+test('a natural end with no near-end handoff sends song_finished and awaits the reply', async () => {
+  const ws = socket();
+  await playAndSettle(ws);
+
+  audio.plays[0].callbacks.onEnded();
+
+  assert.equal(songFinishedCount(ws), 1);
+  assert.equal(internals().awaitingSong, true);
+});
+
+test('a queue_updated after a natural end does not request a second song', async () => {
+  const ws = socket();
+  await playAndSettle(ws);
+  audio.plays[0].callbacks.onEnded();
+  const before = needSongCount(ws);
+
+  ws.message({ type: 'queue_updated' });
+
+  assert.equal(needSongCount(ws), before, 'the play_song reply to song_finished is still due');
+});
+
+test('an unanswered song_finished from a natural end is followed by need_song after 15s', async () => {
+  const ws = socket();
+  await playAndSettle(ws);
+  audio.plays[0].callbacks.onEnded();
+  const before = needSongCount(ws);
+
+  mock.timers.tick(14999);
+  assert.equal(needSongCount(ws), before);
+  mock.timers.tick(1);
+  assert.equal(needSongCount(ws), before + 1);
+});
+
+test('onEnded after a near-end handoff neither re-sends song_finished nor re-arms the timeout', async () => {
+  const ws = socket();
+  await playAndSettle(ws);
+  const before = needSongCount(ws);
+
+  audio.plays[0].callbacks.onNearEnd();
+  mock.timers.tick(3000);
+  audio.plays[0].callbacks.onEnded();
+
+  assert.equal(songFinishedCount(ws), 1);
+  mock.timers.tick(11999);
+  assert.equal(needSongCount(ws), before, 'no need_song before 15s from the handoff');
+  mock.timers.tick(1);
+  assert.equal(needSongCount(ws), before + 1);
 });
 
 test('error retries back off to 30s and reset after a successful play', async () => {
