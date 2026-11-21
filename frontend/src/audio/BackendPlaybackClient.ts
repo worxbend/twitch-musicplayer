@@ -434,6 +434,13 @@ export class BackendPlaybackClient {
   private retryStream(payload: PlaySongPayload) {
     if (this.current?.history_id !== payload.history_id && this.pendingPlay?.history_id !== payload.history_id) return;
     window.clearTimeout(this.streamRetryTimer);
+    // An error during the fade-in arrives before play() settles; void that play
+    // so its late settle cannot cancel this retry and make the dead track current.
+    if (this.playInFlight && this.pendingPlay?.history_id === payload.history_id) {
+      this.playToken += 1;
+      this.playInFlight = false;
+      this.finishedInFlight = null;
+    }
     this.current = null;
     this.clearDisplayedSong();
     if (payload.history_id === this.streamRetryHistoryId && this.streamRetryAttempts >= maxStreamRetries) {

@@ -305,6 +305,25 @@ test('onError and a rejection from the same attempt count as one retry', async (
   assert.equal(audio.plays.length, 4);
 });
 
+test('a stream error during the fade-in retries instead of becoming current', async () => {
+  socket().open();
+  socket().message(playSong('a'));
+  audio.plays[0].start();
+  audio.plays[0].callbacks.onError();
+  audio.plays[0].settle.resolve();
+  await flush();
+  assert.equal(internals().current, null);
+  assert.equal(lastPlayback(), 'error');
+
+  mock.timers.tick(5000);
+  assert.equal(audio.plays.length, 2);
+  assert.equal(internals().current, null);
+  audio.plays[1].settle.resolve();
+  await flush();
+  assert.equal(internals().current?.history_id, 'h-a');
+  assert.equal(lastPlayback(), 'playing');
+});
+
 test('a successful retry resets the count for a later failure', async () => {
   const ws = socket();
   ws.open();
