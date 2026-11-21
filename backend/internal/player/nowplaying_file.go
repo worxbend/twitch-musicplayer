@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"lofi-radio-backend/internal/models"
 )
@@ -27,21 +28,30 @@ func (f *NowPlayingFile) Render(song *models.Song) string {
 	return FormatNowPlaying(f.format, song)
 }
 
-// lineBreaks turns CR and LF into spaces, so a tag cannot split the one-line
-// OBS text or a chat bot reply.
-var lineBreaks = strings.NewReplacer("\r", " ", "\n", " ")
+// OneLine replaces every control character (CR, LF, tab, NUL, ESC, C1 codes
+// such as NEL) and the Unicode line and paragraph separators with a space, so
+// text cannot split the one-line OBS text or a chat bot reply.
+func OneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return ' '
+		}
+		return r
+	}, s)
+}
 
 // FormatNowPlaying renders song with format's {title}, {artist} and {album}
 // placeholders. A nil song renders "". A song without an artist renders just
-// its title, so the format's separator never dangles. The result is one line.
+// its title, so the format's separator never dangles. Control characters
+// become spaces (see OneLine), so the result is one line.
 func FormatNowPlaying(format string, song *models.Song) string {
 	if song == nil {
 		return ""
 	}
 	if song.Artist == "" {
-		return lineBreaks.Replace(song.Title)
+		return OneLine(song.Title)
 	}
-	return lineBreaks.Replace(strings.NewReplacer(
+	return OneLine(strings.NewReplacer(
 		"{title}", song.Title,
 		"{artist}", song.Artist,
 		"{album}", song.Album,

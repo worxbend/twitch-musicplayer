@@ -423,7 +423,8 @@ paths:
         Returns the current song as one plain-text line for chat bots
         (Nightbot `$(urlfetch)`, StreamElements `${customapi}`). The line uses
         `obs.now_playing_format` (default `{artist} - {title}`); a song without
-        an artist renders just its title, and line breaks in tags become spaces.
+        an artist renders just its title, and control characters in tags become
+        spaces.
         While nothing is playing the body is the `idle` text, or empty when
         `idle` is absent. There is no trailing newline, and the response is
         sent with `Cache-Control: no-store`.
@@ -434,8 +435,9 @@ paths:
           in: query
           required: false
           description: >
-            Fallback text, used only while nothing is playing. CR and LF become
-            spaces and surrounding whitespace is trimmed. It is validated on
+            Fallback text, used only while nothing is playing. Control
+            characters (including CR, LF, tab and Unicode line/paragraph
+            separators) become spaces and surrounding whitespace is trimmed. It is validated on
             every request: over 200 characters returns 400 even while a song
             plays.
           schema:

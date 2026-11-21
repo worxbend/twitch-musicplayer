@@ -159,13 +159,14 @@ GET /v1/now-playing.txt
 
 Returns the current song as one plain-text line (`text/plain; charset=utf-8`) for chat
 bots. It uses `obs.now_playing_format` (default `{artist} - {title}`), so it matches the
-OBS now-playing file. A song with no artist returns just its title, line breaks in tags
-become spaces, and there is no trailing newline. While nothing is playing it returns
+OBS now-playing file. A song with no artist returns just its title, control characters in
+tags become spaces, and there is no trailing newline. While nothing is playing it returns
 `200` with an empty body, or with the optional `?idle=` text. Responses carry
 `Cache-Control: no-store`.
 
-`?idle=` is used only while nothing is playing. CR and LF in it become spaces and
-surrounding whitespace is trimmed. It may be at most 200 characters; a longer value returns
+`?idle=` is used only while nothing is playing. Control characters in it (including CR, LF,
+tab and Unicode line/paragraph separators) become spaces and surrounding whitespace is
+trimmed. It may be at most 200 characters; a longer value returns
 `400 {"error":"idle must be at most 200 characters"}`, even while a song plays.
 
 Chat command examples (replace the host with your public backend URL):

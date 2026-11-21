@@ -45,6 +45,39 @@ func TestFormatNowPlayingReplacesLineBreaks(t *testing.T) {
 	}
 }
 
+func TestFormatNowPlayingReplacesControlCharacters(t *testing.T) {
+	song := &models.Song{Title: "Rain\x00Drops", Artist: "Nu\tjabes"}
+	if got, want := FormatNowPlaying("{artist} - {title}", song), "Nu jabes - Rain Drops"; got != want {
+		t.Errorf("FormatNowPlaying = %q, want %q", got, want)
+	}
+	if got, want := FormatNowPlaying("{artist} - {title}", &models.Song{Title: "a\tb\x00c"}), "a b c"; got != want {
+		t.Errorf("FormatNowPlaying without artist = %q, want %q", got, want)
+	}
+}
+
+func TestOneLine(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "tab", in: "a\tb", want: "a b"},
+		{name: "NUL", in: "a\x00b", want: "a b"},
+		{name: "ANSI escape", in: "\x1b[31mx", want: " [31mx"},
+		{name: "C1 NEL", in: "a\u0085b", want: "a b"},
+		{name: "line and paragraph separators", in: "a\u2028b\u2029c", want: "a b c"},
+		{name: "CRLF", in: "a\r\nb", want: "a  b"},
+		{name: "printable unicode unchanged", in: "héllo ♪", want: "héllo ♪"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := OneLine(tt.in); got != tt.want {
+				t.Errorf("OneLine(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNowPlayingFileWriteReplacesAtomically(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nowplaying.txt")

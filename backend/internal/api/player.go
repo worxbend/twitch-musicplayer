@@ -19,9 +19,6 @@ const defaultHistoryLimit = 20
 // maxIdleTextRunes caps the ?idle= fallback text of GET /v1/now-playing.txt.
 const maxIdleTextRunes = 200
 
-// idleLineBreaks flattens CR and LF in ?idle= so the reply stays one line.
-var idleLineBreaks = strings.NewReplacer("\r", " ", "\n", " ")
-
 type playerSongRepo interface {
 	Count(ctx context.Context) (int, error)
 }
@@ -88,11 +85,11 @@ func (h *PlayerHandler) Skip(w http.ResponseWriter, r *http.Request) {
 
 // NowPlayingText handles GET /v1/now-playing.txt?idle=TEXT: the current song
 // as one plain-text line for chat bots (Nightbot, StreamElements). While idle
-// it returns the optional idle text (CR/LF flattened, trimmed), else an empty
+// it returns the optional idle text (control characters flattened to spaces, trimmed), else an empty
 // body. idle is validated on every request, playing or not: over
 // maxIdleTextRunes is 400. no-store keeps proxies from serving a stale title.
 func (h *PlayerHandler) NowPlayingText(w http.ResponseWriter, r *http.Request) {
-	idle := strings.TrimSpace(idleLineBreaks.Replace(r.URL.Query().Get("idle")))
+	idle := strings.TrimSpace(player.OneLine(r.URL.Query().Get("idle")))
 	if utf8.RuneCountInString(idle) > maxIdleTextRunes {
 		writeError(w, http.StatusBadRequest, "idle must be at most "+strconv.Itoa(maxIdleTextRunes)+" characters")
 		return
