@@ -109,6 +109,7 @@ Known reasons:
 
 - `song_added`
 - `song_removed`
+- `song_moved` (an admin moved a queued item up or down)
 - `skipped`
 - `cleared`
 - `new_file`

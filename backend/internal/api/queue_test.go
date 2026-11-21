@@ -59,6 +59,21 @@ func (f *fakeQueueManager) ClearQueue(context.Context) error {
 type fakeQueueRepo struct {
 	removeErr error
 	removedID string
+
+	movePos   int
+	moved     bool
+	moveErr   error
+	moveCalls []moveCall
+}
+
+type moveCall struct {
+	id    string
+	delta int
+}
+
+func (f *fakeQueueRepo) Move(_ context.Context, id string, delta int) (int, bool, error) {
+	f.moveCalls = append(f.moveCalls, moveCall{id: id, delta: delta})
+	return f.movePos, f.moved, f.moveErr
 }
 
 func (f *fakeQueueRepo) Remove(_ context.Context, id string) error {
@@ -169,6 +184,51 @@ func TestQueueRemove(t *testing.T) {
 			}
 			if tt.wantCode == http.StatusNoContent {
 				assertQueueUpdated(t, b, "song_removed")
+			} else if len(b.msgs) != 0 {
+				t.Fatalf("unexpected broadcasts %v", b.types())
+			}
+		})
+	}
+}
+
+func TestQueueMove(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		repo      fakeQueueRepo
+		wantCode  int
+		wantDelta int // 0 means the repo must not be called
+		wantBody  string
+	}{
+		{name: "up", body: `{"direction":"up"}`, repo: fakeQueueRepo{movePos: 1, moved: true}, wantCode: http.StatusOK, wantDelta: -1, wantBody: `{"id":"q7","moved":true,"position":1}`},
+		{name: "down at end", body: `{"direction":"down"}`, repo: fakeQueueRepo{movePos: 3}, wantCode: http.StatusOK, wantDelta: 1, wantBody: `{"id":"q7","moved":false,"position":3}`},
+		{name: "bad direction", body: `{"direction":"left"}`, wantCode: http.StatusBadRequest},
+		{name: "empty body", body: ``, wantCode: http.StatusBadRequest},
+		{name: "oversize body", body: fmt.Sprintf(`{"direction":%q}`, strings.Repeat("a", 5<<10)), wantCode: http.StatusRequestEntityTooLarge},
+		{name: "unknown item", body: `{"direction":"up"}`, repo: fakeQueueRepo{moveErr: sql.ErrNoRows}, wantCode: http.StatusNotFound, wantDelta: -1},
+		{name: "repo error", body: `{"direction":"down"}`, repo: fakeQueueRepo{moveErr: errors.New("boom")}, wantCode: http.StatusInternalServerError, wantDelta: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := tt.repo
+			b := &fakeBroadcaster{}
+			rec := serve(t, queueRouter(&fakeQueueManager{}, &repo, b), http.MethodPost, "/v1/queue/q7:move", tt.body, nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d (body %q)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			switch {
+			case tt.wantDelta == 0 && len(repo.moveCalls) != 0:
+				t.Fatalf("repo.Move called %v, want no call", repo.moveCalls)
+			case tt.wantDelta != 0 && (len(repo.moveCalls) != 1 || repo.moveCalls[0] != moveCall{id: "q7", delta: tt.wantDelta}):
+				t.Fatalf("repo.Move calls = %v, want [{q7 %d}]", repo.moveCalls, tt.wantDelta)
+			}
+			if tt.wantBody != "" {
+				if got := strings.TrimSpace(rec.Body.String()); got != tt.wantBody {
+					t.Fatalf("body = %s, want %s", got, tt.wantBody)
+				}
+			}
+			if tt.repo.moved {
+				assertQueueUpdated(t, b, "song_moved")
 			} else if len(b.msgs) != 0 {
 				t.Fatalf("unexpected broadcasts %v", b.types())
 			}

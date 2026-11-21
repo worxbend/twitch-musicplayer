@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"sync"
 
 	"lofi-radio-backend/internal/models"
@@ -84,6 +85,24 @@ func (r *MemQueueRepo) Remove(_ context.Context, id string) error {
 		}
 	}
 	return sql.ErrNoRows
+}
+
+// Move shifts the item with id by delta places, clamped to the queue bounds.
+// It returns the item's new 1-based position and whether it changed place.
+func (r *MemQueueRepo) Move(_ context.Context, id string, delta int) (position int, moved bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	from := slices.IndexFunc(r.items, func(item *models.QueueItem) bool { return item.ID == id })
+	if from < 0 {
+		return 0, false, sql.ErrNoRows
+	}
+	to := min(max(from+delta, 0), len(r.items)-1)
+	if to == from {
+		return from + 1, false, nil
+	}
+	item := r.items[from]
+	r.items = slices.Insert(slices.Delete(r.items, from, from+1), to, item)
+	return to + 1, true, nil
 }
 
 // RemoveBySongID drops every queued entry for songID and reports how many

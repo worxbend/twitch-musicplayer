@@ -19,6 +19,7 @@ func RegisterRoutes(r chi.Router, songs *SongsHandler, queue *QueueHandler, play
 		r.Get("/queue", queue.List)
 		r.Post("/queue", queue.Add)
 		r.Delete("/queue/{id}", queue.Remove)
+		r.Post("/queue/{id}:move", queue.Move)
 		r.Post("/queue:skip", queue.Skip)
 		r.Post("/queue:clear", queue.Clear)
 		r.Post("/queue:play-next", queue.PlayNext)

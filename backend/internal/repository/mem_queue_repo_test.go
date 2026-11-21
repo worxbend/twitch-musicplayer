@@ -2,6 +2,9 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"slices"
 	"testing"
 
 	"lofi-radio-backend/internal/models"
@@ -24,6 +27,51 @@ func TestMemQueueRepoRemoveBySongID(t *testing.T) {
 	items, _ := repo.List(ctx)
 	if len(items) != 1 || items[0].SongID != "B" {
 		t.Fatalf("queue = %v, want only song B", items)
+	}
+}
+
+func TestMemQueueRepoMove(t *testing.T) {
+	tests := []struct {
+		name      string
+		queue     []string
+		id        string
+		delta     int
+		wantPos   int
+		wantMoved bool
+		wantErr   error
+		wantOrder []string
+	}{
+		{name: "middle up", queue: []string{"A", "B", "C"}, id: "B", delta: -1, wantPos: 1, wantMoved: true, wantOrder: []string{"B", "A", "C"}},
+		{name: "middle down", queue: []string{"A", "B", "C"}, id: "B", delta: 1, wantPos: 3, wantMoved: true, wantOrder: []string{"A", "C", "B"}},
+		{name: "first up", queue: []string{"A", "B", "C"}, id: "A", delta: -1, wantPos: 1, wantOrder: []string{"A", "B", "C"}},
+		{name: "last down", queue: []string{"A", "B", "C"}, id: "C", delta: 1, wantPos: 3, wantOrder: []string{"A", "B", "C"}},
+		{name: "unknown id", queue: []string{"A", "B", "C"}, id: "Z", delta: 1, wantErr: sql.ErrNoRows, wantOrder: []string{"A", "B", "C"}},
+		{name: "single up", queue: []string{"A"}, id: "A", delta: -1, wantPos: 1, wantOrder: []string{"A"}},
+		{name: "single down", queue: []string{"A"}, id: "A", delta: 1, wantPos: 1, wantOrder: []string{"A"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			repo := NewMemQueueRepo(NewMemSongRepo())
+			for _, id := range tt.queue {
+				if err := repo.Enqueue(ctx, &models.QueueItem{ID: id, SongID: "song-" + id}); err != nil {
+					t.Fatalf("enqueue: %v", err)
+				}
+			}
+
+			pos, moved, err := repo.Move(ctx, tt.id, tt.delta)
+			if !errors.Is(err, tt.wantErr) || pos != tt.wantPos || moved != tt.wantMoved {
+				t.Fatalf("Move = (%d, %v, %v), want (%d, %v, %v)", pos, moved, err, tt.wantPos, tt.wantMoved, tt.wantErr)
+			}
+			items, _ := repo.List(ctx)
+			order := make([]string, len(items))
+			for i, item := range items {
+				order[i] = item.ID
+			}
+			if !slices.Equal(order, tt.wantOrder) {
+				t.Fatalf("order = %v, want %v", order, tt.wantOrder)
+			}
+		})
 	}
 }
 

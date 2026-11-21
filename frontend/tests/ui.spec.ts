@@ -194,6 +194,42 @@ test('untitled queue song is labelled by its filename', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Remove c.mp3 from queue' })).toBeVisible();
 });
 
+test('queue reorder by keyboard keeps focus', async ({ page }) => {
+  await mockStation(page);
+  const third = { id: 'c', title: 'Cassette rain', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024 };
+  const [qa, qb, qc] = [songs[0], songs[1], third].map((song, i) => ({ id: `q${song.id}`, song_id: song.id, song, position: i + 1, source: 'manual' }));
+  let queue = [qa, qb, qc];
+  const moves: { url: string; body: unknown }[] = [];
+  await page.route('**/v1/queue', route => route.fulfill({ json: { items: queue } }));
+  await page.route(url => url.pathname.endsWith(':move'), route => {
+    moves.push({ url: route.request().url(), body: route.request().postDataJSON() });
+    queue = [qb, qa, qc];
+    return route.fulfill({ json: { id: 'qb', position: 1, moved: true } });
+  });
+  await page.goto('/admin');
+  const rows = page.locator('.queue-item');
+  await expect(rows).toHaveCount(3);
+
+  // The first row cannot move up: the control stays focusable but sends nothing.
+  const firstUp = page.getByRole('button', { name: 'Move Midnight compiler up' });
+  await expect(firstUp).toHaveAttribute('aria-disabled', 'true');
+  await firstUp.focus();
+  await page.keyboard.press('Enter');
+  await expect(firstUp).toBeFocused();
+
+  await page.getByRole('button', { name: 'Move Buffering dreams up' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(rows.first()).toContainText('Buffering dreams');
+  expect(moves).toHaveLength(1);
+  expect(moves[0].url).toContain('/v1/queue/qb:move');
+  expect(moves[0].body).toEqual({ direction: 'up' });
+  const movedUp = page.getByRole('button', { name: 'Move Buffering dreams up' });
+  await expect(movedUp).toBeFocused();
+  await expect(movedUp).toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByRole('button', { name: 'Move Cassette rain down' })).toHaveAttribute('aria-disabled', 'true');
+  expect((await new AxeBuilder({ page }).include('.queue-panel').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+});
+
 test('play-now and skip send the existing backend commands', async ({ page }) => {
   await mockStation(page);
   await page.goto('/admin');

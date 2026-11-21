@@ -82,6 +82,18 @@ DELETE /v1/queue/{queue_item_id}
 Removes a queued item.
 
 ```http
+POST /v1/queue/{queue_item_id}:move
+Content-Type: application/json
+
+{"direction":"up"}
+```
+
+Moves a queued item one place toward the front (`up`) or back (`down`) and returns
+`{"id":"...","position":1,"moved":true}`. At either end of the queue it is a no-op with
+`moved: false` and no broadcast. Returns `400` for any other direction, `404` for an
+unknown item, and `413` for a body over 4 KiB.
+
+```http
 POST /v1/queue:skip
 ```
 

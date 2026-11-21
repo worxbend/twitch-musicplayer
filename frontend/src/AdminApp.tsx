@@ -19,6 +19,20 @@ function formatDuration(secs: number): string {
 }
 function songLabel(song: Song) { return song.title || song.filename; }
 function queueItemLabel(item: QueueItem) { return item.song ? songLabel(item.song) : item.song_id; }
+
+// fetchQueue replaces every row, which drops keyboard focus. These keep the
+// focused queue control (by item id and action) focused across the re-render.
+type QueueControl = { id: string; action: string };
+function focusedQueueControl(): QueueControl | null {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !el.closest('.queue-list')) return null;
+  const { queueId, queueAction } = el.dataset;
+  return queueId && queueAction ? { id: queueId, action: queueAction } : null;
+}
+function restoreQueueFocus(control: QueueControl | null) {
+  if (!control) return;
+  document.querySelector<HTMLElement>(`.queue-list [data-queue-id="${CSS.escape(control.id)}"][data-queue-action="${CSS.escape(control.action)}"]`)?.focus();
+}
 function formatClock(iso: string) { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 
 export function AdminApp() {
@@ -64,7 +78,12 @@ export function AdminApp() {
     const id = queueGate.begin();
     try {
       const data = await (await request('/v1/queue')).json();
-      if (queueGate.isLatest(id) && !disposed) { setQueue(data.items ?? []); setQueueError(false); }
+      if (queueGate.isLatest(id) && !disposed) {
+        const focused = focusedQueueControl();
+        setQueue(data.items ?? []);
+        setQueueError(false);
+        restoreQueueFocus(focused);
+      }
     } catch { if (queueGate.isLatest(id) && !disposed) setQueueError(true); }
   }
   async function fetchHistory() {
@@ -92,18 +111,28 @@ export function AdminApp() {
     setNotification(message);
     notifTimer = window.setTimeout(() => setNotification(''), 4500);
   }
-  async function action(path: string, message: string, method = 'POST', songId?: string) {
+  async function action(path: string, message: string, method = 'POST', body?: Record<string, unknown>) {
     if (busy()) return;
     setBusy(path);
     try {
       await request(path, {
         method,
-        ...(songId ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ song_id: songId }) } : {}),
+        ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
       });
       await Promise.all([fetchQueue(), fetchPlayerState()]);
       showNotification(`✓ ${message}`);
     } catch { showNotification('Action failed. Check the backend connection and try again.', true); }
     finally { setBusy(''); }
+  }
+
+  // aria-disabled, not disabled: a natively disabled button drops keyboard
+  // focus to <body> when it becomes disabled under the cursor.
+  function MoveButton(props: { item: QueueItem; direction: 'up' | 'down'; blocked: boolean }) {
+    const inactive = () => props.blocked || !!busy();
+    return <button type="button" class="btn btn-ghost btn-icon" aria-label={`Move ${queueItemLabel(props.item)} ${props.direction}`} title={`Move ${props.direction}`} aria-disabled={inactive() ? 'true' : undefined} data-queue-id={props.item.id} data-queue-action={props.direction} onClick={() => {
+      if (inactive()) return;
+      void action(`/v1/queue/${props.item.id}:move`, 'Queue order updated.', 'POST', { direction: props.direction });
+    }}><span aria-hidden="true">{props.direction === 'up' ? '↑' : '↓'}</span></button>;
   }
 
   let socket: WebSocket | null = null;
@@ -207,7 +236,7 @@ export function AdminApp() {
                       <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
                       <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta">{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
                       <span class="song-duration">{formatDuration(song.duration_secs)}</span>
-                      <div class="song-actions"><button class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} disabled={!!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', song.id)}>+</button><button class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} disabled={!!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', song.id)}>▶</button></div>
+                      <div class="song-actions"><button class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} disabled={!!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</button><button class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} disabled={!!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</button></div>
                     </div>}
                   </For>
                 </Show>
@@ -221,7 +250,7 @@ export function AdminApp() {
             <div class="queue-list">
               <Show when={!queueError()} fallback={<div class="empty-state"><h3>Queue unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => void fetchQueue()}>Retry</button></div>}>
                 <For each={queue()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">+</span><h3>Make the next move</h3><p>Add a track from the library. Automatic rotation keeps things moving when the player is listening.</p></div>}>
-                  {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{queueItemLabel(item)}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><button class="btn btn-danger btn-icon" aria-label={`Remove ${queueItemLabel(item)} from queue`} title="Remove from queue" disabled={!!busy()} onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</button></div>}
+                  {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{queueItemLabel(item)}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><MoveButton item={item} direction="up" blocked={idx() === 0} /><MoveButton item={item} direction="down" blocked={idx() === queue().length - 1} /><button class="btn btn-danger btn-icon" aria-label={`Remove ${queueItemLabel(item)} from queue`} title="Remove from queue" disabled={!!busy()} data-queue-id={item.id} data-queue-action="remove" onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</button></div>}
                 </For>
               </Show>
             </div>

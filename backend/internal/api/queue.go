@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -23,6 +24,7 @@ type queueManager interface {
 
 type queueRepo interface {
 	Remove(ctx context.Context, id string) error
+	Move(ctx context.Context, id string, delta int) (position int, moved bool, err error)
 }
 
 type queueBroadcaster interface {
@@ -39,6 +41,13 @@ type addToQueueRequest struct {
 type playNextRequest struct {
 	SongID string `json:"song_id"`
 }
+
+type moveQueueItemRequest struct {
+	Direction string `json:"direction"`
+}
+
+// moveDeltas maps a move direction to the index shift it applies.
+var moveDeltas = map[string]int{"up": -1, "down": 1}
 
 // QueueHandler handles queue resource endpoints.
 type QueueHandler struct {
@@ -104,6 +113,36 @@ func (h *QueueHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	}
 	h.broadcastQueueUpdated(r.Context(), "song_removed")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Move handles POST /v1/queue/{id}:move.
+// It shifts the item one place up or down; at either end it is a no-op that
+// reports moved=false and broadcasts nothing.
+func (h *QueueHandler) Move(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req moveQueueItemRequest
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	delta, ok := moveDeltas[req.Direction]
+	if !ok {
+		writeError(w, http.StatusBadRequest, `direction must be "up" or "down"`)
+		return
+	}
+
+	pos, moved, err := h.repo.Move(r.Context(), id, delta)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "queue item not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to move queue item")
+		return
+	}
+	if moved {
+		h.broadcastQueueUpdated(r.Context(), "song_moved")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "position": pos, "moved": moved})
 }
 
 // Skip handles POST /v1/queue:skip.

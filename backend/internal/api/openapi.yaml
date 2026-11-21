@@ -218,6 +218,63 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/queue/{id}:move:
+    post:
+      summary: Move queue item up or down
+      description: >
+        Shifts the item one place toward the front (`up`) or back (`down`).
+        At either end of the queue the call is a no-op that returns
+        `moved: false`. A real move broadcasts `queue_updated` with reason
+        `song_moved`.
+      operationId: moveQueueItem
+      tags: [queue]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [direction]
+              properties:
+                direction:
+                  type: string
+                  enum: [up, down]
+      responses:
+        "200":
+          description: Item position after the move
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  position:
+                    type: integer
+                    description: 1-based position in the queue
+                  moved:
+                    type: boolean
+                    description: False when the item was already at that end
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          description: Queue item could not be moved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/queue:skip:
     post:
       summary: Skip current song
