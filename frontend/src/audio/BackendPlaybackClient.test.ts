@@ -85,14 +85,24 @@ class FakeAudio {
   preloadNext() {}
 }
 
+const windowListeners = new Map<string, Set<() => void>>();
+
+function dispatchWindow(type: string) {
+  for (const fn of [...(windowListeners.get(type) ?? [])]) fn();
+}
+
 Object.assign(globalThis, {
   window: {
     setTimeout: (fn: () => void, ms?: number) => globalThis.setTimeout(fn, ms),
     clearTimeout: (id?: ReturnType<typeof setTimeout>) => globalThis.clearTimeout(id),
     setInterval: (fn: () => void, ms?: number) => globalThis.setInterval(fn, ms),
     clearInterval: (id?: ReturnType<typeof setInterval>) => globalThis.clearInterval(id),
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener: (type: string, fn: () => void) => {
+      const set = windowListeners.get(type) ?? new Set();
+      set.add(fn);
+      windowListeners.set(type, set);
+    },
+    removeEventListener: (type: string, fn: () => void) => windowListeners.get(type)?.delete(fn),
     location: { protocol: 'http:', hostname: 'localhost' },
     __LOFI_CONFIG__: { backendUrl: 'http://localhost:8080' },
   },
@@ -110,6 +120,7 @@ let client: Client;
 beforeEach(() => {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   FakeWebSocket.instances = [];
+  windowListeners.clear();
   audio = new FakeAudio();
   statuses = [];
   songs = [];
@@ -756,4 +767,44 @@ test('a play rejected after stop schedules no stream retry', async () => {
   assert.equal(ws.sent.length, sent);
   assert.equal(statuses.at(-1)?.message, 'radio stopped');
   assert.equal(lastPlayback(), 'idle');
+});
+
+test('offline with an open socket keeps the connection and the heartbeat', () => {
+  socket().open();
+  const sockets = FakeWebSocket.instances.length;
+  const before = statuses.length;
+
+  dispatchWindow('offline');
+  mock.timers.tick(25000);
+
+  assert.ok(statuses.slice(before).every(s => s.connection !== 'disconnected'));
+  assert.ok(socket().sent.some(m => (m as { type: string }).type === 'heartbeat'));
+  assert.equal(FakeWebSocket.instances.length, sockets);
+});
+
+test('offline without an open socket reports disconnected', () => {
+  dispatchWindow('offline');
+
+  assert.equal(statuses.at(-1)?.connection, 'disconnected');
+  assert.equal(statuses.at(-1)?.message, 'network offline');
+});
+
+test('online with an open socket does not reconnect', () => {
+  socket().open();
+  const sockets = FakeWebSocket.instances.length;
+
+  dispatchWindow('online');
+
+  assert.equal(FakeWebSocket.instances.length, sockets);
+  assert.equal(socket().readyState, FakeWebSocket.OPEN);
+});
+
+test('online while the socket is stuck connecting reconnects', () => {
+  const stuck = socket();
+
+  dispatchWindow('online');
+  mock.timers.tick(8000);
+
+  assert.equal(stuck.readyState, FakeWebSocket.CLOSED);
+  assert.equal(FakeWebSocket.instances.length, 2);
 });

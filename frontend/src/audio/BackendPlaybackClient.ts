@@ -514,13 +514,17 @@ export class BackendPlaybackClient {
     this.scheduleReconnect();
   }
 
+  // An open socket can outlive a network flap (e.g. a localhost backend), so
+  // online/offline only act when the socket is not open. The heartbeat
+  // timeout still catches an open socket that really died.
   private handleOnline = () => {
+    if (this.socket?.readyState === WebSocket.OPEN) return;
     this.reconnectNow('network online');
   };
 
   private handleOffline = () => {
+    if (this.socket?.readyState === WebSocket.OPEN) return;
     this.report({ connection: 'disconnected' }, 'network offline');
-    window.clearInterval(this.heartbeatTimer);
   };
 
   dispose() {
