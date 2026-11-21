@@ -26,7 +26,7 @@ editing code — the containers do not hot-reload.
 
 ## 📦 Prerequisites
 
-- Go 1.25 or compatible with `backend/go.mod`.
+- Go 1.26 or compatible with `backend/go.mod`.
 - Node.js 20+.
 - npm.
 - No CGO toolchain required: the service uses no database driver.

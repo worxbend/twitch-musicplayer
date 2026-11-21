@@ -5,7 +5,7 @@
 **The DJ.** Indexes your MP3s, decides what plays next, streams the bytes, and tells every
 connected client what to do over WebSocket.
 
-`Go 1.25` · `Chi` · `Gorilla WebSocket` · `fsnotify` · `Bloom filter` · **no database**
+`Go 1.26` · `Chi` · `Gorilla WebSocket` · `fsnotify` · `Bloom filter` · **no database**
 
 </div>
 

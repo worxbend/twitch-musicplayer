@@ -12,7 +12,7 @@ tracks, and renders an audio-reactive visualizer you can drop straight into OBS.
 
 <br />
 
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Solid](https://img.shields.io/badge/SolidJS-1.9-2C4F7C?style=for-the-badge&logo=solid&logoColor=white)](https://www.solidjs.com)
 [![Pixi](https://img.shields.io/badge/Pixi.js-8-E72264?style=for-the-badge&logo=javascript&logoColor=white)](https://pixijs.com)
@@ -186,7 +186,7 @@ needs a restart, not a rebuild.
 
 ### 🔧 From source
 
-> **You'll need:** Go 1.25+, Node 22.18+ (the TypeScript unit tests run on `node --test`), and a folder of MP3s. No database. No CGO.
+> **You'll need:** Go 1.26+, Node 22.18+ (the TypeScript unit tests run on `node --test`), and a folder of MP3s. No database. No CGO.
 
 **1️⃣ Start the backend** 🎛️
 
