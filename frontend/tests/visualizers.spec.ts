@@ -560,3 +560,23 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 740, height: 360 }
     expect(errors).toEqual([]);
   });
 }
+
+// WCAG 1.4.10: 400% zoom on a 1280×1024 window leaves a 320×256 CSS viewport.
+// The opaque player page must scroll so the deck and footer stay reachable.
+test('player page scrolls to the deck and footer at 400% zoom (320×256)', async ({ page }) => {
+  const errors = recordErrors(page);
+  await station(page);
+  await page.setViewportSize({ width: 320, height: 256 });
+  await page.goto('/bars?ramp=EMBER');
+  const footerLink = page.getByRole('link', { name: 'Clean OBS view' });
+  await expect(footerLink).toBeAttached();
+  await page.mouse.move(160, 128);
+  await page.mouse.wheel(0, 2000);
+  await expect.poll(async () => {
+    const box = await footerLink.boundingBox();
+    return box ? box.y + box.height : Infinity;
+  }).toBeLessThanOrEqual(256 + 1);
+  await expect(page.getByRole('slider', { name: 'Volume' })).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  expect(errors).toEqual([]);
+});

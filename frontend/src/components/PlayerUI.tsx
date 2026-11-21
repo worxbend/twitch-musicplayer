@@ -52,6 +52,11 @@ export function PlayerUI(props: Props) {
   };
   createEffect(() => props.audio()?.setVolume(muted() ? 0 : volume()));
   onMount(() => {
+    // Lets this page, and no OBS or fullscreen route, scroll when zoomed in.
+    document.documentElement.classList.add('player-page');
+    onCleanup(() => document.documentElement.classList.remove('player-page'));
+  });
+  onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (shouldIgnoreVolumeKey(e)) return;
       if (e.key === 'm' || e.key === 'M') setMuted(m => !m);
