@@ -252,6 +252,12 @@ export class BackendPlaybackClient {
         break;
       case 'skip_now':
         this.current = null;
+        // Drop the skipped song entirely: a leftover pendingPlay blocks every
+        // need_song recovery path, and the token bump voids its in-flight play.
+        this.pendingPlay = null;
+        this.playToken += 1;
+        this.playInFlight = false;
+        this.resetStreamRetries();
         window.clearTimeout(this.streamRetryTimer);
         window.clearTimeout(this.errorRetryTimer);
         window.clearTimeout(this.awaitSongTimer);

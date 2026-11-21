@@ -145,7 +145,12 @@ function lastPlayback() {
 }
 
 function internals() {
-  return client as unknown as { current: { history_id: string } | null; connecting: boolean };
+  return client as unknown as {
+    current: { history_id: string } | null;
+    connecting: boolean;
+    streamRetryHistoryId: string | null;
+    streamRetryAttempts: number;
+  };
 }
 
 test('a play that settles after a newer one is ignored', async () => {
@@ -444,4 +449,48 @@ test('the reply timeout does not pile up need_song while disconnected', () => {
   reopened.open();
   const sent = FakeWebSocket.instances.slice(1).reduce((n, ws) => n + needSongCount(ws), 0);
   assert.equal(sent, 1);
+});
+
+test('skip_now during a stream retry still re-sends an unanswered need_song after 15s', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  await failPlay(0);
+  ws.message({ type: 'skip_now' });
+  assert.equal(needSongCount(ws), 2);
+
+  mock.timers.tick(15000);
+  assert.equal(needSongCount(ws), 3, 'a dropped play_song reply must not strand the player');
+  assert.equal(audio.plays.length, 1, 'the skipped song is not retried');
+});
+
+test('a skipped play that settles late does not become current', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a', 'Skipped'));
+  ws.message({ type: 'skip_now' });
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  assert.equal(internals().current, null);
+  assert.ok(!songs.some(song => song?.title === 'Skipped'));
+
+  ws.message(playSong('b', 'Next'));
+  audio.plays[1].settle.resolve();
+  await flush();
+  assert.equal(internals().current?.history_id, 'h-b');
+  assert.deepEqual(songs.at(-1), { title: 'Next', artist: undefined });
+});
+
+test('skip_now resets the stream retry count', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  await failPlay(0);
+  mock.timers.tick(5000);
+  assert.equal(internals().streamRetryAttempts, 1);
+
+  ws.message({ type: 'skip_now' });
+  assert.equal(internals().streamRetryHistoryId, null);
+  assert.equal(internals().streamRetryAttempts, 0);
 });
