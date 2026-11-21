@@ -456,3 +456,36 @@ test('now-playing hold fades the title out; no hold keeps it visible', async ({ 
   await page.waitForTimeout(1500);
   await expect(overlay).not.toHaveClass(/np-hidden/);
 });
+
+test('now-playing hold re-shows a repeated title on a new history_id; a dry-queue state clears it', async ({ page }) => {
+  let route!: WebSocketRoute;
+  await page.routeWebSocket('**/ws', ws => { route = ws; });
+  const send = (msg: object) => route.send(JSON.stringify(msg));
+  const overlay = page.locator('.now-playing-overlay');
+  const title = page.getByText('Midnight compiler');
+  await page.goto('/now-playing?hold=2');
+  await expect.poll(() => route).toBeTruthy();
+
+  send({ type: 'now_playing', payload: { song: songs[0], history_id: 'h1', queue_depth: 1 } });
+  await expect(title).toBeAttached();
+  await expect(overlay).toHaveClass(/np-hidden/, { timeout: 5000 });
+
+  // Same title, new start: shows again, then hides after the hold.
+  send({ type: 'now_playing', payload: { song: songs[0], history_id: 'h2', queue_depth: 1 } });
+  await expect(overlay).not.toHaveClass(/np-hidden/);
+  await expect(overlay).toHaveClass(/np-hidden/, { timeout: 5000 });
+
+  // A reconnect state frame carries no history_id and must not re-show.
+  send({ type: 'state', payload: { current_song: songs[0] } });
+  await page.waitForTimeout(1000);
+  await expect(overlay).toHaveClass(/np-hidden/);
+
+  // Dry queue: state without current_song clears the title.
+  send({ type: 'state', payload: {} });
+  await expect(title).not.toBeAttached();
+
+  // The next start after the idle clear shows again.
+  send({ type: 'now_playing', payload: { song: songs[0], history_id: 'h3', queue_depth: 1 } });
+  await expect(title).toBeAttached();
+  await expect(overlay).not.toHaveClass(/np-hidden/);
+});
