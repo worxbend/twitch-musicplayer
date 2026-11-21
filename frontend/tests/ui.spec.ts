@@ -59,7 +59,7 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
       await route.fulfill({ status: 204 }); return;
     }
     if (url.pathname === '/v1/history') {
-      const items = options.empty ? [] : [{ song: songs[0], started_at: '2026-01-01T20:05:00Z' }, { song: songs[1], started_at: '2026-01-01T20:01:00Z' }];
+      const items = options.empty ? [] : [{ song: songs[0], started_at: '2026-01-01T20:05:00Z' }, { song: songs[1], started_at: '2026-01-01T20:01:00Z' }, { song: songs[0], started_at: '2026-01-01T19:57:00Z' }];
       await route.fulfill({ json: { items, total: items.length } }); return;
     }
     const query = url.searchParams.get('q')?.toLowerCase() || '';
@@ -155,11 +155,13 @@ test('admin recently played lists history newest first', async ({ page }) => {
   await mockStation(page);
   await page.goto('/admin');
   const history = page.getByRole('region', { name: 'Recently played' }).getByRole('listitem');
-  // songs[0] is on air, so its history entry is hidden.
-  await expect(history).toHaveCount(1);
-  await expect(history).toContainText('Buffering dreams');
-  await expect(history).toContainText('Terminal Club');
-  await expect(history.locator('time')).toHaveAttribute('datetime', '2026-01-01T20:01:00Z');
+  // songs[0] is on air, so only its newest entry is hidden; its earlier play stays.
+  await expect(history).toHaveCount(2);
+  await expect(history.nth(0)).toContainText('Buffering dreams');
+  await expect(history.nth(0)).toContainText('Terminal Club');
+  await expect(history.nth(0).locator('time')).toHaveAttribute('datetime', '2026-01-01T20:01:00Z');
+  await expect(history.nth(1)).toContainText('Midnight compiler');
+  await expect(history.nth(1).locator('time')).toHaveAttribute('datetime', '2026-01-01T19:57:00Z');
 });
 
 test('untitled queue song is labelled by its filename', async ({ page }) => {
