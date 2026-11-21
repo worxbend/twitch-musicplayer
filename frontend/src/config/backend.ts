@@ -28,17 +28,20 @@ export function getBackendURL(): string {
   const runtime = clean(window.__LOFI_CONFIG__?.backendUrl);
   if (runtime) return runtime;
 
-  const built = clean(import.meta.env.VITE_BACKEND_URL as string | undefined);
+  const built = clean(import.meta.env?.VITE_BACKEND_URL as string | undefined);
   if (built) return built;
 
   return `${window.location.protocol}//${window.location.hostname}:${DEFAULT_BACKEND_PORT}`;
 }
 
-/** The `/ws` endpoint, with the scheme upgraded to match the page's security. */
+/**
+ * The `/ws` endpoint, with the scheme upgraded to match the page's security.
+ * A path prefix in the backend URL (a reverse proxy on a subpath) is kept.
+ */
 export function getWebSocketURL(): string {
   const url = new URL(getBackendURL());
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = '/ws';
+  url.pathname = url.pathname.replace(/\/+$/, '') + '/ws';
   url.search = '';
   return url.toString();
 }

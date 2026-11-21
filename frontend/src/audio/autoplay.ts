@@ -6,7 +6,7 @@ export function shouldAutoStartAudio(defaultValue = false) {
   const queryValue = parseBoolean(new URLSearchParams(window.location.search).get('autoplay'));
   if (queryValue !== null) return queryValue;
 
-  const envValue = parseBoolean(import.meta.env.VITE_AUTO_START_AUDIO as string | undefined);
+  const envValue = parseBoolean(import.meta.env?.VITE_AUTO_START_AUDIO as string | undefined);
   if (envValue !== null) return envValue;
 
   if ((window as ObsWindow).obsstudio !== undefined) return true;

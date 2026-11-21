@@ -127,7 +127,7 @@ VITE_AUTO_START_AUDIO=false
 
 `VITE_BACKEND_URL` is used to derive:
 
-- WebSocket URL: `ws://.../ws` or `wss://.../ws`.
+- WebSocket URL: `ws://.../ws` or `wss://.../ws`. A path prefix is kept, so `https://host/radio` gives `wss://host/radio/ws`.
 - Relative stream URL resolution.
 
 `VITE_AUTO_START_AUDIO=true` lets the frontend try to start playback without a browser click. Overlay routes enable this by default for OBS/browser-source use; the main page can also opt in with `?autoplay=1`.
