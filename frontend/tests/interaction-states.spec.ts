@@ -34,13 +34,28 @@ test('failed actions report an error, then recover without losing the library', 
   await expect(page.locator('.song-item')).toHaveCount(1);
   fail = true;
   await page.getByRole('button', {name: 'Add Midnight compiler to queue'}).click();
-  await expect(page.getByRole('status')).toContainText('Action failed');
+  await expect(page.getByRole('status')).toContainText('Action failed. Check the backend connection');
   await expect(page.locator('.notification')).toHaveClass(/notification--error/);
   await expect(page.getByRole('button', {name: 'Add Midnight compiler to queue'})).toBeEnabled();
   await expect(page.locator('.song-item')).toHaveCount(1);
   fail = false;
   await page.getByRole('button', {name: 'Add Midnight compiler to queue'}).click();
   await expect(page.getByRole('status')).toContainText('Queued: Midnight compiler');
+});
+
+test('a rejected action shows the backend reason, not a connection failure', async ({ page }) => {
+  await page.routeWebSocket('**/ws', () => {});
+  await page.route('**/v1/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/v1/player:skip') return route.fulfill({ status: 409, json: { error: 'queue is empty' } });
+    return route.fulfill({ json: path === '/v1/songs' ? {songs: [song]} : path === '/v1/queue' ? {items: []} : {current_song: song} });
+  });
+  await page.goto('/admin');
+  await expect(page.locator('.now-playing-title')).toHaveText('Midnight compiler');
+  await page.getByRole('button', {name: 'Skip track'}).click();
+  await expect(page.getByRole('status')).toContainText('Action failed: queue is empty.');
+  await expect(page.getByRole('status')).not.toContainText('Check the backend connection');
+  await expect(page.locator('.notification')).toHaveClass(/notification--error/);
 });
 
 test('a slow previous search never overwrites a newer result', async ({ page }) => {

@@ -241,6 +241,37 @@ test('queue reorder by keyboard keeps focus', async ({ page }) => {
   expect((await new AxeBuilder({ page }).include('.queue-panel').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
 });
 
+test('queue remove by keyboard moves focus to the next row, then the heading', async ({ page }) => {
+  await mockStation(page);
+  const third = { id: 'c', title: 'Cassette rain', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024 };
+  let queue = [songs[0], songs[1], third].map((song, i) => ({ id: `q${song.id}`, song_id: song.id, song, position: i + 1, source: 'manual' }));
+  await page.route('**/v1/queue', route => route.fulfill({ json: { items: queue } }));
+  await page.route(url => url.pathname.startsWith('/v1/queue/q'), route => {
+    if (route.request().method() !== 'DELETE') return route.fallback();
+    const id = new URL(route.request().url()).pathname.split('/').pop();
+    queue = queue.filter(item => item.id !== id);
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto('/admin');
+  const rows = page.locator('.queue-item');
+  await expect(rows).toHaveCount(3);
+
+  await page.getByRole('button', { name: 'Remove Buffering dreams from queue' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(rows).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'Remove Cassette rain from queue' })).toBeFocused();
+
+  // Removing the last row moves focus up to the new last row.
+  await page.keyboard.press('Enter');
+  await expect(rows).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Remove Midnight compiler from queue' })).toBeFocused();
+
+  await page.keyboard.press('Enter');
+  await expect(rows).toHaveCount(0);
+  await expect(page.locator('#queue-heading')).toBeFocused();
+  expect((await new AxeBuilder({ page }).include('.queue-panel').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+});
+
 test('play-now and skip send the existing backend commands', async ({ page }) => {
   await mockStation(page);
   await page.goto('/admin');

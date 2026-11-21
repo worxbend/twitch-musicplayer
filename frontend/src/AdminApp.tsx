@@ -22,16 +22,34 @@ function queueItemLabel(item: QueueItem) { return item.song ? songLabel(item.son
 
 // fetchQueue replaces every row, which drops keyboard focus. These keep the
 // focused queue control (by item id and action) focused across the re-render.
-type QueueControl = { id: string; action: string };
-function focusedQueueControl(): QueueControl | null {
+// When its row is gone (removed), focus moves to the row now in that slot,
+// or to the queue heading once the queue is empty.
+type QueueControl = { id: string; action: string; index: number };
+function focusedQueueControl(items: QueueItem[]): QueueControl | null {
   const el = document.activeElement;
   if (!(el instanceof HTMLElement) || !el.closest('.queue-list')) return null;
   const { queueId, queueAction } = el.dataset;
-  return queueId && queueAction ? { id: queueId, action: queueAction } : null;
+  if (!queueId || !queueAction) return null;
+  return { id: queueId, action: queueAction, index: items.findIndex(item => item.id === queueId) };
 }
-function restoreQueueFocus(control: QueueControl | null) {
+function restoreQueueFocus(control: QueueControl | null, items: QueueItem[]) {
   if (!control) return;
-  document.querySelector<HTMLElement>(`.queue-list [data-queue-id="${CSS.escape(control.id)}"][data-queue-action="${CSS.escape(control.action)}"]`)?.focus();
+  const same = document.querySelector<HTMLElement>(`.queue-list [data-queue-id="${CSS.escape(control.id)}"][data-queue-action="${CSS.escape(control.action)}"]`);
+  if (same) { same.focus(); return; }
+  if (!items.length) { document.getElementById('queue-heading')?.focus(); return; }
+  const slot = items[Math.min(Math.max(control.index, 0), items.length - 1)];
+  document.querySelector<HTMLElement>(`.queue-list [data-queue-id="${CSS.escape(slot.id)}"][data-queue-action="remove"]`)?.focus();
+}
+// HttpError keeps the status and the backend's {"error": msg} text.
+class HttpError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+async function errorText(res: Response): Promise<string> {
+  try {
+    const body: unknown = await res.json();
+    const text = (body as { error?: unknown } | null)?.error;
+    return typeof text === 'string' ? text.trim() : '';
+  } catch { return ''; }
 }
 // aria-disabled, not disabled: a natively disabled button drops keyboard
 // focus to <body> when it becomes disabled under the cursor.
@@ -72,7 +90,7 @@ export function AdminApp() {
 
   async function request(path: string, init?: RequestInit) {
     const res = await fetch(`${backendURL}${path}`, init);
-    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    if (!res.ok) throw new HttpError(res.status, await errorText(res));
     return res;
   }
   async function fetchSongs(q = searchQuery()) {
@@ -89,10 +107,10 @@ export function AdminApp() {
     try {
       const data = await (await request('/v1/queue')).json();
       if (queueGate.isLatest(id) && !disposed) {
-        const focused = focusedQueueControl();
+        const focused = focusedQueueControl(queue());
         setQueue(data.items ?? []);
         setQueueError(false);
-        restoreQueueFocus(focused);
+        restoreQueueFocus(focused, queue());
       }
     } catch { if (queueGate.isLatest(id) && !disposed) setQueueError(true); }
   }
@@ -131,7 +149,11 @@ export function AdminApp() {
       });
       await Promise.all([fetchQueue(), fetchPlayerState()]);
       showNotification(`✓ ${message}`);
-    } catch { showNotification('Action failed. Check the backend connection and try again.', true); }
+    } catch (err) {
+      // A 4xx carries the backend's reason (e.g. 409 "queue is empty"); network errors and 5xx do not.
+      const clientError = err instanceof HttpError && err.status >= 400 && err.status < 500 && err.message;
+      showNotification(clientError ? `Action failed: ${err.message}.` : 'Action failed. Check the backend connection and try again.', true);
+    }
     finally { setBusy(''); }
   }
 
@@ -249,7 +271,7 @@ export function AdminApp() {
             <div class="panel-footnote"><span class="key-hint">+</span> queue it <span class="key-hint">▶</span> play it now</div>
           </section>
           <section class="queue-panel" aria-labelledby="queue-heading">
-            <div class="panel-header"><h2 id="queue-heading" class="panel-title">Up next <span class="queue-count">{queue().length}</span></h2><ActionButton class="btn btn-danger" inactive={() => !!busy() || !queue().length} onClick={() => clearDialog.showModal()}>Clear queue</ActionButton></div>
+            <div class="panel-header"><h2 id="queue-heading" class="panel-title" tabIndex={-1}>Up next <span class="queue-count">{queue().length}</span></h2><ActionButton class="btn btn-danger" inactive={() => !!busy() || !queue().length} onClick={() => clearDialog.showModal()}>Clear queue</ActionButton></div>
             <div class="queue-legend"><span><i class="queue-source manual" />manual</span><span><i class="queue-source auto" />auto rotation</span></div>
             <div class="queue-list">
               <Show when={!queueError()} fallback={<div class="empty-state"><h3>Queue unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => void fetchQueue()}>Retry</button></div>}>
