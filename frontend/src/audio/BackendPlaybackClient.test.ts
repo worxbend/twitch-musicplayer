@@ -535,6 +535,69 @@ test('onEnded after a near-end handoff neither re-sends song_finished nor re-arm
   assert.equal(needSongCount(ws), before + 1);
 });
 
+// A track shorter than the 2.5s crossfade can end before playStream resolves.
+function startInFlight(ws: FakeWebSocket) {
+  ws.open();
+  ws.message(playSong('a'));
+  audio.plays[0].start();
+}
+
+function songFinishedIds(ws: FakeWebSocket) {
+  return ws.sent
+    .filter(m => (m as { type: string }).type === 'song_finished')
+    .map(m => (m as { payload: { history_id: string } }).payload.history_id);
+}
+
+test('a track that ends while its play is in flight sends song_finished once it settles', async () => {
+  const ws = socket();
+  startInFlight(ws);
+  audio.plays[0].callbacks.onEnded();
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  assert.deepEqual(songFinishedIds(ws), ['h-a']);
+  assert.equal(internals().awaitingSong, true);
+  assert.equal(internals().current, null);
+});
+
+test('a near-end during an in-flight play and the later end send one song_finished', async () => {
+  const ws = socket();
+  startInFlight(ws);
+  audio.plays[0].callbacks.onNearEnd();
+  audio.plays[0].settle.resolve();
+  await flush();
+  audio.plays[0].callbacks.onEnded();
+
+  assert.deepEqual(songFinishedIds(ws), ['h-a']);
+});
+
+test('skip_now after an in-flight end drops the pending song_finished', async () => {
+  const ws = socket();
+  startInFlight(ws);
+  const before = needSongCount(ws);
+  audio.plays[0].callbacks.onEnded();
+  ws.message({ type: 'skip_now' });
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  assert.equal(songFinishedCount(ws), 0);
+  assert.equal(needSongCount(ws), before + 1);
+});
+
+test('an unanswered song_finished from an in-flight end is followed by need_song after 15s', async () => {
+  const ws = socket();
+  startInFlight(ws);
+  audio.plays[0].callbacks.onEnded();
+  audio.plays[0].settle.resolve();
+  await flush();
+  const before = needSongCount(ws);
+
+  mock.timers.tick(14999);
+  assert.equal(needSongCount(ws), before);
+  mock.timers.tick(1);
+  assert.equal(needSongCount(ws), before + 1);
+});
+
 test('error retries back off to 30s and reset after a successful play', async () => {
   const ws = socket();
   ws.open();

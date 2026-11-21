@@ -113,6 +113,9 @@ export class BackendPlaybackClient {
   // Bumped by every play(); a play that settles after a newer one started is ignored.
   private playToken = 0;
   private playInFlight = false;
+  // history_id of an in-flight play whose track already ended or neared its end;
+  // its song_finished is sent once the play settles and becomes current.
+  private finishedInFlight: string | null = null;
   // history_id of the song whose title is on screen; it can outlive `current`
   // through the near-end handoff, while the old track is still audible.
   private displayedHistoryId: string | null = null;
@@ -146,6 +149,7 @@ export class BackendPlaybackClient {
     // Void any in-flight play so it cannot report a title or become current after stop.
     this.playToken += 1;
     this.playInFlight = false;
+    this.finishedInFlight = null;
     this.pendingPlay = null;
     this.current = null;
     this.awaitingSong = false;
@@ -271,6 +275,7 @@ export class BackendPlaybackClient {
         this.pendingPlay = null;
         this.playToken += 1;
         this.playInFlight = false;
+        this.finishedInFlight = null;
         this.resetStreamRetries();
         window.clearTimeout(this.streamRetryTimer);
         window.clearTimeout(this.errorRetryTimer);
@@ -303,6 +308,7 @@ export class BackendPlaybackClient {
 
     const token = ++this.playToken;
     this.playInFlight = true;
+    this.finishedInFlight = null;
     this.pendingPlay = payload;
     const songName = payload.song.title || payload.song.filename;
 
@@ -323,6 +329,7 @@ export class BackendPlaybackClient {
     } catch (error) {
       if (token !== this.playToken) return;
       this.playInFlight = false;
+      this.finishedInFlight = null;
       this.handlePlayFailure(payload, error);
       return;
     }
@@ -333,6 +340,10 @@ export class BackendPlaybackClient {
     window.clearTimeout(this.streamRetryTimer);
     this.errorRetryAttempts = 0;
     this.resetStreamRetries();
+    if (this.finishedInFlight === payload.history_id) {
+      this.finishedInFlight = null;
+      this.finishCurrent(payload);
+    }
   }
 
   // Only an autoplay refusal waits for a click; anything else (404, undecodable
@@ -379,6 +390,16 @@ export class BackendPlaybackClient {
   // reply is awaited and re-requested on timeout. The title stays up: the track
   // is still audible until it ends or the next one starts.
   private finishCurrent(payload: PlaySongPayload) {
+    // A track shorter than the crossfade ends before play() settles and sets
+    // `current`; play() sends the finish when it settles.
+    if (
+      this.current?.history_id !== payload.history_id &&
+      this.playInFlight &&
+      this.pendingPlay?.history_id === payload.history_id
+    ) {
+      this.finishedInFlight = payload.history_id;
+      return;
+    }
     if (this.current?.history_id !== payload.history_id) return;
     // Set before sending so a synchronous reply cannot clear it first.
     this.startAwaitingSong();
