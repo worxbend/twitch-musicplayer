@@ -100,8 +100,9 @@ at all.
 > [!IMPORTANT]
 > `BASE_URL` and `BACKEND_URL` must be reachable **from the browser**, not from inside the
 > Compose network. Using `http://backend:8080` looks tidy and does not work: the browser
-> cannot resolve a Compose service name. If you move `BACKEND_PORT`, change `BASE_URL` to
-> match, or the audio stream URLs will point at the wrong port.
+> cannot resolve a Compose service name. If you move `BACKEND_PORT`, set both `BASE_URL`
+> and `BACKEND_URL` to `http://<host>:<BACKEND_PORT>`. Otherwise the page falls back to
+> port 8080 and the player stays Offline, and the stream URLs point at the wrong port.
 
 ### 🌍 Deploying to a real host
 
@@ -112,9 +113,12 @@ start, in this order:
 2. `VITE_BACKEND_URL`, if the image was built with one.
 3. The host that served the page, on port 8080.
 
-Step 3 is why the defaults work unchanged on a remote server: browse to
-`http://myserver:3000` and the page talks to `http://myserver:8080`. Set `BACKEND_URL`
-only when the backend is somewhere else, or behind TLS:
+Step 3 is why `BACKEND_URL` is optional on a remote server: browse to
+`http://myserver:3000` and the page talks to `http://myserver:8080`. `BASE_URL` is not
+optional there. It defaults to `http://localhost:8080`, so without
+`BASE_URL=http://myserver:8080` every stream URL points at the viewer's own machine: the
+badge shows Live and nothing plays. Set `BACKEND_URL` too when the backend is somewhere
+else, on another port, or behind TLS:
 
 ```bash
 BASE_URL=https://radio.example.com \

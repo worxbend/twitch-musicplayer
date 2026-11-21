@@ -170,13 +170,16 @@ MUSIC_DIR=~/Music docker compose -f docker-compose.hub.yml up -d
 | `docker-compose.hub.yml` | 🌍 Run it anywhere | Pulled from Docker Hub, no source needed |
 
 Ports and paths are configurable — copy `.env.example` to `.env` and edit. Port 3000 or
-8080 already busy? Set `FRONTEND_PORT` / `BACKEND_PORT` (and match `BASE_URL` to the
-backend port).
+8080 already busy? Set `FRONTEND_PORT` / `BACKEND_PORT`. A moved `BACKEND_PORT` also needs
+both `BASE_URL` and `BACKEND_URL` set to `http://<host>:<BACKEND_PORT>`, or the page keeps
+looking on port 8080.
 
 The published frontend image has **no backend URL compiled into it**. It resolves one at
 container start from `BACKEND_URL`, falling back to the host that served the page on port
-8080 — so the defaults just work on a remote server, and moving the backend behind TLS
-needs a restart, not a rebuild.
+8080, and moving the backend behind TLS needs a restart, not a rebuild. On any host other
+than localhost, set `BASE_URL` to the backend address your browser uses (for example
+`BASE_URL=http://myserver:8080`): it defaults to `http://localhost:8080`, so stream URLs
+would point at the viewer's own machine and nothing would play.
 
 📖 Full details → **[Deployment Guide](docs/deployment.md)**
 
