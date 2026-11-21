@@ -171,6 +171,18 @@ test('audio unlock works by keyboard and reports actual playback', async ({ page
   await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /[1-9]/);
 });
 
+test('player status stays in one live region from blocked to on air', async ({ page }) => {
+  await mockStation(page, { requireGesture: true });
+  await page.goto('/');
+  const status = page.getByRole('status');
+  await expect(status).toHaveCount(1);
+  await expect(status).toHaveAttribute('aria-live', 'polite');
+  await expect(status).toContainText('click');
+  await page.getByRole('button', { name: 'Enable audio' }).click();
+  await expect(status).toContainText('On air', {timeout: 10000});
+  await expect(status).toHaveCount(1);
+});
+
 test('volume shortcuts change the slider, mute toggles, and the level survives reload', async ({ page }) => {
   await mockStation(page, { empty: true });
   await page.goto('/');

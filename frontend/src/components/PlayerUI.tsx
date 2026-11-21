@@ -91,8 +91,9 @@ export function PlayerUI(props: Props) {
           <div><p class="session-caption">An after-hours listening room</p><h1>{props.sceneName || 'Ambient frequency'}</h1><p class="session-description">{props.sceneSlug ? 'Sound, made visible.' : 'Soft rain. Deep grooves. Your own orbit.'}</p></div>
           <div class="session-meta"><span class="status" classList={{'status--live': isPlaying()}}><span class="status-dot" />{statusLabel()}</span><time>{time()}</time><span class="session-location">Local transmission</span></div>
         </div>
+        <p class="sr-only" role="status" aria-live="polite">{`${statusLabel()}. ${detail()}`}</p>
         <Show when={props.playbackStatus() !== 'playing' || props.wsStatus() !== 'connected'}>
-          <div class="player-message" role="status"><span class="message-prompt" aria-hidden="true">◉</span><p>{detail()}</p><Show when={props.playbackStatus() === 'blocked'}><button class="btn btn-primary" disabled={enabling()} onClick={() => void enableAudio()}>{enabling() ? 'Starting audio…' : 'Enable audio ▶'}</button></Show></div>
+          <div class="player-message"><span class="message-prompt" aria-hidden="true">◉</span><p>{detail()}</p><Show when={props.playbackStatus() === 'blocked'}><button class="btn btn-primary" disabled={enabling()} onClick={() => void enableAudio()}>{enabling() ? 'Starting audio…' : 'Enable audio ▶'}</button></Show></div>
         </Show>
         <div class="performance-space" aria-hidden="true"><span class="performance-coordinate">{props.sceneSlug || 'ambient'} / {isPlaying() ? 'audio reactive' : 'idle study'}</span><span class="performance-coordinate">Signal field</span></div>
         <div class="player-controls">
