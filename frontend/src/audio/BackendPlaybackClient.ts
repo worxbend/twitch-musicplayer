@@ -68,6 +68,7 @@ const reconnectMaxMs = 8000;
 const heartbeatMs = 25000;
 const heartbeatTimeoutMs = heartbeatMs * 2.5;
 const streamRetryMs = 5000;
+const maxStreamRetries = 3;
 const awaitSongTimeoutMs = 15000;
 const errorRetryMaxMs = 30000;
 const maxOutboxMessages = 20;
@@ -101,6 +102,9 @@ export class BackendPlaybackClient {
   private lastMessageAt = 0;
   private connecting = false;
   private streamRetryTimer = 0;
+  // Retries spent on one history_id; a song that keeps failing is skipped.
+  private streamRetryHistoryId: string | null = null;
+  private streamRetryAttempts = 0;
   private errorRetryTimer = 0;
   private errorRetryAttempts = 0;
   private awaitSongTimer = 0;
@@ -301,6 +305,7 @@ export class BackendPlaybackClient {
     this.pendingPlay = null;
     window.clearTimeout(this.streamRetryTimer);
     this.errorRetryAttempts = 0;
+    this.resetStreamRetries();
     this.onSongChange?.({ title: songName, artist: payload.song.artist });
     this.report({ playback: 'playing' }, 'playing');
   }
@@ -371,14 +376,39 @@ export class BackendPlaybackClient {
 
   private retryStream(payload: PlaySongPayload) {
     if (this.current?.history_id !== payload.history_id && this.pendingPlay?.history_id !== payload.history_id) return;
-    this.pendingPlay = payload;
+    window.clearTimeout(this.streamRetryTimer);
     this.current = null;
     this.onSongChange?.(null);
+    if (payload.history_id === this.streamRetryHistoryId && this.streamRetryAttempts >= maxStreamRetries) {
+      this.skipUnplayableStream();
+      return;
+    }
+    this.pendingPlay = payload;
     this.report({ playback: 'error' }, 'stream error, retrying');
-    window.clearTimeout(this.streamRetryTimer);
+    // onError and a play() rejection from one attempt both land here, so the
+    // attempt is counted when the timer fires, not per call.
     this.streamRetryTimer = window.setTimeout(() => {
-      if (this.shouldRun) void this.play(payload);
+      if (!this.shouldRun) return;
+      if (payload.history_id !== this.streamRetryHistoryId) {
+        this.streamRetryHistoryId = payload.history_id;
+        this.streamRetryAttempts = 0;
+      }
+      this.streamRetryAttempts += 1;
+      void this.play(payload);
     }, streamRetryMs);
+  }
+
+  // A deleted, missing or undecodable file never plays; ask the server for the next one.
+  private skipUnplayableStream() {
+    this.pendingPlay = null;
+    this.resetStreamRetries();
+    this.report({ playback: 'error' }, 'stream unplayable, skipping');
+    this.requestSong();
+  }
+
+  private resetStreamRetries() {
+    this.streamRetryHistoryId = null;
+    this.streamRetryAttempts = 0;
   }
 
   private queueOrSend(message: SocketMessage) {

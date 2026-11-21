@@ -59,6 +59,7 @@ interface Deferred {
 
 interface PlayCallbacks {
   onEnded: () => void;
+  onError: () => void;
   onNearEnd: () => void;
 }
 
@@ -215,6 +216,90 @@ test('NotSupportedError is a stream error that retries on its own', async () => 
   assert.equal(audio.plays.length, 1);
   mock.timers.tick(1);
   assert.equal(audio.plays.length, 2);
+});
+
+async function failPlay(index: number, name = 'NotSupportedError') {
+  audio.plays[index].settle.reject(new DOMException('x', name));
+  await flush();
+}
+
+test('a stream that never plays is skipped after 3 retries with one need_song', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  await failPlay(0);
+  for (let retry = 1; retry <= 3; retry += 1) {
+    assert.equal(needSongCount(ws), 1, `no skip before retry ${retry}`);
+    mock.timers.tick(5000);
+    assert.equal(audio.plays.length, retry + 1);
+    await failPlay(retry);
+  }
+
+  assert.equal(needSongCount(ws), 2);
+  assert.equal(statuses.at(-1)?.message, 'stream unplayable, skipping');
+  assert.equal(lastPlayback(), 'error');
+  mock.timers.tick(5000);
+  assert.equal(audio.plays.length, 4, 'no fifth attempt');
+  assert.ok(!ws.sent.some(m => (m as { type: string }).type === 'song_finished'));
+});
+
+test('onError and a rejection from the same attempt count as one retry', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  for (let attempt = 0; attempt <= 3; attempt += 1) {
+    if (attempt > 0) mock.timers.tick(5000);
+    assert.equal(audio.plays.length, attempt + 1);
+    assert.equal(needSongCount(ws), 1, `no skip before attempt ${attempt}`);
+    audio.plays[attempt].callbacks.onError();
+    await failPlay(attempt);
+  }
+
+  assert.equal(needSongCount(ws), 2);
+  mock.timers.tick(5000);
+  assert.equal(audio.plays.length, 4);
+});
+
+test('a successful retry resets the count for a later failure', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  await failPlay(0);
+  mock.timers.tick(5000);
+  await failPlay(1);
+  mock.timers.tick(5000);
+  audio.plays[2].settle.resolve();
+  await flush();
+  assert.equal(lastPlayback(), 'playing');
+
+  // The same song errors mid-playback: it gets a fresh 3 retries.
+  audio.plays[2].callbacks.onError();
+  for (let retry = 1; retry <= 3; retry += 1) {
+    assert.equal(needSongCount(ws), 1, `no skip before retry ${retry}`);
+    mock.timers.tick(5000);
+    assert.equal(audio.plays.length, retry + 3);
+    await failPlay(retry + 2);
+  }
+  assert.equal(needSongCount(ws), 2);
+});
+
+test('NotAllowedError does not count as a stream retry or skip the song', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  await failPlay(0, 'NotAllowedError');
+  mock.timers.tick(20000);
+  assert.equal(audio.plays.length, 1);
+  assert.equal(needSongCount(ws), 1);
+
+  client.retryPendingPlay();
+  await failPlay(1);
+  for (let retry = 1; retry <= 3; retry += 1) {
+    assert.equal(needSongCount(ws), 1, `no skip before retry ${retry}`);
+    mock.timers.tick(5000);
+    await failPlay(retry + 1);
+  }
+  assert.equal(needSongCount(ws), 2);
 });
 
 test('NotAllowedError waits for a click', async () => {

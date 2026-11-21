@@ -175,6 +175,6 @@ The supported frontend is a single active WebSocket playback client. It is desig
 - re-sends `need_song` if no `play_song` arrives within 15 seconds;
 - retries after an `error` reply with exponential backoff from 900 ms up to 30 seconds, reset by the next successful play;
 - retries a pending stream if browser autoplay blocked playback;
-- retries stream playback after media element errors.
+- retries stream playback after media element errors every 5 seconds, and after 3 failed retries of the same song sends `need_song` to skip it.
 
 The server protocol remains intentionally simple because only one active playback client is supported.
