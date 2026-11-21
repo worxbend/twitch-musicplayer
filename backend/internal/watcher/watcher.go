@@ -45,6 +45,10 @@ type ScanSummary struct {
 	WatchedDirs    int
 }
 
+// settleWorkers caps how many new files are polled for settling at once, so
+// dropping a large folder does not start one stat loop per file.
+const settleWorkers = 4
+
 // Watcher monitors a directory tree for new audio files and registers them.
 type Watcher struct {
 	dir        string
@@ -61,6 +65,9 @@ type Watcher struct {
 	settling   sync.WaitGroup
 	inflightMu sync.Mutex
 	inflight   map[string]struct{}
+	settleSem  chan struct{}
+	// settleWait is w.waitSettled; it is a field only as a test seam.
+	settleWait func(ctx context.Context, path string) error
 
 	// OnRemoved, when set before Start, is notified after songs are dropped.
 	OnRemoved OnSongsRemoved
@@ -90,7 +97,7 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 		extSet[".mp3"] = struct{}{}
 	}
 
-	return &Watcher{
+	w := &Watcher{
 		dir:        absDir,
 		extensions: extSet,
 		songRepo:   songRepo,
@@ -101,7 +108,10 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 
 		settlePoll: 250 * time.Millisecond,
 		inflight:   make(map[string]struct{}),
-	}, nil
+		settleSem:  make(chan struct{}, settleWorkers),
+	}
+	w.settleWait = w.waitSettled
+	return w, nil
 }
 
 // ScanExisting walks the entire music directory tree and inserts any audio files
@@ -227,7 +237,7 @@ func (w *Watcher) registerWhenSettled(ctx context.Context, path string) {
 	}
 	w.settling.Go(func() {
 		defer w.release(path)
-		if err := w.waitSettled(ctx, path); err != nil {
+		if err := w.awaitSettled(ctx, path); err != nil {
 			if ctx.Err() == nil {
 				w.logger.Printf("skip %s: %v", path, err)
 			}
@@ -237,6 +247,19 @@ func (w *Watcher) registerWhenSettled(ctx context.Context, path string) {
 			w.logger.Printf("register %s: %v", path, err)
 		}
 	})
+}
+
+// awaitSettled waits for a free settle slot, then for path to settle. The slot
+// is released as soon as the wait ends: the cap bounds stat polling, and
+// registerFile is short and runs once per file anyway.
+func (w *Watcher) awaitSettled(ctx context.Context, path string) error {
+	select {
+	case w.settleSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-w.settleSem }()
+	return w.settleWait(ctx, path)
 }
 
 func (w *Watcher) claim(path string) bool {

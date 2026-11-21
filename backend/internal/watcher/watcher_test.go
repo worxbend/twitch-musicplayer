@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,13 @@ type harness struct {
 // startWatcher indexes dir, then runs Start until the test ends.
 func startWatcher(t *testing.T, dir string) *harness {
 	t.Helper()
+	return startWatcherWith(t, dir, nil)
+}
+
+// startWatcherWith is startWatcher with configure applied to the Watcher
+// before it scans or starts, so per-test overrides do not race.
+func startWatcherWith(t *testing.T, dir string, configure func(*Watcher)) *harness {
+	t.Helper()
 	h := &harness{dir: dir, songs: repository.NewMemSongRepo()}
 	h.queue = repository.NewMemQueueRepo(h.songs)
 	h.mgr = queue.New(h.songs, played.New(100, 0.01), h.queue, queue.ManagerConfig{
@@ -39,6 +47,9 @@ func startWatcher(t *testing.T, dir string) *harness {
 	}
 	w.OnRemoved = func(_ []*models.Song) { h.removals.Add(1) }
 	w.settlePoll = 300 * time.Millisecond
+	if configure != nil {
+		configure(w)
+	}
 	h.w = w
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -306,7 +317,8 @@ func TestWatcherIndexesReadableFilesInDroppedTreeWithUnreadableDir(t *testing.T)
 func TestWatcherWaitsForFileToSettle(t *testing.T) {
 	const chunk = 64 << 10
 	dir := t.TempDir()
-	h := startWatcher(t, dir)
+	// Writes 100ms apart against a 600ms poll: a 6x margin for loaded runners.
+	h := startWatcherWith(t, dir, func(w *Watcher) { w.settlePoll = 600 * time.Millisecond })
 	path := filepath.Join(dir, "slow.mp3")
 
 	f, err := os.Create(path)
@@ -316,7 +328,7 @@ func TestWatcherWaitsForFileToSettle(t *testing.T) {
 	buf := make([]byte, chunk)
 	for i := range 4 {
 		if i > 0 {
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 		if _, err := f.Write(buf); err != nil {
 			f.Close()
@@ -327,7 +339,7 @@ func TestWatcherWaitsForFileToSettle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitFor(t, 3*time.Second, "slow.mp3 indexed", func() bool { return h.count(t) == 1 })
+	waitFor(t, 5*time.Second, "slow.mp3 indexed", func() bool { return h.count(t) == 1 })
 	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(path)).String()
 	song, err := h.songs.GetByID(context.Background(), id)
 	if err != nil {
@@ -335,5 +347,35 @@ func TestWatcherWaitsForFileToSettle(t *testing.T) {
 	}
 	if song.SizeBytes != 4*chunk {
 		t.Fatalf("SizeBytes = %d, want %d", song.SizeBytes, 4*chunk)
+	}
+}
+
+func TestWatcherCapsConcurrentSettling(t *testing.T) {
+	const files = 10
+	dir := t.TempDir()
+	var active, peak atomic.Int32
+	h := startWatcherWith(t, dir, func(w *Watcher) {
+		w.settleSem = make(chan struct{}, 2)
+		w.settleWait = func(ctx context.Context, path string) error {
+			n := active.Add(1)
+			defer active.Add(-1)
+			for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
+			}
+			time.Sleep(50 * time.Millisecond)
+			return w.waitSettled(ctx, path)
+		}
+	})
+
+	burst := filepath.Join(dir, "burst")
+	if err := os.Mkdir(burst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range files {
+		writeFile(t, filepath.Join(burst, fmt.Sprintf("%02d.mp3", i)))
+	}
+
+	waitFor(t, 10*time.Second, "burst indexed", func() bool { return h.count(t) == files })
+	if p := peak.Load(); p < 1 || p > 2 {
+		t.Fatalf("peak concurrent settle waits = %d, want 1..2", p)
 	}
 }
