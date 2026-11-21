@@ -269,7 +269,9 @@ func TestValidateOBS(t *testing.T) {
 		obs     OBSConfig
 		wantSub string // empty means Validate must pass
 	}{
-		{name: "empty file disables the feature", obs: OBSConfig{NowPlayingFormat: "no placeholders"}},
+		{name: "empty file skips the dir check", obs: OBSConfig{NowPlayingFormat: "{title}"}},
+		{name: "format without placeholders and no file", obs: OBSConfig{NowPlayingFormat: "no placeholders"},
+			wantSub: "obs.now_playing_format"},
 		{name: "existing dir", obs: OBSConfig{NowPlayingFile: filepath.Join(dir, "np.txt"), NowPlayingFormat: "{title}"}},
 		{name: "missing dir", obs: OBSConfig{NowPlayingFile: filepath.Join(dir, "absent", "np.txt"), NowPlayingFormat: "{title}"},
 			wantSub: "obs.now_playing_file"},

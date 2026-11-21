@@ -22,20 +22,30 @@ func NewNowPlayingFile(path, format string) *NowPlayingFile {
 	return &NowPlayingFile{path: path, format: format}
 }
 
-// Render formats song. A nil song renders "". A song without an artist renders
-// just its title, so the format's separator never dangles.
+// Render formats song with the file's format; see FormatNowPlaying.
 func (f *NowPlayingFile) Render(song *models.Song) string {
+	return FormatNowPlaying(f.format, song)
+}
+
+// lineBreaks turns CR and LF into spaces, so a tag cannot split the one-line
+// OBS text or a chat bot reply.
+var lineBreaks = strings.NewReplacer("\r", " ", "\n", " ")
+
+// FormatNowPlaying renders song with format's {title}, {artist} and {album}
+// placeholders. A nil song renders "". A song without an artist renders just
+// its title, so the format's separator never dangles. The result is one line.
+func FormatNowPlaying(format string, song *models.Song) string {
 	if song == nil {
 		return ""
 	}
 	if song.Artist == "" {
-		return song.Title
+		return lineBreaks.Replace(song.Title)
 	}
-	return strings.NewReplacer(
+	return lineBreaks.Replace(strings.NewReplacer(
 		"{title}", song.Title,
 		"{artist}", song.Artist,
 		"{album}", song.Album,
-	).Replace(f.format)
+	).Replace(format))
 }
 
 // Write replaces the file with the rendered song atomically: it writes and

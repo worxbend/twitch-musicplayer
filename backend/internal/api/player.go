@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -32,6 +33,8 @@ type PlayerHandler struct {
 	queueRepo    playerQueueRepo
 	hub          playerHub
 	stateTracker *player.StateTracker
+	// nowPlayingFormat is obs.now_playing_format, used by NowPlayingText.
+	nowPlayingFormat string
 }
 
 func NewPlayerHandler(
@@ -39,8 +42,9 @@ func NewPlayerHandler(
 	q playerQueueRepo,
 	hub playerHub,
 	st *player.StateTracker,
+	nowPlayingFormat string,
 ) *PlayerHandler {
-	return &PlayerHandler{songRepo: s, queueRepo: q, hub: hub, stateTracker: st}
+	return &PlayerHandler{songRepo: s, queueRepo: q, hub: hub, stateTracker: st, nowPlayingFormat: nowPlayingFormat}
 }
 
 // Skip handles POST /v1/player:skip.
@@ -53,6 +57,16 @@ func (h *PlayerHandler) Skip(w http.ResponseWriter, r *http.Request) {
 		h.hub.Broadcast(msg)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "skip broadcast"})
+}
+
+// NowPlayingText handles GET /v1/now-playing.txt: the current song as one
+// plain-text line for chat bots (Nightbot, StreamElements). Idle returns an
+// empty body. no-store keeps proxies from serving a stale title.
+func (h *PlayerHandler) NowPlayingText(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, player.FormatNowPlaying(h.nowPlayingFormat, h.stateTracker.GetCurrentSong()))
 }
 
 // State handles GET /v1/player.

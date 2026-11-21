@@ -147,6 +147,23 @@ POST /v1/player:skip
 Broadcasts `skip_now` to every connected audio client. No server-side queue manipulation
 happens here; the usual `need_song` flow performs the dequeue.
 
+```http
+GET /v1/now-playing.txt
+```
+
+Returns the current song as one plain-text line (`text/plain; charset=utf-8`) for chat
+bots. It uses `obs.now_playing_format` (default `{artist} - {title}`), so it matches the
+OBS now-playing file. A song with no artist returns just its title, line breaks in tags
+become spaces, and there is no trailing newline. While nothing is playing it returns
+`200` with an empty body. Responses carry `Cache-Control: no-store`.
+
+Chat command examples (replace the host with your public backend URL):
+
+```text
+Nightbot:      !song  ->  Now playing: $(urlfetch https://radio.example.com/v1/now-playing.txt)
+StreamElements: !song  ->  Now playing: ${customapi.https://radio.example.com/v1/now-playing.txt}
+```
+
 ## 🕰️ History
 
 ```http

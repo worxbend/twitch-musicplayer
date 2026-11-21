@@ -35,6 +35,16 @@ func TestNowPlayingFileRender(t *testing.T) {
 	}
 }
 
+func TestFormatNowPlayingReplacesLineBreaks(t *testing.T) {
+	song := &models.Song{Title: "Rain\r\nDrops", Artist: "Nu\njabes"}
+	if got, want := FormatNowPlaying("{artist} - {title}", song), "Nu jabes - Rain  Drops"; got != want {
+		t.Errorf("FormatNowPlaying = %q, want %q", got, want)
+	}
+	if got, want := FormatNowPlaying("{artist} - {title}", &models.Song{Title: "a\nb"}), "a b"; got != want {
+		t.Errorf("FormatNowPlaying without artist = %q, want %q", got, want)
+	}
+}
+
 func TestNowPlayingFileWriteReplacesAtomically(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nowplaying.txt")

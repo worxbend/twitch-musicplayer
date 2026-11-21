@@ -21,7 +21,7 @@ type fakeCounter struct {
 func (f fakeCounter) Count(context.Context) (int, error) { return f.n, f.err }
 
 func playerRouter(songs, queue fakeCounter, hub *fakeBroadcaster, st *player.StateTracker) http.Handler {
-	return RegisterRoutesHTTP(nil, nil, NewPlayerHandler(songs, queue, hub, st))
+	return RegisterRoutesHTTP(nil, nil, NewPlayerHandler(songs, queue, hub, st, "{artist} - {title}"))
 }
 
 func TestPlayerState(t *testing.T) {
@@ -63,6 +63,43 @@ func TestPlayerState(t *testing.T) {
 			}
 			if hasCurrent && cur["id"] != "c" {
 				t.Fatalf("current_song = %v", cur)
+			}
+		})
+	}
+}
+
+func TestPlayerNowPlayingText(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		current *models.Song
+		want    string
+	}{
+		{name: "artist and title", format: "{artist} - {title}", current: &models.Song{Title: "Rain", Artist: "Nujabes"}, want: "Nujabes - Rain"},
+		{name: "no artist renders title only", format: "{artist} - {title}", current: &models.Song{Title: "Rain"}, want: "Rain"},
+		{name: "idle renders empty body", format: "{artist} - {title}"},
+		{name: "custom format with album", format: "{title} ({album})", current: &models.Song{Title: "Rain", Artist: "Nujabes", Album: "Modal Soul"}, want: "Rain (Modal Soul)"},
+		{name: "newline in title becomes space", format: "{artist} - {title}", current: &models.Song{Title: "Rain\nDrops", Artist: "Nujabes"}, want: "Nujabes - Rain Drops"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := player.NewStateTracker()
+			if tt.current != nil {
+				st.SetCurrentSong(tt.current)
+			}
+			h := NewPlayerHandler(fakeCounter{}, fakeCounter{}, &fakeBroadcaster{}, st, tt.format)
+			rec := serve(t, RegisterRoutesHTTP(nil, nil, h), http.MethodGet, "/v1/now-playing.txt", "", nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if got := rec.Body.String(); got != tt.want {
+				t.Errorf("body = %q, want %q", got, tt.want)
+			}
+			if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+				t.Errorf("Content-Type = %q", got)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q", got)
 			}
 		})
 	}

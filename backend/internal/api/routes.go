@@ -28,6 +28,7 @@ func RegisterRoutes(r chi.Router, songs *SongsHandler, queue *QueueHandler, play
 		r.Get("/player", player.State)
 		r.Post("/player:skip", player.Skip)
 		r.Get("/history", player.History)
+		r.Get("/now-playing.txt", player.NowPlayingText)
 	})
 }
 

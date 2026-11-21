@@ -402,6 +402,32 @@ paths:
                     type: string
                     example: skip broadcast
 
+  /v1/now-playing.txt:
+    get:
+      summary: Get the current song as plain text
+      description: >
+        Returns the current song as one plain-text line for chat bots
+        (Nightbot `$(urlfetch)`, StreamElements `${customapi}`). The line uses
+        `obs.now_playing_format` (default `{artist} - {title}`); a song without
+        an artist renders just its title, and line breaks in tags become spaces.
+        While nothing is playing the body is empty. There is no trailing
+        newline, and the response is sent with `Cache-Control: no-store`.
+      operationId: getNowPlayingText
+      tags: [player]
+      responses:
+        "200":
+          description: Current song line, or an empty body when idle
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Nujabes - Aruarian Dance
+
   /v1/history:
     get:
       summary: List recent song starts

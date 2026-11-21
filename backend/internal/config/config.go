@@ -185,18 +185,20 @@ func (c *Config) Validate() error {
 	return errors.Join(errs...)
 }
 
-// checkOBS validates the now-playing file settings, only when the file is set.
+// checkOBS validates the now-playing settings. The format is always checked,
+// because GET /v1/now-playing.txt uses it too; the directory only when the
+// file is set.
 func checkOBS(obs OBSConfig) []error {
-	if obs.NowPlayingFile == "" {
-		return nil
-	}
 	var errs []error
+	if !strings.Contains(obs.NowPlayingFormat, "{title}") && !strings.Contains(obs.NowPlayingFormat, "{artist}") {
+		errs = append(errs, fmt.Errorf("obs.now_playing_format: %q must contain {title} or {artist}", obs.NowPlayingFormat))
+	}
+	if obs.NowPlayingFile == "" {
+		return errs
+	}
 	dir := filepath.Dir(obs.NowPlayingFile)
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		errs = append(errs, fmt.Errorf("obs.now_playing_file: directory %q does not exist", dir))
-	}
-	if !strings.Contains(obs.NowPlayingFormat, "{title}") && !strings.Contains(obs.NowPlayingFormat, "{artist}") {
-		errs = append(errs, fmt.Errorf("obs.now_playing_format: %q must contain {title} or {artist}", obs.NowPlayingFormat))
 	}
 	return errs
 }
