@@ -25,3 +25,11 @@ strategy = "auto_refill"
 min_ahead = 1
 # preload keeps this many songs queued when strategy is preload.
 preload_size = 3
+
+# Optional: plain text file holding the current song, for an OBS Text source
+# set to "Read from file". Off unless now_playing_file is set; its directory
+# must already exist.
+# [obs]
+# now_playing_file = "~/obs/nowplaying.txt"
+# Placeholders: {title}, {artist}, {album}. Must use {title} or {artist}.
+# now_playing_format = "{artist} - {title}"

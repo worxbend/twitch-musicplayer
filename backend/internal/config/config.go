@@ -22,6 +22,7 @@ type Config struct {
 	Bloom   BloomConfig   `toml:"bloom"`
 	Shuffle ShuffleConfig `toml:"shuffle"`
 	Queue   QueueConfig   `toml:"queue"`
+	OBS     OBSConfig     `toml:"obs"`
 
 	// Flat accessors populated by Load. Tagged "-" so a top-level TOML key
 	// such as `Port = 9` is reported as unknown instead of decoding here.
@@ -59,6 +60,14 @@ type QueueConfig struct {
 	PreloadSize int    `toml:"preload_size"`
 }
 
+// OBSConfig drives the optional now-playing text file for an OBS Text source.
+type OBSConfig struct {
+	// NowPlayingFile is rewritten on every song change. Empty disables it.
+	NowPlayingFile string `toml:"now_playing_file"`
+	// NowPlayingFormat accepts the {title}, {artist} and {album} placeholders.
+	NowPlayingFormat string `toml:"now_playing_format"`
+}
+
 func defaults() *Config {
 	return &Config{
 		Server:  ServerConfig{Port: 8080, BaseURL: "http://localhost:8080"},
@@ -66,6 +75,7 @@ func defaults() *Config {
 		Bloom:   BloomConfig{Path: "./lofi-radio.bloom"},
 		Shuffle: ShuffleConfig{Strategy: "round_robin", RecentWindow: 0},
 		Queue:   QueueConfig{Strategy: "auto_refill", MinAhead: 1, PreloadSize: 3},
+		OBS:     OBSConfig{NowPlayingFormat: "{artist} - {title}"},
 	}
 }
 
@@ -131,6 +141,7 @@ func loadFrom(path string, getenv func(string) string) (*Config, error) {
 
 	cfg.Music.Dir = expandHomePath(cfg.Music.Dir)
 	cfg.Bloom.Path = expandHomePath(cfg.Bloom.Path)
+	cfg.OBS.NowPlayingFile = expandHomePath(cfg.OBS.NowPlayingFile)
 	cfg.Music.Extensions = normalizeExtensions(cfg.Music.Extensions)
 	cfg.Server.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.Server.BaseURL), "/")
 
@@ -170,7 +181,24 @@ func (c *Config) Validate() error {
 		checkNonNegative("queue.preload_size", c.Queue.PreloadSize),
 		checkBaseURL("server.base_url", c.Server.BaseURL),
 	)
+	errs = append(errs, checkOBS(c.OBS)...)
 	return errors.Join(errs...)
+}
+
+// checkOBS validates the now-playing file settings, only when the file is set.
+func checkOBS(obs OBSConfig) []error {
+	if obs.NowPlayingFile == "" {
+		return nil
+	}
+	var errs []error
+	dir := filepath.Dir(obs.NowPlayingFile)
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		errs = append(errs, fmt.Errorf("obs.now_playing_file: directory %q does not exist", dir))
+	}
+	if !strings.Contains(obs.NowPlayingFormat, "{title}") && !strings.Contains(obs.NowPlayingFormat, "{artist}") {
+		errs = append(errs, fmt.Errorf("obs.now_playing_format: %q must contain {title} or {artist}", obs.NowPlayingFormat))
+	}
+	return errs
 }
 
 // checkNoUnknownKeys rejects keys the Config struct does not define, so a

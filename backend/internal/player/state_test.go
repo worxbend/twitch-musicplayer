@@ -131,3 +131,42 @@ func TestStateTrackerConcurrentAccess(t *testing.T) {
 		t.Fatalf("len = %d, want %d", len(got), MaxHistory)
 	}
 }
+
+func TestOnSongChangeFiresOncePerSet(t *testing.T) {
+	tr := NewStateTracker()
+	var got []*models.Song
+	tr.OnSongChange(func(s *models.Song) { got = append(got, s) })
+
+	a := &models.Song{ID: "a"}
+	tr.SetCurrentSong(a)
+	tr.SetCurrentSong(nil)
+
+	if len(got) != 2 || got[0] != a || got[1] != nil {
+		t.Fatalf("hook calls = %v, want [a nil]", got)
+	}
+}
+
+func TestOnSongChangeMayCallBackIn(t *testing.T) {
+	tr := NewStateTracker()
+	calls := 0
+	tr.OnSongChange(func(s *models.Song) {
+		calls++
+		if s != nil && s.ID == "first" {
+			tr.SetCurrentSong(&models.Song{ID: "second"})
+		}
+	})
+
+	done := make(chan struct{})
+	go func() {
+		tr.SetCurrentSong(&models.Song{ID: "first"})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetCurrentSong from inside the hook deadlocked")
+	}
+	if calls != 2 || tr.GetCurrentSong().ID != "second" {
+		t.Fatalf("calls = %d, current = %v, want 2 and second", calls, tr.GetCurrentSong())
+	}
+}

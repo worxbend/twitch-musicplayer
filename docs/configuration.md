@@ -82,12 +82,39 @@ file is fine: defaults are used. These fail startup:
 - An unknown `queue.strategy`. Allowed: `manual_only`, `auto_refill`, `preload`.
 - A negative `shuffle.recent_window`, `queue.min_ahead` or `queue.preload_size`.
 - An empty `music.dir`, or an empty or blank-entry `music.extensions` list.
+- An `obs.now_playing_file` whose directory does not exist, or an `obs.now_playing_format`
+  with neither `{title}` nor `{artist}` (checked only when the file is set).
 - A `server.base_url` (or `BASE_URL`) that is not an `http://` or `https://` URL with a host,
   or that has a `?query` or `#fragment`. Empty is allowed: stream URLs then stay relative and
   the frontend resolves them against `VITE_BACKEND_URL`.
 
 Extensions without a leading dot are accepted and normalized (`"mp3"` becomes `".mp3"`).
 Trailing slashes on `server.base_url` are trimmed (`http://host:8080/` becomes `http://host:8080`).
+
+## 📝 OBS Now-Playing File
+
+Optional. The backend writes the current song to a plain text file, so an OBS
+**Text (GDI+/FreeType)** source can show it without a browser source. Off by default.
+
+```toml
+[obs]
+now_playing_file = "~/obs/nowplaying.txt"
+now_playing_format = "{artist} - {title}"
+```
+
+| Key | Default | Meaning |
+|:--|:--|:--|
+| `now_playing_file` | `""` (off) | File to rewrite on every song change. `~` expands to your home. The directory must exist. |
+| `now_playing_format` | `{artist} - {title}` | Text template. Placeholders: `{title}`, `{artist}`, `{album}`. |
+
+- A song with no artist tag writes just its title, so no stray ` - ` appears.
+- Each write goes to a temp file in the same directory and is renamed over the target,
+  so OBS never reads a half-written title.
+- The file is emptied at startup, so a title from the last run does not linger.
+- A failed write is logged and skipped; playback is unaffected.
+
+Set it up in OBS: **Sources → + → Text (GDI+)** (FreeType on Linux/macOS) → tick
+**Read from file** → pick the file. OBS reloads it when it changes.
 
 ## 🖼️ Frontend Environment
 

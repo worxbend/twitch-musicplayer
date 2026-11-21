@@ -261,3 +261,51 @@ func TestLoadUsesLOFIConfig(t *testing.T) {
 		t.Errorf("music dir %q not created: %v", cfg.MusicDir, err)
 	}
 }
+
+func TestValidateOBS(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		obs     OBSConfig
+		wantSub string // empty means Validate must pass
+	}{
+		{name: "empty file disables the feature", obs: OBSConfig{NowPlayingFormat: "no placeholders"}},
+		{name: "existing dir", obs: OBSConfig{NowPlayingFile: filepath.Join(dir, "np.txt"), NowPlayingFormat: "{title}"}},
+		{name: "missing dir", obs: OBSConfig{NowPlayingFile: filepath.Join(dir, "absent", "np.txt"), NowPlayingFormat: "{title}"},
+			wantSub: "obs.now_playing_file"},
+		{name: "format without placeholders", obs: OBSConfig{NowPlayingFile: filepath.Join(dir, "np.txt"), NowPlayingFormat: "{album}"},
+			wantSub: "obs.now_playing_format"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := defaults()
+			cfg.OBS = tt.obs
+			err := cfg.Validate()
+			if tt.wantSub == "" {
+				if err != nil {
+					t.Fatalf("Validate: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantSub) {
+				t.Fatalf("Validate error = %v, want one naming %s", err, tt.wantSub)
+			}
+		})
+	}
+}
+
+func TestLoadFromExpandsOBSFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := writeConfig(t, "[obs]\nnow_playing_file = \"~/np.txt\"\n")
+	cfg, err := loadFrom(path, fakeEnv(nil))
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	if want := filepath.Join(home, "np.txt"); cfg.OBS.NowPlayingFile != want {
+		t.Errorf("now_playing_file = %q, want %q", cfg.OBS.NowPlayingFile, want)
+	}
+	if cfg.OBS.NowPlayingFormat != "{artist} - {title}" {
+		t.Errorf("now_playing_format = %q, want default", cfg.OBS.NowPlayingFormat)
+	}
+}

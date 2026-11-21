@@ -25,22 +25,36 @@ type StateTracker struct {
 	currentSong *models.Song
 	history     []PlayEntry // oldest first, at most MaxHistory entries
 	now         func() time.Time
+	onChange    func(*models.Song)
 }
 
 func NewStateTracker() *StateTracker { return &StateTracker{now: time.Now} }
 
-// SetCurrentSong sets the current song and, when song is non-nil, records the
-// start in the play history.
-func (t *StateTracker) SetCurrentSong(song *models.Song) {
+// OnSongChange registers fn to run after every SetCurrentSong, replacing any
+// earlier hook. fn runs outside the tracker's lock, so it may call back in.
+func (t *StateTracker) OnSongChange(fn func(*models.Song)) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.onChange = fn
+}
+
+// SetCurrentSong sets the current song and, when song is non-nil, records the
+// start in the play history. The change hook, if any, then runs once with song
+// (nil included) after the lock is released.
+func (t *StateTracker) SetCurrentSong(song *models.Song) {
+	t.mu.Lock()
 	t.currentSong = song
-	if song == nil {
-		return
+	if song != nil {
+		t.history = append(t.history, PlayEntry{Song: *song, StartedAt: t.now()})
+		if excess := len(t.history) - MaxHistory; excess > 0 {
+			t.history = t.history[excess:]
+		}
 	}
-	t.history = append(t.history, PlayEntry{Song: *song, StartedAt: t.now()})
-	if excess := len(t.history) - MaxHistory; excess > 0 {
-		t.history = t.history[excess:]
+	onChange := t.onChange
+	t.mu.Unlock()
+
+	if onChange != nil {
+		onChange(song)
 	}
 }
 

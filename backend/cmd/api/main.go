@@ -55,6 +55,9 @@ func main() {
 
 	// ── Player state tracker ──────────────────────────────────────────────────
 	stateTracker := player.NewStateTracker()
+	if cfg.OBS.NowPlayingFile != "" {
+		setupNowPlayingFile(stateTracker, cfg.OBS)
+	}
 
 	// ── WebSocket hub ─────────────────────────────────────────────────────────
 	hub := websocket.NewHub()
@@ -146,6 +149,21 @@ func main() {
 	}
 	<-done
 	fmt.Println("shutdown complete.")
+}
+
+// setupNowPlayingFile clears the OBS now-playing file, so no stale title from
+// the last run shows, and rewrites it on every song change. Write errors are
+// logged, not fatal: on Windows OBS may briefly hold the file open.
+func setupNowPlayingFile(tracker *player.StateTracker, obs config.OBSConfig) {
+	file := player.NewNowPlayingFile(obs.NowPlayingFile, obs.NowPlayingFormat)
+	write := func(song *models.Song) {
+		if err := file.Write(song); err != nil {
+			log.Printf("warning: %v", err)
+		}
+	}
+	write(nil)
+	tracker.OnSongChange(write)
+	log.Printf("obs now-playing file: %s", obs.NowPlayingFile)
 }
 
 // broadcastQueueUpdated tells every client the queue changed for reason.
