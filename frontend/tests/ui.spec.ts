@@ -351,7 +351,7 @@ test('volume shortcuts change the slider, mute toggles, and the level survives r
   const slider = page.getByRole('slider', { name: 'Volume' });
   const mute = page.getByRole('button', { name: 'Mute' });
   await expect(slider).toHaveValue('100');
-  await page.locator('main').focus();
+  await mute.focus();
   await page.keyboard.press('-');
   await page.keyboard.press('-');
   await expect(slider).toHaveValue('90');
@@ -364,16 +364,38 @@ test('volume shortcuts change the slider, mute toggles, and the level survives r
   await expect(page.getByRole('slider', { name: 'Volume' })).toHaveValue('95');
 });
 
+// WCAG 2.1.4: single-key shortcuts work only while focus is inside the deck.
+test('volume shortcuts fire only while focus is inside the player deck', async ({ page }) => {
+  await mockStation(page, { empty: true });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto('/');
+  const slider = page.getByRole('slider', { name: 'Volume' });
+  const mute = page.getByRole('button', { name: 'Mute' });
+  for (const outside of [page.locator('main'), page.getByRole('group', { name: 'Scene selection' }).getByRole('link').first()]) {
+    await outside.focus();
+    await page.keyboard.press('m');
+    await page.keyboard.press('-');
+    await expect(mute).toHaveAttribute('aria-pressed', 'false');
+    await expect(slider).toHaveValue('100');
+  }
+  await page.getByRole('link', { name: 'Change scene' }).focus();
+  await page.keyboard.press('m');
+  await expect(mute).toHaveAttribute('aria-pressed', 'true');
+  await mute.focus();
+  await page.keyboard.press('m');
+  await expect(mute).toHaveAttribute('aria-pressed', 'false');
+});
+
 test('scene routes share the persisted volume; overlays render no slider', async ({ page }) => {
   await mockStation(page, { empty: true });
   await page.goto('/');
-  await page.locator('main').focus();
+  await page.getByRole('button', { name: 'Mute' }).focus();
   await page.keyboard.press('-');
   await page.keyboard.press('-');
   await expect(page.getByRole('slider', { name: 'Volume' })).toHaveValue('90');
   await page.goto('/spectrum');
   await expect(page.getByRole('slider', { name: 'Volume' })).toHaveValue('90');
-  await page.locator('main').focus();
+  await page.getByRole('button', { name: 'Mute' }).focus();
   await page.keyboard.press('m');
   await expect(page.getByRole('button', { name: 'Mute' })).toHaveAttribute('aria-pressed', 'true');
   await page.goto('/spectrum-overlay');
