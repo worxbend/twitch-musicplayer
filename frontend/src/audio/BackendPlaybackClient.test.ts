@@ -61,6 +61,7 @@ interface PlayCallbacks {
   onEnded: () => void;
   onError: () => void;
   onNearEnd: () => void;
+  onPrefetch?: () => void;
   onStarted?: () => void;
 }
 
@@ -82,7 +83,11 @@ class FakeAudio {
     });
   }
 
-  preloadNext() {}
+  preloads: string[] = [];
+
+  preloadNext(url: string) {
+    this.preloads.push(url);
+  }
 }
 
 const windowListeners = new Map<string, Set<() => void>>();
@@ -118,7 +123,7 @@ let songs: (SongInfo | null)[];
 let client: Client;
 
 beforeEach(() => {
-  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   FakeWebSocket.instances = [];
   windowListeners.clear();
   audio = new FakeAudio();
@@ -171,6 +176,9 @@ function internals() {
     connecting: boolean;
     streamRetryHistoryId: string | null;
     streamRetryAttempts: number;
+    outbox: unknown[];
+    pendingPlay: { history_id: string } | null;
+    queueOrSend: (message: unknown) => void;
   };
 }
 
@@ -807,4 +815,172 @@ test('online while the socket is stuck connecting reconnects', () => {
 
   assert.equal(stuck.readyState, FakeWebSocket.CLOSED);
   assert.equal(FakeWebSocket.instances.length, 2);
+});
+
+function sentOfType(ws: FakeWebSocket, type: string) {
+  return ws.sent.filter(m => (m as { type: string }).type === type);
+}
+
+test('heartbeat is sent every 25s while messages keep arriving', () => {
+  socket().open();
+  const sockets = FakeWebSocket.instances.length;
+
+  mock.timers.tick(25000);
+  assert.equal(sentOfType(socket(), 'heartbeat').length, 1);
+  socket().message({ type: 'heartbeat_ack' });
+  mock.timers.tick(25000);
+
+  assert.equal(sentOfType(socket(), 'heartbeat').length, 2);
+  assert.equal(FakeWebSocket.instances.length, sockets);
+});
+
+test('silent socket past the heartbeat timeout reconnects', () => {
+  const silent = socket();
+  silent.open();
+  const sockets = FakeWebSocket.instances.length;
+
+  // Checks at 25s and 50s are inside the 62.5s timeout; the one at 75s is past it.
+  mock.timers.tick(25000);
+  mock.timers.tick(25000);
+  assert.equal(silent.readyState, FakeWebSocket.OPEN);
+  mock.timers.tick(25000);
+
+  assert.equal(silent.readyState, FakeWebSocket.CLOSED);
+  assert.ok(statuses.some(s => s.connection === 'reconnecting' && s.message === 'radio heartbeat timeout'));
+  mock.timers.tick(900);
+  assert.equal(FakeWebSocket.instances.length, sockets + 1, 'one reconnect');
+  mock.timers.tick(20000);
+  assert.equal(FakeWebSocket.instances.length, sockets + 1, 'the detached socket schedules no second reconnect');
+});
+
+test('heartbeat stops after the socket closes', () => {
+  const closed = socket();
+  closed.open();
+  closed.close();
+  // A leaked interval would time out at 75s and abort the reconnect handshake.
+  // Small steps: mocked Date reads the end of a tick inside every timer it fires.
+  for (let ms = 0; ms < 75000; ms += 100) mock.timers.tick(100);
+
+  assert.equal(sentOfType(closed, 'heartbeat').length, 0);
+  assert.ok(!statuses.some(s => s.message === 'radio heartbeat timeout'));
+  assert.equal(FakeWebSocket.instances.length, 2);
+  assert.equal(socket(1).readyState, FakeWebSocket.CONNECTING);
+});
+
+test('prebuffer_song preloads the resolved stream URL', () => {
+  socket().open();
+  const current = internals().current;
+
+  socket().message({ type: 'prebuffer_song', payload: playSong('b').payload });
+
+  assert.deepEqual(audio.preloads, ['http://localhost:8080/stream/b']);
+  assert.equal(audio.plays.length, 0);
+  assert.equal(internals().current, current);
+});
+
+test('malformed prebuffer_song is ignored', () => {
+  socket().open();
+  const { song, stream_url, history_id } = playSong('b').payload;
+
+  socket().message({ type: 'prebuffer_song', payload: { song, stream_url } });
+  socket().message({ type: 'prebuffer_song', payload: { stream_url, history_id } });
+  socket().message({ type: 'prebuffer_song', payload: { song, history_id } });
+  socket().message({ type: 'prebuffer_song' });
+
+  assert.deepEqual(audio.preloads, []);
+});
+
+test('prefetch sends peek_next for the current song', async () => {
+  const ws = socket();
+  await playAndSettle(ws);
+
+  audio.plays[0].callbacks.onPrefetch!();
+
+  assert.equal(sentOfType(ws, 'peek_next').length, 1);
+});
+
+test('stale prefetch sends nothing', async () => {
+  const ws = socket();
+  await playAndSettle(ws);
+  ws.message(playSong('b'));
+  audio.plays[1].settle.resolve();
+  await flush();
+  assert.equal(internals().current?.history_id, 'h-b');
+
+  audio.plays[0].callbacks.onPrefetch!();
+
+  assert.equal(sentOfType(ws, 'peek_next').length, 0);
+});
+
+test('peek_next while disconnected is queued and flushed on reopen', async () => {
+  await playThenDisconnect();
+
+  audio.plays[0].callbacks.onPrefetch!();
+  assert.equal(FakeWebSocket.instances.length, 1, 'the pending reconnect timer is kept');
+
+  mock.timers.tick(900);
+  socket(1).open();
+  assert.equal(sentOfType(socket(1), 'peek_next').length, 1);
+});
+
+test('outbox keeps only the newest 20 messages', async () => {
+  await playThenDisconnect();
+
+  for (let seq = 0; seq < 25; seq += 1) internals().queueOrSend({ type: 'peek_next', seq });
+  assert.equal(internals().outbox.length, 20);
+
+  mock.timers.tick(900);
+  socket(1).open();
+  assert.deepEqual(
+    socket(1).sent.map(m => (m as { seq: number }).seq),
+    Array.from({ length: 20 }, (_, i) => i + 5),
+  );
+});
+
+test('queue_updated while idle requests a song', () => {
+  const ws = socket();
+  ws.open();
+  ws.message({ type: 'error', payload: { message: 'queue empty' } });
+  assert.equal(internals().current, null);
+  assert.equal(internals().pendingPlay, null);
+  assert.equal(internals().awaitingSong, false);
+  const before = needSongCount(ws);
+
+  ws.message({ type: 'queue_updated' });
+
+  assert.equal(needSongCount(ws), before + 1);
+});
+
+test('queue_updated does nothing while a song is current', async () => {
+  const ws = socket();
+  await playAndSettle(ws);
+  const before = needSongCount(ws);
+
+  ws.message({ type: 'queue_updated' });
+
+  assert.equal(needSongCount(ws), before);
+});
+
+test('queue_updated does nothing while a song is awaited', () => {
+  const ws = socket();
+  ws.open();
+  assert.equal(internals().awaitingSong, true);
+  const before = needSongCount(ws);
+
+  ws.message({ type: 'queue_updated' });
+
+  assert.equal(needSongCount(ws), before);
+});
+
+test('queue_updated does nothing while a play is pending', () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  assert.equal(internals().pendingPlay?.history_id, 'h-a');
+  assert.equal(internals().awaitingSong, false);
+  const before = needSongCount(ws);
+
+  ws.message({ type: 'queue_updated' });
+
+  assert.equal(needSongCount(ws), before);
 });
