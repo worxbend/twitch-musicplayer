@@ -185,6 +185,23 @@ test('volume shortcuts change the slider, mute toggles, and the level survives r
   await expect(page.getByRole('slider', { name: 'Volume' })).toHaveValue('95');
 });
 
+test('scene routes share the persisted volume; overlays render no slider', async ({ page }) => {
+  await mockStation(page, { empty: true });
+  await page.goto('/');
+  await page.locator('main').focus();
+  await page.keyboard.press('-');
+  await page.keyboard.press('-');
+  await expect(page.getByRole('slider', { name: 'Volume' })).toHaveValue('90');
+  await page.goto('/spectrum');
+  await expect(page.getByRole('slider', { name: 'Volume' })).toHaveValue('90');
+  await page.locator('main').focus();
+  await page.keyboard.press('m');
+  await expect(page.getByRole('button', { name: 'Mute' })).toHaveAttribute('aria-pressed', 'true');
+  await page.goto('/spectrum-overlay');
+  await expect(page.locator('#stage canvas')).toBeVisible();
+  await expect(page.getByRole('slider', { name: 'Volume' })).toHaveCount(0);
+});
+
 for (const slug of ['spectrum', 'bars', 'mirror', 'dots', 'ribbon', 'line', 'lens']) {
   test(`${slug} renders; its OBS overlay stays chrome-free and transparent`, async ({ page }) => {
     await mockStation(page, { empty: true });
