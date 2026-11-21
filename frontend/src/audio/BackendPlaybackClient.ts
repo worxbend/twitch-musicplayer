@@ -143,6 +143,13 @@ export class BackendPlaybackClient {
 
   stop() {
     this.shouldRun = false;
+    // Void any in-flight play so it cannot report a title or become current after stop.
+    this.playToken += 1;
+    this.playInFlight = false;
+    this.pendingPlay = null;
+    this.current = null;
+    this.awaitingSong = false;
+    this.resetStreamRetries();
     window.clearTimeout(this.reconnectTimer);
     window.clearInterval(this.heartbeatTimer);
     window.clearTimeout(this.streamRetryTimer);
@@ -487,10 +494,6 @@ export class BackendPlaybackClient {
   dispose() {
     this.stop();
     this.outbox = [];
-    this.pendingPlay = null;
-    this.current = null;
-    this.awaitingSong = false;
-    this.clearDisplayedSong();
   }
 }
 

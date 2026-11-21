@@ -538,3 +538,51 @@ test('the title clears only when a song with no replacement really ends', async 
   audio.plays[0].callbacks.onEnded();
   assert.deepEqual(songs, [{ title: 'A', artist: undefined }, null]);
 });
+
+test('stop during an in-flight play suppresses its late title and status', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a', 'Late'));
+  client.stop();
+  const stoppedAt = songs.length;
+  assert.equal(songs.at(-1), null);
+
+  audio.plays[0].start();
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  assert.ok(songs.slice(stoppedAt).every(song => song === null), 'no title after stop');
+  assert.equal(statuses.at(-1)?.connection, 'disconnected');
+  assert.equal(lastPlayback(), 'idle');
+  assert.equal(internals().current, null);
+});
+
+test('start after stop requests a fresh song', async () => {
+  socket().open();
+  socket().message(playSong('a'));
+  client.stop();
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  client.start();
+  socket().open();
+  assert.equal(needSongCount(socket()), 1);
+});
+
+test('a play rejected after stop schedules no stream retry', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  client.stop();
+  const sockets = FakeWebSocket.instances.length;
+  const sent = ws.sent.length;
+
+  await failPlay(0);
+  mock.timers.tick(20000);
+
+  assert.equal(audio.plays.length, 1);
+  assert.equal(FakeWebSocket.instances.length, sockets);
+  assert.equal(ws.sent.length, sent);
+  assert.equal(statuses.at(-1)?.message, 'radio stopped');
+  assert.equal(lastPlayback(), 'idle');
+});
