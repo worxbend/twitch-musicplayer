@@ -18,6 +18,6 @@ require (
 
 require (
 	github.com/bits-and-blooms/bitset v1.24.2 // indirect
-	golang.org/x/sys v0.4.0 // indirect
-	golang.org/x/text v0.3.8 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )
