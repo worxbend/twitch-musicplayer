@@ -64,6 +64,9 @@ export class AudioEngine {
   private _channelA: PlaybackChannel | null = null;
   private _channelB: PlaybackChannel | null = null;
   private _activeChannel: PlaybackChannel | null = null;
+  // Master volume sits after the analyser, so visuals keep reacting when quiet or muted.
+  private _master: GainNode | null = null;
+  private _volume = 1;
   private _real: Uint8Array<ArrayBuffer> = new Uint8Array(BINS) as Uint8Array<ArrayBuffer>;
   private _t = 0;
   private _disposed = false;
@@ -91,7 +94,24 @@ export class AudioEngine {
     this.analyser.fftSize = 1024;
     this.analyser.smoothingTimeConstant = 0.82;
     this._real = new Uint8Array(this.analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
-    this.analyser.connect(this.ctx.destination);
+    this._master = this.ctx.createGain();
+    this._master.gain.value = this._volume;
+    this.analyser.connect(this._master);
+    this._master.connect(this.ctx.destination);
+  }
+
+  get volume() {
+    return this._volume;
+  }
+
+  // Sets the listener's master volume (0..1). Channel gains stay crossfade envelopes.
+  setVolume(volume: number): void {
+    this._volume = Number.isNaN(volume) ? 1 : clamp(volume, 0, 1);
+    if (!this.ctx || !this._master) return;
+    const now = this.ctx.currentTime;
+    this._master.gain.cancelScheduledValues(now);
+    // A short time constant avoids a click when the level jumps.
+    this._master.gain.setTargetAtTime(this._volume, now, 0.03);
   }
 
   async resume() {
@@ -461,6 +481,8 @@ export class AudioEngine {
     this._activeChannel = null;
     this.analyser?.disconnect();
     this.analyser = null;
+    this._master?.disconnect();
+    this._master = null;
     const ctx = this.ctx;
     this.ctx = null;
     if (ctx && ctx.state !== 'closed') void ctx.close();

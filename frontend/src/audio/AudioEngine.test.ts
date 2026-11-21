@@ -34,6 +34,12 @@ class FakeAudioParam {
     this.value = value;
   }
 
+  // Jumps straight to the target; the fakes have no running clock.
+  setTargetAtTime(value: number, t: number, _timeConstant: number) {
+    this.assertOutsideCurves(t, t);
+    this.value = value;
+  }
+
   setValueCurveAtTime(curve: Float32Array, t: number, duration: number) {
     this.assertOutsideCurves(t, t + duration);
     this.curves.push({ start: t, end: t + duration });
@@ -46,24 +52,35 @@ class FakeAudioParam {
   }
 }
 
-const graphNode = () => ({ connect() {}, disconnect() {} });
+class FakeNode {
+  connections: unknown[] = [];
+  disconnected = false;
+  connect(target: unknown) {
+    this.connections.push(target);
+  }
+  disconnect() {
+    this.disconnected = true;
+  }
+}
 
-class FakeAnalyser {
+class FakeGain extends FakeNode {
+  gain = new FakeAudioParam();
+}
+
+class FakeAnalyser extends FakeNode {
   fftSize = 2048;
   smoothingTimeConstant = 0;
   get frequencyBinCount() {
     return this.fftSize / 2;
   }
   getByteFrequencyData(_bins: Uint8Array) {}
-  connect() {}
-  disconnect() {}
 }
 
 class FakeAudioContext {
   static last: FakeAudioContext | null = null;
   currentTime = 0;
   state = 'running';
-  destination = graphNode();
+  destination = new FakeNode();
   analyser = new FakeAnalyser();
 
   constructor() {
@@ -75,11 +92,11 @@ class FakeAudioContext {
   }
 
   createGain() {
-    return { gain: new FakeAudioParam(), ...graphNode() };
+    return new FakeGain();
   }
 
   createMediaElementSource() {
-    return graphNode();
+    return new FakeNode();
   }
 
   async resume() {}
@@ -270,4 +287,58 @@ test('a play() rejection does not fire onStarted', async () => {
   settleSecond().reject(new DOMException('blocked', 'NotAllowedError'));
   await assert.rejects(second, { name: 'NotAllowedError' });
   assert.equal(onStarted.mock.callCount(), 0);
+});
+
+function master() {
+  const node = engine['_master'] as unknown as FakeGain | null;
+  assert.ok(node, 'master gain was not created');
+  return node;
+}
+
+function channelGains() {
+  return [engine['_channelA'], engine['_channelB']].map(channel => channel?.gain.gain.value);
+}
+
+test('the analyser feeds the master gain, which feeds the destination', async () => {
+  await playFirstTrack();
+  assert.deepEqual(ctx().analyser.connections, [master()]);
+  assert.deepEqual(master().connections, [ctx().destination]);
+});
+
+test('a volume set before the context exists is applied when it is created', async () => {
+  engine.setVolume(0.3);
+  await playFirstTrack();
+  assert.equal(master().gain.value, 0.3);
+});
+
+test('volume 0 silences the master only; channels and the analyser keep the signal', async () => {
+  await playFirstTrack();
+  const before = channelGains();
+  const readSpectrum = mock.method(ctx().analyser, 'getByteFrequencyData');
+
+  engine.setVolume(0);
+  engine.update(0.016);
+
+  assert.equal(master().gain.value, 0);
+  assert.equal(engine.volume, 0);
+  assert.deepEqual(channelGains(), before);
+  assert.equal(readSpectrum.mock.callCount(), 1);
+});
+
+test('setVolume clamps out-of-range values and treats NaN as full volume', async () => {
+  await playFirstTrack();
+  engine.setVolume(5);
+  assert.equal(master().gain.value, 1);
+  engine.setVolume(-1);
+  assert.equal(master().gain.value, 0);
+  engine.setVolume(Number.NaN);
+  assert.equal(engine.volume, 1);
+});
+
+test('dispose disconnects the master gain', async () => {
+  await playFirstTrack();
+  const node = master();
+  engine.dispose();
+  assert.equal(node.disconnected, true);
+  assert.equal(engine['_master'], null);
 });

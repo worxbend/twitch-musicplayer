@@ -89,6 +89,10 @@ html.scenes-index-page #root { min-height: 100%; }
 .np-bar-fill { height: 100%; background: var(--accent); border-radius: inherit; transition: width .25s linear; }
 .progress-caption { display: block; margin-top: 10px; color: var(--muted); font-family: var(--mono); font-size: 8px; }
 .deck-link { background: transparent; font-size: 11px; }
+.np-volume { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.np-volume .btn-icon { width: 34px; min-height: 34px; font-size: 14px; }
+.np-volume .btn-icon[aria-pressed='true'] { color: var(--coral); border-color: var(--coral); }
+.np-volume input[type='range'] { width: 96px; accent-color: var(--accent); cursor: pointer; }
 .player-footer { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 18px 0; font-family: var(--mono); font-size: 9px; color: #b9c8dc; }
 .player-footer > span:first-child { color: var(--accent); }
 .player-footer a { text-decoration: none; }
@@ -160,6 +164,8 @@ html.scenes-index-page #root { min-height: 100%; }
   .deck-art { width: 44px; height: 44px; }
   .deck-art > span { width: 18px; height: 18px; border-width: 7px; }
   .np-progress { width: 100%; max-width: none; grid-column: 1 / -1; }
+  .np-volume { grid-column: 1 / -1; }
+  .np-volume input[type='range'] { flex: 1; width: auto; }
   .np-times { margin-bottom: 8px; font-size: 9px; }
   .progress-caption { display: none; }
   .player-footer { font-size: 8px; padding: 13px 0; }

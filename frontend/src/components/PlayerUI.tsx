@@ -1,5 +1,6 @@
-import { createSignal, onMount, onCleanup, Show, For } from 'solid-js';
+import { createEffect, createSignal, onMount, onCleanup, Show, For } from 'solid-js';
 import type { AudioEngine } from '../audio/AudioEngine';
+import { loadVolume, saveVolume, shouldIgnoreVolumeKey, stepVolume, VOLUME_STEP } from '../audio/volumeStore';
 import type { ConnectionStatus, PlaybackStatus } from '../audio/BackendPlaybackClient';
 import { TerminalHeader } from './TerminalHeader';
 import { SCENES } from '../viz/scenes';
@@ -19,6 +20,11 @@ function fmtTime(secs: number): string {
   return `${Math.floor(secs / 60)}:${Math.floor(secs % 60).toString().padStart(2, '0')}`;
 }
 
+// Reading window.localStorage itself throws when site data is blocked.
+function browserStorage(): Storage | undefined {
+  try { return window.localStorage; } catch { return undefined; }
+}
+
 export function PlayerUI(props: Props) {
   const [time, setTime] = createSignal('--:--:--');
   const [enabling, setEnabling] = createSignal(false);
@@ -31,6 +37,29 @@ export function PlayerUI(props: Props) {
   const [fraction, setFraction] = createSignal(0);
   const [elapsed, setElapsed] = createSignal('0:00');
   const [remaining, setRemaining] = createSignal('0:00');
+  const [volume, setVolume] = createSignal(loadVolume(browserStorage()));
+  const [muted, setMuted] = createSignal(false);
+  const storeVolume = (next: number) => {
+    setVolume(next);
+    saveVolume(browserStorage(), next);
+  };
+  const unmuteAt = (next: number) => {
+    storeVolume(next);
+    setMuted(false);
+  };
+  createEffect(() => props.audio()?.setVolume(muted() ? 0 : volume()));
+  onMount(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (shouldIgnoreVolumeKey(e)) return;
+      if (e.key === 'm' || e.key === 'M') setMuted(m => !m);
+      else if (e.key === '-') storeVolume(stepVolume(volume(), -VOLUME_STEP));
+      else if (e.key === '=' || e.key === '+') unmuteAt(stepVolume(volume(), VOLUME_STEP));
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    onCleanup(() => window.removeEventListener('keydown', onKey));
+  });
   onMount(() => {
     const tick = () => {
       setTime(new Date().toLocaleTimeString([], { hour12: false }));
@@ -75,6 +104,7 @@ export function PlayerUI(props: Props) {
           <div class="deck-art" aria-hidden="true"><span /></div>
           <div class="np-info"><span class="np-label">{isPlaying() ? 'Now playing' : 'Current track'}</span><span id="np-title" title={props.trackName()}>{props.trackName()}</span><span id="np-artist">{props.trackArtist()}</span></div>
           <div class="np-progress"><div class="np-times"><span>{elapsed()}</span><span>{remaining()}</span></div><div class="np-bar" role="progressbar" aria-label="Track progress" aria-valuenow={Math.round(fraction() * 100)} aria-valuemin={0} aria-valuemax={100}><div class="np-bar-fill" style={{width: `${fraction() * 100}%`}} /></div><span class="progress-caption">Continuous playback</span></div>
+          <div class="np-volume"><button type="button" class="btn btn-icon" aria-pressed={muted()} aria-label="Mute" title="Mute (M)" onClick={() => setMuted(m => !m)}>{muted() ? '×' : '♪'}</button><input type="range" min="0" max="100" step="1" aria-label="Volume" title="Volume (- / +)" value={Math.round(volume() * 100)} onInput={e => unmuteAt(Number(e.currentTarget.value) / 100)} /></div>
           <a class="btn deck-link" href="/scenes">Change scene ↗</a>
         </section>
         </div>

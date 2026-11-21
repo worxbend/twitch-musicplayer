@@ -166,6 +166,25 @@ test('audio unlock works by keyboard and reports actual playback', async ({ page
   await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /[1-9]/);
 });
 
+test('volume shortcuts change the slider, mute toggles, and the level survives reload', async ({ page }) => {
+  await mockStation(page, { empty: true });
+  await page.goto('/');
+  const slider = page.getByRole('slider', { name: 'Volume' });
+  const mute = page.getByRole('button', { name: 'Mute' });
+  await expect(slider).toHaveValue('100');
+  await page.locator('main').focus();
+  await page.keyboard.press('-');
+  await page.keyboard.press('-');
+  await expect(slider).toHaveValue('90');
+  await page.keyboard.press('m');
+  await expect(mute).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('=');
+  await expect(mute).toHaveAttribute('aria-pressed', 'false');
+  await expect(slider).toHaveValue('95');
+  await page.reload();
+  await expect(page.getByRole('slider', { name: 'Volume' })).toHaveValue('95');
+});
+
 for (const slug of ['spectrum', 'bars', 'mirror', 'dots', 'ribbon', 'line', 'lens']) {
   test(`${slug} renders; its OBS overlay stays chrome-free and transparent`, async ({ page }) => {
     await mockStation(page, { empty: true });
