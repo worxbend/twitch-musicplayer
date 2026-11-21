@@ -74,6 +74,10 @@ export class AudioEngine {
   // Bumped by every playStream call; an older call that sees a newer value
   // leaves the channels alone, since the newer call now owns them.
   private _transition = 0;
+  // The channel a crossfade is still fading out. A preload aimed at it waits in
+  // _deferredPreload until the fade ends, so the fade tail and the preload both survive.
+  private _fadingOut: PlaybackChannel | null = null;
+  private _deferredPreload: string | null = null;
 
   constructor(options: AudioEngineOptions = {}) {
     this._allowAutoplay = options.allowAutoplay === true;
@@ -242,15 +246,30 @@ export class AudioEngine {
     if (!this.ctx) return;
     try {
       const ch = this._nextChannel();
-      if (ch.audioEl.src === url) return;
-      ch._nearEndCleanup?.();
-      ch._nearEndCleanup = null;
-      ch.audioEl.pause();
-      ch.audioEl.onended = null;
-      ch.audioEl.onerror = null;
-      ch.audioEl.src = url;
-      ch.audioEl.load();
+      if (ch === this._fadingOut) {
+        this._deferredPreload = url;
+        return;
+      }
+      this._loadIntoChannel(ch, url);
     } catch { /* ignore */ }
+  }
+
+  private _loadIntoChannel(ch: PlaybackChannel, url: string) {
+    if (ch.audioEl.src === url) return;
+    ch._nearEndCleanup?.();
+    ch._nearEndCleanup = null;
+    ch.audioEl.pause();
+    ch.audioEl.onended = null;
+    ch.audioEl.onerror = null;
+    ch.audioEl.src = url;
+    ch.audioEl.load();
+  }
+
+  // Drops the fade-out claim on a channel, with any preload waiting for it.
+  private _releaseFadeClaim(channel: PlaybackChannel | null) {
+    if (!channel || channel !== this._fadingOut) return;
+    this._fadingOut = null;
+    this._deferredPreload = null;
   }
 
   async playStream(
@@ -273,6 +292,8 @@ export class AudioEngine {
     // Checked even when paused: an older, superseded call may still resolve play() on it.
     const outgoingHasSource = !!outgoing?.audioEl.src;
     const hadSource = this.mode === 'backend' && outgoingHasSource;
+    // A new play may claim the channel an older crossfade is still fading out.
+    this._releaseFadeClaim(incoming);
 
     // Clean up any stale near-end listener on the incoming channel.
     incoming._nearEndCleanup?.();
@@ -327,15 +348,21 @@ export class AudioEngine {
         incoming._nearEndCleanup = () => el.removeEventListener('timeupdate', timeHandler);
       }
 
+      if (outgoingHasSource) this._fadingOut = outgoing;
       const fadeIn = this._fadeChannelTo(incoming, 1, DEFAULT_FADE_IN_MS);
       const fadeOut = outgoingHasSource ? this._fadeChannelTo(outgoing, 0, DEFAULT_FADE_OUT_MS) : Promise.resolve();
       await Promise.all([fadeIn, fadeOut]);
-      if (superseded()) return;
+      if (superseded()) {
+        this._releaseFadeClaim(outgoing);
+        return;
+      }
 
       if (outgoingHasSource) {
         this._stopChannel(outgoing);
+        this._finishFadeOut(outgoing);
       }
     } catch (error) {
+      this._releaseFadeClaim(outgoing);
       if (superseded()) {
         if (incoming !== this._activeChannel) this._stopChannel(incoming);
         throw error;
@@ -351,6 +378,15 @@ export class AudioEngine {
       this.mode = hadSource ? 'backend' : 'idle';
       throw error;
     }
+  }
+
+  // Ends the fade-out claim on a stopped channel and runs the preload that waited for it.
+  private _finishFadeOut(channel: PlaybackChannel | null) {
+    if (!channel || channel !== this._fadingOut) return;
+    const url = this._deferredPreload;
+    this._fadingOut = null;
+    this._deferredPreload = null;
+    if (url) this._loadIntoChannel(channel, url);
   }
 
   // Resumes the active track. Does nothing when no track is loaded or it is already playing.
@@ -488,6 +524,8 @@ export class AudioEngine {
     this._channelA = null;
     this._channelB = null;
     this._activeChannel = null;
+    this._fadingOut = null;
+    this._deferredPreload = null;
     this.analyser?.disconnect();
     this.analyser = null;
     this._master?.disconnect();

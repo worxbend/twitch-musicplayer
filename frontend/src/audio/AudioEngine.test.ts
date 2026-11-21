@@ -128,7 +128,10 @@ class FakeAudioElement {
     this.paused = true;
   }
 
-  load() {}
+  loads = 0;
+  load() {
+    this.loads++;
+  }
 
   removeAttribute(name: string) {
     if (name === 'src') this.src = '';
@@ -360,4 +363,62 @@ test('play and pause are idempotent and togglePlay still flips state', async () 
   assert.equal(el.paused, true);
   assert.equal(engine.togglePlay(), true);
   assert.equal(el.paused, false);
+});
+
+function inactiveElement() {
+  const active = engine['_activeChannel'];
+  const other = active === engine['_channelA'] ? engine['_channelB'] : engine['_channelA'];
+  const el = other?.audioEl as unknown as FakeAudioElement | undefined;
+  assert.ok(el, 'no inactive channel');
+  return el;
+}
+
+test('preloadNext loads straight into the inactive channel when no fade runs', async () => {
+  const first = await playFirstTrack();
+  engine.preloadNext('/stream/b');
+
+  assert.equal(inactiveElement().src, '/stream/b');
+  assert.equal(first.src, '/stream/a');
+  assert.equal(first.paused, false);
+});
+
+test('preloadNext waits for the fading-out channel, then the next play reuses it', async () => {
+  const first = await playFirstTrack();
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+
+  // A short track asks for the next song while track A is still fading out.
+  const pause = mock.method(first, 'pause');
+  engine.preloadNext('/stream/c');
+  assert.equal(first.src, '/stream/a');
+  assert.equal(pause.mock.callCount(), 0);
+
+  mock.timers.tick(FADE_MS);
+  await second;
+  assert.equal(first.src, '/stream/c');
+
+  const loadsBefore = first.loads;
+  const third = engine.playStream('/stream/c', 'C');
+  await flush();
+  mock.timers.tick(FADE_MS);
+  await third;
+  assert.equal(first.loads, loadsBefore);
+  assert.equal(activeElement(), first);
+});
+
+test('a new play that claims the fading-out channel drops the waiting preload', async () => {
+  const first = await playFirstTrack();
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+  engine.preloadNext('/stream/c');
+
+  const third = engine.playStream('/stream/d', 'D');
+  await flush();
+  mock.timers.tick(FADE_MS);
+  await flush();
+  await Promise.all([second, third]);
+
+  assert.equal(activeElement(), first);
+  assert.equal(first.src, '/stream/d');
+  assert.equal(inactiveElement().src, '');
 });
