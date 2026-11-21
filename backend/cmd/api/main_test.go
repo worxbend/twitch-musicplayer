@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"lofi-radio-backend/internal/config"
 	"lofi-radio-backend/internal/models"
@@ -128,4 +130,93 @@ func TestSetupNowPlayingFileFollowsTracker(t *testing.T) {
 		t.Fatal("ClearCurrentSong reported nothing to clear")
 	}
 	assertFileContent(t, path, "")
+}
+
+// scriptedSongSource stands in for the StateTracker so a test can replay the
+// change-hook orders that concurrent song changes allow. When hold is set,
+// the next GetCurrentSong reads the song, signals held, then waits on hold.
+type scriptedSongSource struct {
+	mu      sync.Mutex
+	current *models.Song
+	hook    func(*models.Song)
+	hold    chan struct{}
+	held    chan struct{}
+}
+
+func (s *scriptedSongSource) GetCurrentSong() *models.Song {
+	s.mu.Lock()
+	song, hold, held := s.current, s.hold, s.held
+	s.hold = nil
+	s.mu.Unlock()
+	if hold != nil {
+		close(held)
+		<-hold
+	}
+	return song
+}
+
+func (s *scriptedSongSource) OnSongChange(fn func(*models.Song)) { s.hook = fn }
+
+func (s *scriptedSongSource) setCurrent(song *models.Song) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.current = song
+}
+
+func newScriptedNowPlaying(t *testing.T) (*scriptedSongSource, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "np.txt")
+	src := &scriptedSongSource{}
+	setupNowPlayingFile(src, config.OBSConfig{NowPlayingFile: path, NowPlayingFormat: testNowPlayingFormat})
+	return src, path
+}
+
+var (
+	songA = &models.Song{ID: "a", Artist: "A", Title: "Old"}
+	songB = &models.Song{ID: "b", Artist: "B", Title: "New"}
+)
+
+// StateTracker runs hooks after releasing its lock, so the hook for an older
+// change can run last. The file must still show the tracker's current song,
+// not the older hook argument.
+func TestNowPlayingFileIgnoresLateHookArgument(t *testing.T) {
+	src, path := newScriptedNowPlaying(t)
+
+	src.setCurrent(songB)
+	src.hook(songB)
+	src.hook(songA)
+
+	assertFileContent(t, path, "B - New")
+}
+
+// Two hooks running at once must not interleave read and write: one that read
+// the older song must not overwrite a newer write that finished meanwhile.
+func TestNowPlayingFileSerializesConcurrentWrites(t *testing.T) {
+	src, path := newScriptedNowPlaying(t)
+	src.setCurrent(songA)
+	src.hold, src.held = make(chan struct{}), make(chan struct{})
+	hold := src.hold
+
+	first := make(chan struct{})
+	go func() { defer close(first); src.hook(songA) }()
+	select {
+	case <-src.held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("write hook never read the current song")
+	}
+
+	src.setCurrent(songB)
+	second := make(chan struct{})
+	go func() { defer close(second); src.hook(songB) }()
+	// With writes serialized the second hook cannot finish while the first
+	// is held, so the wait ends on the timeout instead.
+	select {
+	case <-second:
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(hold)
+	<-first
+	<-second
+
+	assertFileContent(t, path, "B - New")
 }

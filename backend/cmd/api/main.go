@@ -164,10 +164,17 @@ func main() {
 	fmt.Println("shutdown complete.")
 }
 
+// songSource is the part of player.StateTracker the now-playing file follows.
+// Tests substitute it to force the hook orders concurrent song changes allow.
+type songSource interface {
+	GetCurrentSong() *models.Song
+	OnSongChange(fn func(*models.Song))
+}
+
 // setupNowPlayingFile clears the OBS now-playing file, so no stale title from
 // the last run shows, and rewrites it on every song change. Write errors are
 // logged, not fatal: on Windows OBS may briefly hold the file open.
-func setupNowPlayingFile(tracker *player.StateTracker, obs config.OBSConfig) {
+func setupNowPlayingFile(tracker songSource, obs config.OBSConfig) {
 	file := player.NewNowPlayingFile(obs.NowPlayingFile, obs.NowPlayingFormat)
 	var writeMu sync.Mutex
 	// Hooks from concurrent song changes can run out of order, so each write
