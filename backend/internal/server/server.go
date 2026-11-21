@@ -40,9 +40,29 @@ func New(opts Options) *http.Server {
 	}
 }
 
+// logExcept wraps middleware.Logger but skips the given exact paths. The
+// Docker healthcheck hits /health every 15s, and logging each probe buries
+// real request and websocket logs on a station that runs 24/7.
+func logExcept(paths ...string) func(http.Handler) http.Handler {
+	skip := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		skip[p] = struct{}{}
+	}
+	return func(next http.Handler) http.Handler {
+		logged := middleware.Logger(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := skip[r.URL.Path]; ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			logged.ServeHTTP(w, r)
+		})
+	}
+}
+
 func buildRoutes(opts Options) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+	r.Use(logExcept("/health"))
 	r.Use(middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://*", "http://*"},
