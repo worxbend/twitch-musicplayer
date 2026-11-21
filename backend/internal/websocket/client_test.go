@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +26,8 @@ func (emptyQueueManager) NextSong(context.Context) (*models.Song, error) {
 func (emptyQueueManager) ListQueue(context.Context) ([]*models.QueueItem, error) { return nil, nil }
 
 func (emptyQueueManager) TotalSongs(context.Context) (int, error) { return 0, nil }
+
+func (emptyQueueManager) Requeue(context.Context, string) error { return nil }
 
 // listedQueueManager serves a fixed queue snapshot to ListQueue.
 type listedQueueManager struct {
@@ -123,5 +126,113 @@ func TestPeekNextAllDeadSendsNothing(t *testing.T) {
 	var reply Message
 	if err := conn.ReadJSON(&reply); err != nil || reply.Type != MsgHeartbeatAck {
 		t.Fatalf("reply = %+v, %v; want %s", reply, err, MsgHeartbeatAck)
+	}
+}
+
+// recordingQueueManager hands out one fixed song and records NextSong calls
+// and requeued song IDs.
+type recordingQueueManager struct {
+	emptyQueueManager
+	song *models.Song
+
+	mu        sync.Mutex
+	nextCalls int
+	requeued  []string
+}
+
+func (m *recordingQueueManager) NextSong(context.Context) (*models.Song, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextCalls++
+	return m.song, nil
+}
+
+func (m *recordingQueueManager) Requeue(_ context.Context, songID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requeued = append(m.requeued, songID)
+	return nil
+}
+
+func (m *recordingQueueManager) calls() (int, []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.nextCalls, append([]string(nil), m.requeued...)
+}
+
+// newSendTestClient builds a client with no connection; sendNextSong never
+// touches conn. The hub is not run, so broadcasts stay in hub.broadcast.
+func newSendTestClient() (*Client, *recordingQueueManager) {
+	mgr := &recordingQueueManager{song: &models.Song{ID: "song-1", Title: "Rain"}}
+	return NewClient(NewHub(), nil, mgr, "", player.NewStateTracker()), mgr
+}
+
+func assertNothingPublished(t *testing.T, c *Client) {
+	t.Helper()
+	if cur := c.stateTracker.GetCurrentSong(); cur != nil {
+		t.Fatalf("current song = %s, want nil", cur.ID)
+	}
+	if n := len(c.hub.broadcast); n != 0 {
+		t.Fatalf("hub.broadcast holds %d messages, want 0", n)
+	}
+}
+
+func TestSendNextSongClosedClientDequeuesNothing(t *testing.T) {
+	c, mgr := newSendTestClient()
+	c.close()
+
+	c.sendNextSong(context.Background())
+
+	if next, requeued := mgr.calls(); next != 0 || len(requeued) != 0 {
+		t.Fatalf("NextSong calls = %d, requeued = %v; want 0 and none", next, requeued)
+	}
+	assertNothingPublished(t, c)
+}
+
+func TestSendNextSongFullBufferRequeues(t *testing.T) {
+	c, mgr := newSendTestClient()
+	for range sendBufSize {
+		c.send <- Message{Type: MsgHeartbeatAck}
+	}
+
+	c.sendNextSong(context.Background())
+
+	if _, requeued := mgr.calls(); len(requeued) != 1 || requeued[0] != mgr.song.ID {
+		t.Fatalf("requeued = %v, want [%s]", requeued, mgr.song.ID)
+	}
+	assertNothingPublished(t, c)
+}
+
+func TestSendNextSongDeliversAndPublishes(t *testing.T) {
+	c, mgr := newSendTestClient()
+
+	c.sendNextSong(context.Background())
+
+	if len(c.send) != 1 {
+		t.Fatalf("send buffer holds %d messages, want 1", len(c.send))
+	}
+	sent := <-c.send
+	var payload PlaySongPayload
+	if err := json.Unmarshal(sent.Payload, &payload); err != nil || sent.Type != MsgPlaySong {
+		t.Fatalf("sent = %s (%v), want %s", sent.Type, err, MsgPlaySong)
+	}
+	if payload.Song.ID != mgr.song.ID {
+		t.Fatalf("play_song song = %q, want %q", payload.Song.ID, mgr.song.ID)
+	}
+	if cur := c.stateTracker.GetCurrentSong(); cur == nil || cur.ID != mgr.song.ID {
+		t.Fatalf("current song = %v, want %s", cur, mgr.song.ID)
+	}
+	if _, requeued := mgr.calls(); len(requeued) != 0 {
+		t.Fatalf("requeued = %v, want none", requeued)
+	}
+	for _, want := range []string{MsgNowPlaying, MsgQueueUpdated} {
+		select {
+		case got := <-c.hub.broadcast:
+			if got.Type != want {
+				t.Fatalf("broadcast = %s, want %s", got.Type, want)
+			}
+		default:
+			t.Fatalf("broadcast missing %s", want)
+		}
 	}
 }

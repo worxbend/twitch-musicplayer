@@ -608,6 +608,21 @@ func (m *Manager) PlayNext(ctx context.Context, songID string) error {
 	return m.queue.EnqueueFront(ctx, newQueueItem(songID, models.QueueSourceManual))
 }
 
+// Requeue puts a song NextSong already handed out back at the front of the
+// queue, for when the play message never reached its client. The entry is
+// manual so PlayNext cannot drop it as an auto duplicate. The played mark and
+// recent history are left alone: marking again is idempotent and a stale
+// recent entry only nudges the shuffle.
+func (m *Manager) Requeue(ctx context.Context, songID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.queue.EnqueueFront(ctx, newQueueItem(songID, models.QueueSourceManual)); err != nil {
+		return fmt.Errorf("requeue song %s: %w", songID, err)
+	}
+	return nil
+}
+
 // removeAutoEntries drops every auto-queued entry for songID.
 // Must be called with m.mu held.
 func (m *Manager) removeAutoEntries(ctx context.Context, songID string) error {

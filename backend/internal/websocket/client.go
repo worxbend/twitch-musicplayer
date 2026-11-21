@@ -39,6 +39,7 @@ type QueueManager interface {
 	NextSong(ctx context.Context) (*models.Song, error)
 	ListQueue(ctx context.Context) ([]*models.QueueItem, error)
 	TotalSongs(ctx context.Context) (int, error)
+	Requeue(ctx context.Context, songID string) error
 }
 
 // Client represents a single connected WebSocket peer.
@@ -195,10 +196,19 @@ func (c *Client) handleMessage(msg Message) {
 	}
 }
 
-// sendNextSong fetches the next song from the queue and pushes a play_song
-// message to this client. It also broadcasts now_playing and queue_updated to
-// all clients so management UIs stay in sync.
+// sendNextSong dequeues the next song and pushes a play_song message to this
+// client. A closed client dequeues nothing. When the message cannot be queued
+// (client closed meanwhile or send buffer full) the song goes back to the
+// front of the queue and shared state is left untouched. Only after a
+// successful send does it update the state tracker and broadcast now_playing
+// and queue_updated so management UIs stay in sync.
 func (c *Client) sendNextSong(ctx context.Context) {
+	select {
+	case <-c.closed:
+		return
+	default:
+	}
+
 	song, err := c.queueMgr.NextSong(ctx)
 	if err != nil {
 		log.Printf("next song error: %v", err)
@@ -224,13 +234,17 @@ func (c *Client) sendNextSong(ctx context.Context) {
 		return
 	}
 
+	if !c.trySend(playMsg) {
+		log.Printf("play_song not delivered (client closed or send buffer full); requeueing %s", song.ID)
+		if err := c.queueMgr.Requeue(ctx, song.ID); err != nil {
+			log.Printf("requeue undelivered song: %v", err)
+		}
+		return
+	}
+
 	// Update shared state tracker so the REST player endpoint is current.
 	if c.stateTracker != nil {
 		c.stateTracker.SetCurrentSong(song)
-	}
-
-	if !c.trySend(playMsg) {
-		log.Printf("send buffer full or client closed, dropping play_song")
 	}
 
 	// Broadcast to all peers so management UIs get live updates.

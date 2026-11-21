@@ -464,3 +464,30 @@ func TestPlayNextKeepsManualDuplicate(t *testing.T) {
 		t.Fatalf("manual entry %s missing after PlayNext, queue = %+v", manual.ID, got)
 	}
 }
+
+func TestRequeuePutsSongAtFront(t *testing.T) {
+	ctx := context.Background()
+	lib := library(2)
+	m := buildManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, lib)
+	for _, s := range lib {
+		if _, err := m.AddToQueue(ctx, s.ID, models.QueueSourceManual); err != nil {
+			t.Fatalf("AddToQueue %s: %v", s.ID, err)
+		}
+	}
+	handedOut, err := m.NextSong(ctx)
+	if err != nil || handedOut.ID != lib[0].ID {
+		t.Fatalf("NextSong = (%v, %v), want (%s, nil)", handedOut, err, lib[0].ID)
+	}
+
+	if err := m.Requeue(ctx, handedOut.ID); err != nil {
+		t.Fatalf("Requeue: %v", err)
+	}
+	items := listQueue(t, m)
+	if len(items) != 2 || items[0].SongID != handedOut.ID || items[0].Source != models.QueueSourceManual {
+		t.Fatalf("queue = %+v, want manual %s at the front of 2 entries", items, handedOut.ID)
+	}
+	again, err := m.NextSong(ctx)
+	if err != nil || again.ID != handedOut.ID {
+		t.Fatalf("NextSong after Requeue = (%v, %v), want (%s, nil)", again, err, handedOut.ID)
+	}
+}
