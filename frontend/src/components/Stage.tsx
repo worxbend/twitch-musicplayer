@@ -81,27 +81,36 @@ export function Stage(props: Props) {
         });
       };
       fitStage();
-      await app.init({
-        resizeTo: stageRef,
-        antialias: true,
-        backgroundAlpha: props.transparent ? 0 : 1,
-        background: props.transparent ? 0x000000 : 0x080c18,
-        resolution: Math.min(window.devicePixelRatio || 1, 2),
-        autoDensity: true,
-        powerPreference: 'high-performance',
-      });
-      initialized = true;
+      try {
+        await app.init({
+          resizeTo: stageRef,
+          antialias: true,
+          backgroundAlpha: props.transparent ? 0 : 1,
+          background: props.transparent ? 0x000000 : 0x080c18,
+          resolution: Math.min(window.devicePixelRatio || 1, 2),
+          autoDensity: true,
+          powerPreference: 'high-performance',
+        });
+        initialized = true;
+      } catch (err) {
+        // No usable renderer (GPU off in OBS, blocklisted driver, lost context).
+        console.warn('Visualizer unavailable, audio only', err);
+      }
 
       if (disposed) {
-        app.destroy({ removeView: true }, { children: true });
+        if (initialized) app.destroy({ removeView: true }, { children: true });
         return;
       }
+
+      // Playback must not depend on the visualizer, so hand audio over first.
+      audio = new AudioEngine({ allowAutoplay: shouldAutoStartAudio(false) });
+      props.onReady(audio);
+      if (!initialized) return;
 
       app.ticker.maxFPS = motionPreference.matches ? 30 : 60;
       app.ticker.minFPS = 30;
       stageRef.appendChild(app.canvas);
 
-      audio = new AudioEngine({ allowAutoplay: shouldAutoStartAudio(false) });
       const makeViz = props.createVisualizer ?? defaultVisualizer;
       viz = makeViz(app, audio, {
         showBackground: props.showBackground ?? true,
@@ -109,8 +118,6 @@ export function Stage(props: Props) {
         ramp: props.ramp,
         fitToViewport: sceneArea !== null,
       });
-
-      props.onReady(audio);
 
       let last = performance.now();
       tickerUpdate = () => {

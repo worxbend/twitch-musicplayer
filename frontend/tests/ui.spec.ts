@@ -20,9 +20,13 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
     });
   }
   let queue = options.empty ? [] : [{ id: 'q1', song_id: 'b', song: songs[1], position: 1, source: 'auto' }];
+  let sawNeedSong!: () => void;
+  const needSong = new Promise<void>(resolve => { sawNeedSong = resolve; });
   await page.routeWebSocket('**/ws', ws => {
     ws.onMessage(message => {
-      if (JSON.parse(String(message)).type === 'need_song' && !options.empty) {
+      if (JSON.parse(String(message)).type !== 'need_song') return;
+      sawNeedSong();
+      if (!options.empty) {
         ws.send(JSON.stringify({ type: 'play_song', payload: { song: songs[0], history_id: 'h1', stream_url: '/v1/songs/a/content' } }));
       }
     });
@@ -59,6 +63,7 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
       : url.pathname === '/v1/queue' ? { items: queue } : { current_song: options.empty ? null : songs[0] };
     await route.fulfill({ json });
   });
+  return { needSong };
 }
 
 async function noOverflow(page: Page) {
@@ -245,4 +250,21 @@ test('reduced motion freezes the composition without preventing playback', async
   expect(hash(await page.screenshot({ clip }))).toEqual(before);
   const progress = Number(await page.getByRole('progressbar').getAttribute('aria-valuenow'));
   await expect.poll(async () => Number(await page.getByRole('progressbar').getAttribute('aria-valuenow'))).toBeGreaterThan(progress);
+});
+
+test('audio starts when PixiJS has no renderer at all', async ({ page }) => {
+  await page.addInitScript(() => {
+    // Pixi falls back to Canvas2D without WebGL/WebGPU, so deny that too to make init reject.
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    const denied = new Set(['webgl', 'webgl2', 'experimental-webgl', '2d']);
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, ...rest: unknown[]) {
+      return denied.has(type) ? null : (getContext as (...args: unknown[]) => RenderingContext | null).call(this, type, ...rest);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+    Object.defineProperty(navigator, 'gpu', { value: undefined, configurable: true });
+  });
+  const { needSong } = await mockStation(page);
+  const content = page.waitForRequest(r => r.url().endsWith('/v1/songs/a/content'));
+  await page.goto('/?autoplay=1');
+  await needSong;
+  await content;
 });
