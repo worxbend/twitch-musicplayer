@@ -1141,3 +1141,35 @@ func TestLeastPlayedCountsStayBounded(t *testing.T) {
 		}
 	})
 }
+
+// TestRequeueRollsBackPlayCount: a requeued song was never delivered, so its
+// redelivery must not count as a second play, or least_played starves it for a
+// cycle.
+func TestRequeueRollsBackPlayCount(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("least_played counts the redelivery once", func(t *testing.T) {
+		m := buildManager(t, autoRefillCfg(ShuffleLeastPlayed), library(3))
+		id := playN(t, m, 1)[0]
+		if err := m.Requeue(ctx, id); err != nil {
+			t.Fatalf("Requeue: %v", err)
+		}
+		if got := playN(t, m, 1)[0]; got != id {
+			t.Fatalf("NextSong after Requeue = %s, want %s", got, id)
+		}
+		if m.playCounts[id] != 1 {
+			t.Fatalf("count for %s = %d, want 1", id, m.playCounts[id])
+		}
+	})
+
+	t.Run("default strategy counts nothing", func(t *testing.T) {
+		m := buildManager(t, autoRefillCfg(""), library(3))
+		id := playN(t, m, 1)[0]
+		if err := m.Requeue(ctx, id); err != nil {
+			t.Fatalf("Requeue: %v", err)
+		}
+		if len(m.playCounts) != 0 {
+			t.Fatalf("default strategy kept counts %v", m.playCounts)
+		}
+	})
+}

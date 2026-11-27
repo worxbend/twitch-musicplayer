@@ -836,7 +836,8 @@ func (m *Manager) PlayNext(ctx context.Context, songID string) error {
 
 // Requeue puts a song NextSong already handed out back at the front of the
 // queue, for when the play message never reached its client. The entry is
-// manual so PlayNext cannot drop it as an auto duplicate. The played mark and
+// manual so PlayNext cannot drop it as an auto duplicate. The least_played
+// count is rolled back because the play was not delivered. The played mark and
 // recent history are left alone: marking again is idempotent and a stale
 // recent entry only nudges the shuffle.
 func (m *Manager) Requeue(ctx context.Context, songID string) error {
@@ -845,6 +846,13 @@ func (m *Manager) Requeue(ctx context.Context, songID string) error {
 
 	if err := m.queue.EnqueueFront(ctx, newQueueItem(songID, models.QueueSourceManual)); err != nil {
 		return fmt.Errorf("requeue song %s: %w", songID, err)
+	}
+	// Drop a count that reaches zero so pruneCounts' size check stays honest.
+	if m.cfg.Shuffle.Strategy == ShuffleLeastPlayed && m.playCounts[songID] > 0 {
+		m.playCounts[songID]--
+		if m.playCounts[songID] == 0 {
+			delete(m.playCounts, songID)
+		}
 	}
 	return nil
 }
