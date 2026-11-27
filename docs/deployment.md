@@ -157,6 +157,10 @@ Your music is mounted read-only and is never written to. Delete the volume with
 - The backend service in the compose files runs with a read-only root filesystem, a
   `/tmp` tmpfs, no capabilities and `no-new-privileges`. It writes only to the `/data`
   volume, so a custom `obs.now_playing_file` must point into a writable mounted directory.
+- The frontend service gets the same read-only root filesystem, `/tmp` tmpfs, no
+  capabilities and `no-new-privileges`. nginx keeps its pid and temp files under `/tmp`,
+  and the start-up hook writes the runtime `config.js` to `/tmp/lofi/config.js`, so the
+  web root stays root-owned. A runtime without that tmpfs needs `/tmp` writable by uid 101.
 
 ---
 

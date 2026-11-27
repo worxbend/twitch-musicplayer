@@ -68,6 +68,15 @@ services:
     environment:
       # Overrides the build-time value without rebuilding. Empty is fine.
       BACKEND_URL: ${BACKEND_URL:-}
+    # nginx writes only its pid, temp files and the runtime config.js, all
+    # under the /tmp tmpfs.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       backend:
         condition: service_healthy

@@ -181,8 +181,10 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
-          # No capabilities: nginx must bind port 80 as uid 101 without them.
+          # Same hardening as the compose files. No capabilities: nginx must
+          # bind port 80 as uid 101 without them.
           docker run -d --name fe -p 3000:80 -e BACKEND_URL=https://radio.example \
+            --read-only --tmpfs /tmp \
             --cap-drop ALL --security-opt no-new-privileges:true lofi-frontend:ci
           for _ in $(seq 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/ && break; sleep 1; done
           test "$(docker exec fe id -u)" = 101
@@ -198,7 +200,7 @@ jobs:
             if docker run --rm -e BACKEND_URL="$bad" --entrypoint /docker-entrypoint.d/20-lofi-config.sh lofi-frontend:ci 2>err.txt; then echo "accepted hostile BACKEND_URL"; exit 1; fi
             grep -F 'invalid BACKEND_URL' err.txt
           done
-          test "$(docker run --rm --entrypoint sh lofi-frontend:ci -c '/docker-entrypoint.d/20-lofi-config.sh >/dev/null && cat /usr/share/nginx/html/config.js')" = 'window.__LOFI_CONFIG__ = {};'
+          test "$(docker run --rm --entrypoint sh lofi-frontend:ci -c '/docker-entrypoint.d/20-lofi-config.sh >/dev/null && cat /tmp/lofi/config.js')" = 'window.__LOFI_CONFIG__ = {};'
           grep -i '^cache-control:.*no-store' headers.txt
           curl -fsS http://127.0.0.1:3000/admin > admin.html
           grep -F '/assets/admin-' admin.html
@@ -221,6 +223,17 @@ jobs:
             curl -sS -D nosniff-headers.txt -o /dev/null "http://127.0.0.1:3000$path"
             grep -i '^x-content-type-options: nosniff' nosniff-headers.txt
           done
+          # API paths on the frontend port must fail as JSON, not serve the SPA,
+          # so a chat bot pointed at the wrong port gets an error.
+          for path in /v1/now-playing.txt /ws; do
+            code="$(curl -sS -D api-headers.txt -o api-body.json -w '%{http_code}' "http://127.0.0.1:3000$path")"
+            test "$code" = 404
+            grep -i '^content-type:.*application/json' api-headers.txt
+            grep -i '^x-content-type-options: nosniff' api-headers.txt
+            grep -F '"error":"not_found"' api-body.json
+          done
+          curl -fsS -D root-headers.txt -o /dev/null http://127.0.0.1:3000/
+          grep -i '^content-type:.*text/html' root-headers.txt
           for _ in $(seq 60); do
             test "$(docker inspect -f '{{.State.Health.Status}}' fe)" = healthy && break
             sleep 1
@@ -239,7 +252,11 @@ jobs:
           test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$be")" = true
           docker inspect -f '{{.HostConfig.CapDrop}}' "$be" | grep -w ALL
           test "$(docker inspect -f '{{.State.Health.Status}}' "$be")" = healthy
+          test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$fe")" = true
+          docker inspect -f '{{.HostConfig.CapDrop}}' "$fe" | grep -w ALL
+          docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$fe" | grep -F '"no-new-privileges:true"'
           test "$(docker inspect -f '{{.State.Health.Status}}' "$fe")" = healthy
+          curl -fsS -o /dev/null http://127.0.0.1:13000/config.js
       - name: container logs
         if: failure()
         run: |

@@ -24,20 +24,14 @@ RUN npm run build
 # default net.ipv4.ip_unprivileged_port_start=0 inside the container.
 FROM nginxinc/nginx-unprivileged:1.30-alpine
 
-USER root
-
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # nginx runs every executable in this directory before starting. The script
-# writes config.js from the environment, so the backend URL can change without
-# rebuilding the image. Only config.js is writable by the nginx user; the
-# rest of the site stays root-owned.
-COPY docker-entrypoint.d/20-lofi-config.sh /docker-entrypoint.d/20-lofi-config.sh
-RUN chmod +x /docker-entrypoint.d/20-lofi-config.sh \
-    && touch /usr/share/nginx/html/config.js \
-    && chown 101:0 /usr/share/nginx/html/config.js \
-    && chmod 664 /usr/share/nginx/html/config.js
+# writes /tmp/lofi/config.js from the environment, so the backend URL can
+# change without rebuilding the image and the whole web root stays root-owned
+# and read-only.
+COPY --chmod=755 docker-entrypoint.d/20-lofi-config.sh /docker-entrypoint.d/
 
 USER 101
 

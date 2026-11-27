@@ -59,6 +59,15 @@ services:
       # the page uses the host it was served from on port 8080; set it when the
       # backend lives somewhere else, or behind TLS.
       BACKEND_URL: ${BACKEND_URL:-}
+    # nginx writes only its pid, temp files and the runtime config.js, all
+    # under the /tmp tmpfs.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       backend:
         condition: service_healthy

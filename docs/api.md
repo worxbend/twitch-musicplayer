@@ -240,6 +240,10 @@ tab and Unicode line/paragraph separators) become spaces and surrounding whitesp
 trimmed. It may be at most 200 characters; a longer value returns
 `400 {"error":"idle must be at most 200 characters"}`, even while a song plays.
 
+Chat bots and overlays must call the backend address (`BASE_URL`, port `8080` by
+default), not the frontend. The frontend port answers every `/v1/*` path and `/ws` with
+`404 {"error":"not_found","detail":"..."}` instead of the player page.
+
 Chat command examples (replace the host with your public backend URL):
 
 ```text

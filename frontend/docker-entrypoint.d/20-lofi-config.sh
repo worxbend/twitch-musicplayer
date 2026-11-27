@@ -12,9 +12,12 @@
 # characters only. Anything else is rejected and no file is written, so the
 # container fails fast instead of serving a config.js that does not parse or
 # carries injected JavaScript. LOFI_CONFIG_TARGET exists for tests.
+#
+# The default target sits under /tmp so the container can run with a read-only
+# root filesystem and a /tmp tmpfs; nginx serves /config.js from there.
 set -eu
 
-target="${LOFI_CONFIG_TARGET:-/usr/share/nginx/html/config.js}"
+target="${LOFI_CONFIG_TARGET:-/tmp/lofi/config.js}"
 backend_url="${BACKEND_URL:-}"
 
 # Allow-list check: with no quote, backslash, angle bracket, whitespace or
@@ -34,11 +37,13 @@ valid_backend_url() {
     esac
 }
 
+if [ -n "$backend_url" ] && ! valid_backend_url "$backend_url"; then
+    echo 'lofi-config: invalid BACKEND_URL (must be an absolute http(s) URL without quotes, spaces, angle brackets or control characters)' >&2
+    exit 1
+fi
+
+mkdir -p "$(dirname "$target")"
 if [ -n "$backend_url" ]; then
-    if ! valid_backend_url "$backend_url"; then
-        echo 'lofi-config: invalid BACKEND_URL (must be an absolute http(s) URL without quotes, spaces, angle brackets or control characters)' >&2
-        exit 1
-    fi
     printf 'window.__LOFI_CONFIG__ = { backendUrl: "%s" };\n' "$backend_url" > "$target"
     echo "lofi-config: backend URL set to $backend_url"
 else
