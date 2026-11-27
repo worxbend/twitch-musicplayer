@@ -745,17 +745,24 @@ var overflowGone = []string{"b.mp3", "e.mp3", "f.mp3"}
 // overflowGone, adds c.mp3 and adds sub/d.mp3 behind its back.
 func overflowHarness(t *testing.T) *harness {
 	t.Helper()
+	return overflowHarnessWith(t, newGatedListRepo())
+}
+
+// overflowHarnessWith is overflowHarness with songs as the watcher's and the
+// queue's song repository. songs is armed by the caller, after the setup.
+func overflowHarnessWith(t *testing.T, songs *gatedListRepo) *harness {
+	t.Helper()
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.mp3"))
 	for _, rel := range overflowGone {
 		writeFile(t, filepath.Join(dir, rel))
 	}
-	h := &harness{dir: dir, songs: repository.NewMemSongRepo()}
+	h := &harness{dir: dir, songs: songs.MemSongRepo}
 	h.queue = repository.NewMemQueueRepo(h.songs)
-	h.mgr = queue.New(h.songs, played.New(100, 0.01), h.queue, queue.ManagerConfig{
+	h.mgr = queue.New(songs, played.New(100, 0.01), h.queue, queue.ManagerConfig{
 		Fill: queue.FillConfig{Strategy: queue.FillManualOnly},
 	})
-	w, err := New(dir, []string{".mp3"}, h.songs, h.mgr, nil)
+	w, err := New(dir, []string{".mp3"}, songs, h.mgr, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -818,6 +825,88 @@ func TestOverflowResync(t *testing.T) {
 	h.assertNotQueued(t, overflowGone...)
 	if sub := filepath.Join(h.dir, "sub"); !slices.Contains(h.w.fsWatcher.WatchList(), sub) {
 		t.Errorf("%s not watched after resync", sub)
+	}
+}
+
+// gatedListRepo is a MemSongRepo whose List, once armed, reports entry on
+// entered and blocks until release is closed. cur and peak count the List
+// calls in progress, so a test can catch two resyncs sweeping at once.
+type gatedListRepo struct {
+	*repository.MemSongRepo
+	armed     atomic.Bool
+	entered   chan struct{}
+	release   chan struct{}
+	cur, peak atomic.Int32
+}
+
+func newGatedListRepo() *gatedListRepo {
+	return &gatedListRepo{
+		MemSongRepo: repository.NewMemSongRepo(),
+		entered:     make(chan struct{}, 4),
+		release:     make(chan struct{}),
+	}
+}
+
+func (r *gatedListRepo) List(ctx context.Context) ([]*models.Song, error) {
+	if r.armed.Load() {
+		n := r.cur.Add(1)
+		for {
+			p := r.peak.Load()
+			if n <= p || r.peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		select {
+		case r.entered <- struct{}{}:
+		default:
+		}
+		<-r.release
+		r.cur.Add(-1)
+	}
+	return r.MemSongRepo.List(ctx)
+}
+
+// TestOverflowDuringResyncQueuesAnother holds the first resync in its sweep,
+// after its walk, while a file appears and a second overflow lands. The
+// second overflow must run one more resync, after the first, to index it.
+func TestOverflowDuringResyncQueuesAnother(t *testing.T) {
+	songs := newGatedListRepo()
+	h := overflowHarnessWith(t, songs)
+	ctx := context.Background()
+	songs.armed.Store(true)
+
+	h.w.handleError(ctx, fsnotify.ErrEventOverflow)
+	select {
+	case <-songs.entered:
+	case <-time.After(5 * time.Second):
+		close(songs.release)
+		t.Fatal("first resync never reached its sweep")
+	}
+	writeFile(t, filepath.Join(h.dir, "g.mp3"))
+	h.w.handleError(ctx, fsnotify.ErrEventOverflow)
+	select {
+	case <-songs.entered:
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(songs.release)
+	h.w.settling.Wait()
+
+	if !h.indexed(t, "g.mp3") {
+		t.Error("g.mp3, added during the first resync, not indexed")
+	}
+	if n := songs.peak.Load(); n != 1 {
+		t.Errorf("%d resync sweeps ran at once, want 1", n)
+	}
+	for _, rel := range overflowGone {
+		if h.indexed(t, rel) {
+			t.Errorf("deleted %s still indexed after resync", rel)
+		}
+	}
+	if n := h.removals.Load(); n != 1 {
+		t.Errorf("OnRemoved fired %d times, want 1 for the whole sweep", n)
+	}
+	if n := h.removedSongs.Load(); n != int32(len(overflowGone)) {
+		t.Errorf("OnRemoved carried %d songs, want %d", n, len(overflowGone))
 	}
 }
 

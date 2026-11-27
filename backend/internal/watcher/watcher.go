@@ -84,12 +84,10 @@ type Watcher struct {
 	settleSem chan struct{}
 	// settleWait is w.waitSettled; it is a field only as a test seam.
 	settleWait func(ctx context.Context, path string) error
-	// resyncing collapses back-to-back event overflows into one resync.
-	resyncing atomic.Bool
-	// rewatchRunning and rewatchAgain coalesce re-watch requests: a request
-	// that arrives during a walk causes exactly one more walk after it.
-	rewatchRunning atomic.Bool
-	rewatchAgain   atomic.Bool
+	// rewatchC and resyncC fold requests that land during a re-watch walk or
+	// an overflow resync into exactly one more run after it.
+	rewatchC coalescer
+	resyncC  coalescer
 
 	// OnRemoved, when set before Start, is notified after songs are dropped.
 	OnRemoved OnSongsRemoved
@@ -269,19 +267,29 @@ func (w *Watcher) handleEvent(ctx context.Context, event fsnotify.Event) {
 // Start waits for it. A request during a walk triggers one more walk, since
 // the watch removal it answers can land after the running walk re-added it.
 func (w *Watcher) requestRewatch(ctx context.Context, reason string) {
-	w.rewatchAgain.Store(true)
-	if !w.rewatchRunning.CompareAndSwap(false, true) {
+	w.rewatchC.request(&w.settling, func() { w.rewatch(ctx, reason) })
+}
+
+// coalescer runs a job in the background so that requests landing during a
+// run cause exactly one more run after it, however many arrive.
+type coalescer struct{ running, again atomic.Bool }
+
+// request runs run in wg unless a run is in progress, in which case that run
+// repeats once more when it ends. A repeat runs the first request's run.
+func (c *coalescer) request(wg *sync.WaitGroup, run func()) {
+	c.again.Store(true)
+	if !c.running.CompareAndSwap(false, true) {
 		return
 	}
-	w.settling.Go(func() {
+	wg.Go(func() {
 		for {
-			for w.rewatchAgain.Swap(false) {
-				w.rewatch(ctx, reason)
+			for c.again.Swap(false) {
+				run()
 			}
-			w.rewatchRunning.Store(false)
-			// A request between the last Swap and Store saw the walk running
-			// and left; pick it up unless a new walker already did.
-			if !w.rewatchAgain.Load() || !w.rewatchRunning.CompareAndSwap(false, true) {
+			c.running.Store(false)
+			// A request between the last Swap and Store saw a run in progress
+			// and left; pick it up unless a new runner already did.
+			if !c.again.Load() || !c.running.CompareAndSwap(false, true) {
 				return
 			}
 		}
@@ -310,14 +318,12 @@ func (w *Watcher) handleError(ctx context.Context, err error) {
 
 // resync re-walks the tree in the background to watch every folder and index
 // new files, then drops songs whose files are gone. It runs in w.settling so
-// Start waits for it, and an overflow during a running resync is ignored.
-// Retags lost in the overflow are not re-read.
+// Start waits for it. An overflow during a running resync queues exactly one
+// more resync after it, since the running walk or sweep may already have
+// passed the files whose events it lost. Retags lost in an overflow are not
+// re-read.
 func (w *Watcher) resync(ctx context.Context) {
-	if !w.resyncing.CompareAndSwap(false, true) {
-		return
-	}
-	w.settling.Go(func() {
-		defer w.resyncing.Store(false)
+	w.resyncC.request(&w.settling, func() {
 		if _, err := w.rescanTree(ctx); err != nil {
 			w.logger.Printf("resync scan: %v", err)
 		}
