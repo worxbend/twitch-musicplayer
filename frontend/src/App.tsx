@@ -1,10 +1,10 @@
 import { createSignal, onCleanup } from 'solid-js';
 import { Stage } from './components/Stage';
 import { PlayerUI } from './components/PlayerUI';
-import { BackendPlaybackClient } from './audio/BackendPlaybackClient';
 import type { ConnectionStatus, PlaybackStatus } from './audio/BackendPlaybackClient';
 import type { AudioEngine } from './audio/AudioEngine';
-import { bindMediaSession, getMediaSession, setMediaPlayState, setMediaPosition, updateMediaMetadata } from './audio/mediaSession';
+import { getMediaSession } from './audio/mediaSession';
+import { startRadio, type RadioHandle } from './audio/radioSession';
 
 export function App() {
   const [audio, setAudio]           = createSignal<AudioEngine | null>(null);
@@ -14,50 +14,31 @@ export function App() {
   const [wsStatus, setWsStatus]     = createSignal<ConnectionStatus>('disconnected');
   const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
   const [mediaState, setMediaState] = createSignal<MediaSessionPlaybackState>('none');
-  let backendClient: BackendPlaybackClient | null = null;
-  let unbindMediaSession = () => {};
+  let radio: RadioHandle | null = null;
 
   const onReady = (a: AudioEngine) => {
     setAudio(a);
-    backendClient?.dispose();
-    unbindMediaSession();
-    const session = getMediaSession();
-    backendClient = new BackendPlaybackClient({
+    radio?.dispose();
+    radio = startRadio({
       audio: a,
-      // The client reports connection health as a typed value. Sniffing the
-      // human-readable message instead used to show "Live" for the status
-      // "radio connection error", because that string contains "connect".
-      onStatus: (status) => {
-        setWsStatus(status.connection);
-        setPlaybackStatus(status.playback);
+      session: getMediaSession(),
+      placeholder: 'waiting for track…',
+      untitled: 'untitled',
+      artistFallback: 'lofi radio · 24/7',
+      onTrack: (name, artist, cover) => {
+        setTrackName(name);
+        setTrackArtist(artist);
+        setTrackCover(cover);
       },
-      // The client keeps the title up through a crossfade and sends null only
-      // once a track has really ended, so no debounce is needed here.
-      onSongChange: (song) => {
-        setTrackName(song ? song.title || 'untitled' : 'waiting for track…');
-        setTrackArtist(song?.artist || 'lofi radio · 24/7');
-        setTrackCover(song?.coverUrl);
-        updateMediaMetadata(session, song);
+      onStatus: (conn, playback) => {
+        setWsStatus(conn);
+        setPlaybackStatus(playback);
       },
+      onMediaState: setMediaState,
     });
-    const unbindHandlers = bindMediaSession(session, {
-      onPlay: () => playbackStatus() === 'blocked' ? backendClient?.retryPendingPlay() : a.play(),
-      onPause: () => a.pause(),
-    });
-    // The OS play/pause state follows the audio element, not the radio's connection reports.
-    // PlayerUI reads it too, so a media-key pause shows as Paused.
-    a.onPlayStateChange = (state) => { setMediaPlayState(session, state); setMediaState(state); };
-    a.onPositionChange = (state) => setMediaPosition(session, state);
-    unbindMediaSession = () => {
-      a.onPlayStateChange = undefined;
-      a.onPositionChange = undefined;
-      setMediaState('none');
-      unbindHandlers();
-    };
-    backendClient.start();
   };
 
-  onCleanup(() => { unbindMediaSession(); backendClient?.dispose(); });
+  onCleanup(() => radio?.dispose());
 
   return (
     <>
@@ -69,7 +50,7 @@ export function App() {
         wsStatus={wsStatus}
         playbackStatus={playbackStatus}
         paused={() => mediaState() === 'paused'}
-        onEnableAudio={() => backendClient?.retryPendingPlay()}
+        onEnableAudio={() => radio?.retryPendingPlay()}
         audio={audio}
       />
     </>

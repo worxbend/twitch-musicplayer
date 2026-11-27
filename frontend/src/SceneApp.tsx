@@ -1,11 +1,11 @@
 import { createSignal, onCleanup, onMount } from 'solid-js';
 import { Stage } from './components/Stage';
 import { PlayerUI } from './components/PlayerUI';
-import { BackendPlaybackClient } from './audio/BackendPlaybackClient';
 import type { ConnectionStatus, PlaybackStatus } from './audio/BackendPlaybackClient';
 import type { AudioEngine } from './audio/AudioEngine';
 import type { SceneDef } from './viz/scenes';
-import { bindMediaSession, getMediaSession, setMediaPlayState, setMediaPosition, updateMediaMetadata } from './audio/mediaSession';
+import { getMediaSession } from './audio/mediaSession';
+import { startRadio, type RadioHandle } from './audio/radioSession';
 
 interface Props {
   scene: SceneDef;
@@ -31,8 +31,7 @@ export function SceneApp(props: Props) {
   const [wsStatus, setWsStatus] = createSignal<ConnectionStatus>('disconnected');
   const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
   const [mediaState, setMediaState] = createSignal<MediaSessionPlaybackState>('none');
-  let backendClient: BackendPlaybackClient | null = null;
-  let unbindMediaSession = () => {};
+  let radio: RadioHandle | null = null;
 
   onMount(() => {
     document.title = `lofi.radio — ${props.scene.label}${props.transparent ? ' overlay' : ''}`;
@@ -44,7 +43,7 @@ export function SceneApp(props: Props) {
       : props.scene.pageClass ?? 'scene-page';
     root.classList.add(pageClass);
 
-    const retryPending = () => backendClient?.retryPendingPlay();
+    const retryPending = () => radio?.retryPendingPlay();
     if (props.transparent) window.addEventListener('pointerdown', retryPending);
 
     onCleanup(() => {
@@ -55,41 +54,28 @@ export function SceneApp(props: Props) {
 
   const onReady = (audio: AudioEngine) => {
     setAudio(audio);
-    backendClient?.dispose();
-    unbindMediaSession();
-    // OBS overlay sources must never claim the OS media session.
-    const session = props.transparent ? null : getMediaSession();
-    backendClient = new BackendPlaybackClient({
+    radio?.dispose();
+    radio = startRadio({
       audio,
-      onStatus: (status) => {
-        setWsStatus(status.connection);
-        setPlaybackStatus(status.playback);
+      // OBS overlay sources must never claim the OS media session.
+      session: props.transparent ? null : getMediaSession(),
+      placeholder: 'Waiting for a track…',
+      untitled: 'Waiting for a track…',
+      artistFallback: 'lofi radio · 24/7',
+      onTrack: (name, artist, cover) => {
+        setTrackName(name);
+        setTrackArtist(artist);
+        setTrackCover(cover);
       },
-      onSongChange: (song) => {
-        setTrackName(song?.title || 'Waiting for a track…');
-        setTrackArtist(song?.artist || 'lofi radio · 24/7');
-        setTrackCover(song?.coverUrl);
-        updateMediaMetadata(session, song);
+      onStatus: (conn, playback) => {
+        setWsStatus(conn);
+        setPlaybackStatus(playback);
       },
+      onMediaState: setMediaState,
     });
-    const unbindHandlers = bindMediaSession(session, {
-      onPlay: () => playbackStatus() === 'blocked' ? backendClient?.retryPendingPlay() : audio.play(),
-      onPause: () => audio.pause(),
-    });
-    // The OS play/pause state follows the audio element, not the radio's connection reports.
-    // PlayerUI reads it too, so a media-key pause shows as Paused.
-    audio.onPlayStateChange = (state) => { setMediaPlayState(session, state); setMediaState(state); };
-    audio.onPositionChange = (state) => setMediaPosition(session, state);
-    unbindMediaSession = () => {
-      audio.onPlayStateChange = undefined;
-      audio.onPositionChange = undefined;
-      setMediaState('none');
-      unbindHandlers();
-    };
-    backendClient.start();
   };
 
-  onCleanup(() => { unbindMediaSession(); backendClient?.dispose(); });
+  onCleanup(() => radio?.dispose());
 
   return (
     <>
@@ -113,7 +99,7 @@ export function SceneApp(props: Props) {
           playbackStatus={playbackStatus}
           paused={() => mediaState() === 'paused'}
           audio={audio}
-          onEnableAudio={() => backendClient?.retryPendingPlay()}
+          onEnableAudio={() => radio?.retryPendingPlay()}
           sceneName={props.scene.label}
           sceneSlug={props.scene.slug}
         />
