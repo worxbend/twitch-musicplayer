@@ -3,5 +3,6 @@
   "compilerOptions": {
     "types": ["node", "vite/client"]
   },
-  "include": ["tests", "playwright.config.ts", "vite.config.ts", "src/**/*.test.ts"]
+  "include": ["tests", "playwright.config.ts", "vite.config.ts", "src/**/*.test.ts"],
+  "exclude": ["node_modules"]
 }
