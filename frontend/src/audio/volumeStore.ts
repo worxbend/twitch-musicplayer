@@ -45,11 +45,18 @@ interface KeyEventLike {
   target: unknown;
 }
 
+// A range input is not a typing target: it uses arrows, PageUp/Down and Home/End, never M, - or +.
+function isRangeInput(tagName: string, type: unknown): boolean {
+  return tagName === 'INPUT' && typeof type === 'string' && type.toLowerCase() === 'range';
+}
+
 // Shortcuts must not fire while the user types or uses a browser/OS chord.
 export function shouldIgnoreVolumeKey(event: KeyEventLike): boolean {
   if (event.ctrlKey || event.metaKey || event.altKey) return true;
   if (typeof event.target !== 'object' || event.target === null) return false;
-  const target = event.target as { tagName?: unknown; isContentEditable?: unknown };
-  return target.isContentEditable === true
-    || (typeof target.tagName === 'string' && TYPING_TAGS.has(target.tagName.toUpperCase()));
+  const target = event.target as { tagName?: unknown; type?: unknown; isContentEditable?: unknown };
+  if (target.isContentEditable === true) return true;
+  if (typeof target.tagName !== 'string') return false;
+  const tagName = target.tagName.toUpperCase();
+  return TYPING_TAGS.has(tagName) && !isRangeInput(tagName, target.type);
 }

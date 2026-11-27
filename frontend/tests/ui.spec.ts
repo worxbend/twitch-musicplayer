@@ -413,6 +413,24 @@ test('volume shortcuts change the slider, mute toggles, and the level survives r
   await expect(page.getByRole('slider', { name: 'Volume' })).toHaveValue('95');
 });
 
+test('volume shortcuts work while the slider has focus and its arrow keys still step it', async ({ page }) => {
+  await mockStation(page, { empty: true });
+  await page.goto('/');
+  const slider = page.getByRole('slider', { name: 'Volume' });
+  const mute = page.getByRole('button', { name: 'Mute' });
+  await expect(slider).toHaveValue('100');
+  await slider.focus();
+  await page.keyboard.press('-');
+  await page.keyboard.press('-');
+  await expect(slider).toHaveValue('90');
+  await page.keyboard.press('m');
+  await expect(mute).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('m');
+  await expect(mute).toHaveAttribute('aria-pressed', 'false');
+  await page.keyboard.press('ArrowUp');
+  await expect(slider).toHaveValue('91');
+});
+
 // WCAG 2.1.4: single-key shortcuts work only while focus is inside the deck.
 test('volume shortcuts fire only while focus is inside the player deck', async ({ page }) => {
   await mockStation(page, { empty: true });

@@ -57,3 +57,12 @@ test('shouldIgnoreVolumeKey ignores modifier chords and typing targets', () => {
   }
   assert.equal(shouldIgnoreVolumeKey({ ...plain, target: { tagName: 'DIV', isContentEditable: true } }), true);
 });
+
+test('shouldIgnoreVolumeKey lets shortcuts through on a range slider but not on text inputs', () => {
+  const plain = { ctrlKey: false, metaKey: false, altKey: false };
+  assert.equal(shouldIgnoreVolumeKey({ ...plain, target: { tagName: 'INPUT', type: 'range' } }), false);
+  assert.equal(shouldIgnoreVolumeKey({ ...plain, target: { tagName: 'input', type: 'RANGE' } }), false);
+  assert.equal(shouldIgnoreVolumeKey({ ...plain, target: { tagName: 'INPUT', type: 'text' } }), true);
+  assert.equal(shouldIgnoreVolumeKey({ ...plain, target: { tagName: 'INPUT' } }), true);
+  assert.equal(shouldIgnoreVolumeKey({ ...plain, ctrlKey: true, target: { tagName: 'INPUT', type: 'range' } }), true);
+});
