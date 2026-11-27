@@ -44,6 +44,25 @@ function restoreQueueFocus(control: QueueControl | null, items: QueueItem[]) {
   const slot = items[Math.min(Math.max(control.index, 0), items.length - 1)];
   document.querySelector<HTMLElement>(`.queue-list [data-queue-id="${CSS.escape(slot.id)}"][data-queue-action="remove"]`)?.focus();
 }
+// fetchHistory replaces every row too, and a play-now refetches it. A song can
+// appear twice, so history controls are keyed by started_at, not song id.
+type HistoryControl = { key: string; action: string; index: number };
+function focusedHistoryControl(items: HistoryItem[]): HistoryControl | null {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !el.closest('.history-list')) return null;
+  const { historyKey, historyAction } = el.dataset;
+  if (!historyKey || !historyAction) return null;
+  return { key: historyKey, action: historyAction, index: items.findIndex(item => item.started_at === historyKey) };
+}
+function restoreHistoryFocus(control: HistoryControl | null, items: HistoryItem[]) {
+  if (!control) return;
+  const action = CSS.escape(control.action);
+  const same = document.querySelector<HTMLElement>(`.history-list [data-history-key="${CSS.escape(control.key)}"][data-history-action="${action}"]`);
+  if (same) { same.focus(); return; }
+  if (!items.length) { document.getElementById('history-heading')?.focus(); return; }
+  const slot = items[Math.min(Math.max(control.index, 0), items.length - 1)];
+  document.querySelector<HTMLElement>(`.history-list [data-history-key="${CSS.escape(slot.started_at)}"][data-history-action="${action}"]`)?.focus();
+}
 // aria-disabled, not disabled: a natively disabled button drops keyboard
 // focus to <body> when it becomes disabled under the cursor.
 type ActionButtonProps = Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, 'type' | 'disabled' | 'onClick'> & {
@@ -123,7 +142,12 @@ export function AdminApp() {
     const id = historyGate.begin();
     try {
       const data = await request('/v1/history?limit=10', readJSON);
-      if (historyGate.isLatest(id) && !disposed) { setHistory(data.items ?? []); setHistoryError(false); }
+      if (historyGate.isLatest(id) && !disposed) {
+        const focused = focusedHistoryControl(pastHistory());
+        setHistory(data.items ?? []);
+        setHistoryError(false);
+        restoreHistoryFocus(focused, pastHistory());
+      }
     } catch { if (historyGate.isLatest(id) && !disposed) setHistoryError(true); }
   }
   async function fetchBlocked() {
@@ -362,7 +386,7 @@ export function AdminApp() {
             <Show when={pastHistory().length} fallback={<div class="empty-state"><p>No songs played yet.</p></div>}>
               <ol class="history-list">
                 <For each={pastHistory()}>
-                  {entry => <li class="history-item"><div class="queue-info"><div class="queue-title">{songLabel(entry.song)}</div><div class="queue-artist">{entry.song.artist || 'Unknown artist'}</div></div><time class="history-time" datetime={entry.started_at}>{formatClock(entry.started_at)}</time></li>}
+                  {entry => <li class="history-item"><div class="queue-info"><div class="queue-title">{songLabel(entry.song)}</div><div class="queue-artist">{entry.song.artist || 'Unknown artist'}</div></div><time class="history-time" datetime={entry.started_at}>{formatClock(entry.started_at)}</time><div class="history-actions"><ActionButton class="btn" aria-label={`Queue ${songLabel(entry.song)} again`} data-history-key={entry.started_at} data-history-action="queue" inactive={() => !!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(entry.song)}`, 'POST', { song_id: entry.song.id })}>Queue again</ActionButton><ActionButton class="btn" aria-label={`Play ${songLabel(entry.song)} now`} data-history-key={entry.started_at} data-history-action="play" inactive={() => !!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(entry.song)}`, 'POST', { song_id: entry.song.id })}>Play now</ActionButton></div></li>}
                 </For>
               </ol>
             </Show>

@@ -150,7 +150,9 @@ without configuration.
 The admin console at `http://localhost:3000/admin.html` gives you a searchable library, the
 live queue, a recently played list, and buttons to queue, play-now, skip and clear. ⊘ next to a
 track means "don't play this": the track leaves rotation, even after a restart, until you press
-**Allow again** in the Blocked list. 🎛️
+**Allow again** in the Blocked list. 🎛️ To replay a track from Recently played, press **Queue
+again** to add it to the end of the queue, or **Play now** to interrupt the current track with
+it. A blocked track is refused with "song is blocked".
 
 Anything else can drive it over HTTP:
 

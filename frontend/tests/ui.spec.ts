@@ -214,6 +214,57 @@ test('admin setlist falls back to a selectable text box without a clipboard', as
   await expect(page.getByRole('textbox', { name: 'Setlist' })).toHaveValue(setlistText);
 });
 
+test('admin queues a recently played track again by keyboard and keeps focus', async ({ page }) => {
+  await mockStation(page);
+  await page.goto('/admin');
+  const panel = page.getByRole('region', { name: 'Recently played' });
+  await expect(panel.getByRole('listitem')).toHaveCount(2);
+  const again = panel.getByRole('button', { name: 'Queue Buffering dreams again' });
+  const add = page.waitForRequest(r => new URL(r.url()).pathname === '/v1/queue' && r.method() === 'POST');
+  await again.focus();
+  await page.keyboard.press('Enter');
+  expect((await add).postDataJSON()).toEqual({ song_id: 'b' });
+  await expect(page.getByRole('status')).toContainText('Queued: Buffering dreams');
+  await expect(again).toBeFocused();
+  expect((await new AxeBuilder({ page }).include('.history-panel').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+});
+
+test('admin plays a recently played track now and keeps focus across the history refetch', async ({ page }) => {
+  await mockStation(page);
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { sockets.push(ws); });
+  let items = [{ song: songs[0], started_at: '2026-01-01T20:05:00Z' }, { song: songs[1], started_at: '2026-01-01T20:01:00Z' }, { song: songs[0], started_at: '2026-01-01T19:57:00Z' }];
+  await page.route(url => url.pathname === '/v1/history' && !url.searchParams.has('format'), route => route.fulfill({ json: { items, total: items.length } }));
+  await page.goto('/admin');
+  const panel = page.getByRole('region', { name: 'Recently played' });
+  await expect(panel.getByRole('listitem')).toHaveCount(2);
+  await expect.poll(() => sockets.length).toBe(1);
+  const play = page.waitForRequest(r => r.url().endsWith('/v1/queue:play-next') && r.method() === 'POST');
+  await panel.getByRole('button', { name: 'Play Buffering dreams now' }).focus();
+  await page.keyboard.press('Enter');
+  expect((await play).postDataJSON()).toEqual({ song_id: 'b' });
+  await expect(page.getByRole('status')).toContainText('Play requested: Buffering dreams');
+  // The server skips to the track: now_playing makes the console refetch history with new rows.
+  items = [{ song: songs[1], started_at: '2026-01-01T20:10:00Z' }, ...items.map(item => ({ ...item }))];
+  sockets[0].send(JSON.stringify({ type: 'now_playing', payload: { song: songs[1], history_id: 'h2', queue_depth: 1 } }));
+  await expect(panel.getByRole('listitem')).toHaveCount(3);
+  const focused = await page.evaluate(() => {
+    const el = document.activeElement as HTMLElement | null;
+    return { id: el?.id, key: el?.dataset.historyKey, action: el?.dataset.historyAction };
+  });
+  expect(focused).toEqual({ id: '', key: '2026-01-01T20:01:00Z', action: 'play' });
+});
+
+test('admin replay of a blocked track shows the backend reason', async ({ page }) => {
+  await mockStation(page);
+  await page.route(url => url.pathname === '/v1/queue', route => route.request().method() === 'POST'
+    ? route.fulfill({ status: 409, json: { error: 'song is blocked' } })
+    : route.fallback());
+  await page.goto('/admin');
+  await page.getByRole('region', { name: 'Recently played' }).getByRole('button', { name: 'Queue Midnight compiler again' }).click();
+  await expect(page.getByRole('status')).toContainText('Action failed: song is blocked.');
+});
+
 test('admin refetches the library when the socket reconnects', async ({ page }) => {
   await mockStation(page);
   const sockets: WebSocketRoute[] = [];
@@ -330,7 +381,7 @@ test('play-now and skip send the existing backend commands', async ({ page }) =>
   await mockStation(page);
   await page.goto('/admin');
   const play = page.waitForRequest(r => r.url().endsWith('/v1/queue:play-next') && r.method() === 'POST');
-  await page.getByRole('button', { name: 'Play Midnight compiler now' }).click();
+  await page.getByRole('region', { name: 'Music library' }).getByRole('button', { name: 'Play Midnight compiler now' }).click();
   expect((await play).postDataJSON()).toEqual({song_id: 'a'});
   await expect(page.getByRole('status')).toContainText('Play requested');
   const skip = page.waitForRequest(r => r.url().endsWith('/v1/player:skip') && r.method() === 'POST');
