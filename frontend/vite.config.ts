@@ -21,10 +21,10 @@ export default defineConfig({
   server: { port: 3000 },
   build: {
     target: 'esnext',
-    rollupOptions: {
+    rolldownOptions: {
       input: {
-        main:  resolve(__dirname, 'index.html'),
-        admin: resolve(__dirname, 'admin.html'),
+        main:  resolve(import.meta.dirname, 'index.html'),
+        admin: resolve(import.meta.dirname, 'admin.html'),
       },
     },
   },

@@ -23,7 +23,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.11",
-    "typescript": "^5.5.0",
+    "typescript": "^7.0.2",
     "vite": "^8.3.8",
     "vite-plugin-solid": "^2.11.17"
   }
