@@ -167,7 +167,9 @@ it: a second player tab sends one on connect while the first may still be playin
 
 The same cleared `state` is broadcast when the last connection that acted as a player (sent
 `need_song`, `song_finished` or `peek_next`) closes. A silent network drop is noticed only
-after the pong timeout (60s). Server shutdown does not clear `current_song`.
+after the pong timeout (60s). Server shutdown does not clear `current_song`. A player that
+reconnects mid-track does not restore it: `current_song` stays absent until that player's next
+`play_song`.
 
 ```json
 {
