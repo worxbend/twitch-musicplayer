@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Fails when the Docker build images drift from the toolchains CI tests:
-# Go major.minor (backend/go.mod toolchain vs backend/Dockerfile) and
-# Node major (frontend/.nvmrc vs frontend/Dockerfile and @types/node).
+# Fails when the Docker build images or CI drift from the pinned toolchains:
+# Go major.minor (backend/go.mod toolchain vs backend/Dockerfile and the CI
+# setup-go version) and Node major (frontend/.nvmrc vs frontend/Dockerfile,
+# @types/node and package.json engines.node).
 # Patch versions may differ so Dependabot patch bumps stay green.
 set -euo pipefail
 
@@ -29,14 +30,20 @@ go_mod=$(grep -m1 -E '^toolchain go[0-9]' backend/go.mod \
   | sed -E 's/^toolchain go([0-9]+\.[0-9]+).*/\1/' || true)
 go_image=$(first_from backend/Dockerfile \
   | sed -nE 's/^golang:([0-9]+\.[0-9]+).*/\1/p')
+ci_go=$(grep -m1 -E '^[[:space:]]*go-version:' .github/workflows/ci.yml \
+  | sed -E "s/.*go-version:[[:space:]]*['\"]?([0-9]+\.[0-9]+).*/\1/" || true)
 compare "go major.minor" backend/go.mod "$go_mod" backend/Dockerfile "$go_image"
+compare "go major.minor" backend/go.mod "$go_mod" .github/workflows/ci.yml "$ci_go"
 
 nvmrc=$(sed -nE '1s/^v?([0-9]+).*/\1/p' frontend/.nvmrc)
 node_image=$(first_from frontend/Dockerfile \
   | sed -nE 's/^node:([0-9]+).*/\1/p')
 types_node=$(grep -m1 -E '"@types/node"' frontend/package.json \
   | sed -E 's/.*"@types\/node"[[:space:]]*:[[:space:]]*"[~^]?([0-9]+).*/\1/' || true)
+engines_node=$(grep -m1 -E '"node"[[:space:]]*:' frontend/package.json \
+  | sed -E 's/.*"node"[[:space:]]*:[[:space:]]*"[^0-9]*([0-9]+).*/\1/' || true)
 compare "node major" frontend/.nvmrc "$nvmrc" frontend/Dockerfile "$node_image"
 compare "node major" frontend/.nvmrc "$nvmrc" frontend/package.json@types/node "$types_node"
+compare "node major" frontend/.nvmrc "$nvmrc" frontend/package.json:engines.node "$engines_node"
 
 exit "$status"

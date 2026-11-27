@@ -2,7 +2,7 @@ module lofi-radio-backend
 
 go 1.26.0
 
-toolchain go1.26.11
+toolchain go1.27.4
 
 require (
 	github.com/BurntSushi/toml v1.6.0
