@@ -162,6 +162,68 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/songs/{id}/cover:
+    get:
+      summary: Get embedded cover art
+      description: >
+        Returns the song's embedded ID3v2 (APIC) picture: the front cover when
+        present, else the first other picture. The type is sniffed from the
+        bytes; only JPEG, PNG, GIF and WebP are served. Tags over 8 MiB are not
+        parsed and count as no picture.
+      operationId: getSongCover
+      tags: [songs]
+      parameters:
+        - $ref: "#/components/parameters/songId"
+        - name: If-None-Match
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cover image bytes
+          headers:
+            ETag:
+              schema:
+                type: string
+                example: '"9f86d081884c7d65"'
+            Cache-Control:
+              schema:
+                type: string
+                example: public, max-age=3600
+            X-Content-Type-Options:
+              schema:
+                type: string
+                example: nosniff
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: Cover unchanged since the ETag in If-None-Match
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown song, missing file, or no usable embedded picture
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/queue:
     get:
       summary: List queue
@@ -588,6 +650,9 @@ components:
         size_bytes:
           type: integer
           format: int64
+        has_cover:
+          type: boolean
+          description: True when GET /v1/songs/{id}/cover serves an embedded image.
         added_at:
           type: string
           format: date-time

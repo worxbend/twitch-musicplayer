@@ -424,6 +424,7 @@ func withFileMetadata(song models.Song, path string) (models.Song, error) {
 	song.Artist = m.Artist
 	song.Album = m.Album
 	song.DurationSecs = m.DurationSecs
+	song.HasCover = m.HasCover
 	song.SizeBytes = stat.Size()
 	return song, nil
 }

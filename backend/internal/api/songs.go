@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"log"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"lofi-radio-backend/internal/meta"
 	"lofi-radio-backend/internal/models"
 )
 
@@ -76,14 +80,71 @@ func (h *SongsHandler) Get(w http.ResponseWriter, r *http.Request) {
 // http.ServeContent handles Range headers, enabling streaming/seeking.
 func (h *SongsHandler) StreamContent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	song, err := h.repo.GetByID(r.Context(), id)
+	file, ok := h.resolveSongFile(r.Context(), w, id)
+	if !ok {
+		return
+	}
+	f, err := os.Open(file.path)
+	if err != nil {
+		writeStreamOpenError(w, id, err)
+		return
+	}
+	defer f.Close()
+
+	// Each write gets a fresh stall deadline so long downloads outlive
+	// WriteTimeout but a client that stops reading is dropped.
+	sw := &stallWriter{ResponseWriter: w, rc: http.NewResponseController(w), songID: id}
+	sw.extendDeadline()
+	http.ServeContent(sw, r, filepath.Base(file.path), file.info.ModTime(), f)
+}
+
+// Cover handles GET /v1/songs/{id}/cover: the embedded ID3v2 cover image,
+// revalidated by an ETag over its bytes.
+func (h *SongsHandler) Cover(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	file, ok := h.resolveSongFile(r.Context(), w, id)
+	if !ok {
+		return
+	}
+	mime, img, err := meta.Cover(file.path)
+	switch {
+	case errors.Is(err, meta.ErrCoverTooLarge):
+		log.Printf("cover %s: %v", id, err)
+		fallthrough
+	case errors.Is(err, meta.ErrNoCover):
+		writeError(w, http.StatusNotFound, "song has no cover art")
+		return
+	case err != nil:
+		writeStreamOpenError(w, id, err)
+		return
+	}
+
+	sum := sha256.Sum256(img)
+	header := w.Header()
+	header.Set("Content-Type", mime)
+	header.Set("X-Content-Type-Options", "nosniff")
+	header.Set("Cache-Control", "public, max-age=3600")
+	header.Set("ETag", `"`+hex.EncodeToString(sum[:8])+`"`)
+	http.ServeContent(w, r, "", file.info.ModTime(), bytes.NewReader(img))
+}
+
+// songFile is a song's regular file, resolved inside the music directory.
+type songFile struct {
+	path string
+	info os.FileInfo
+}
+
+// resolveSongFile looks up song id and confines its file to the music
+// directory. On failure it writes the error response and reports false.
+func (h *SongsHandler) resolveSongFile(ctx context.Context, w http.ResponseWriter, id string) (songFile, bool) {
+	song, err := h.repo.GetByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "song not found")
-			return
+			return songFile{}, false
 		}
 		writeError(w, http.StatusInternalServerError, "failed to get song")
-		return
+		return songFile{}, false
 	}
 
 	path := song.Path
@@ -93,29 +154,18 @@ func (h *SongsHandler) StreamContent(w http.ResponseWriter, r *http.Request) {
 	path, err = streamPathUnderMusicDir(h.musicDir, path)
 	if err != nil {
 		writeStreamOpenError(w, id, err)
-		return
+		return songFile{}, false
 	}
-	f, err := os.Open(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		writeStreamOpenError(w, id, err)
-		return
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		writeStreamOpenError(w, id, err)
-		return
+		return songFile{}, false
 	}
 	if info.IsDir() {
 		writeError(w, http.StatusNotFound, "song file not found")
-		return
+		return songFile{}, false
 	}
-
-	// Each write gets a fresh stall deadline so long downloads outlive
-	// WriteTimeout but a client that stops reading is dropped.
-	sw := &stallWriter{ResponseWriter: w, rc: http.NewResponseController(w), songID: id}
-	sw.extendDeadline()
-	http.ServeContent(sw, r, filepath.Base(path), info.ModTime(), f)
+	return songFile{path: path, info: info}, true
 }
 
 // writeStreamOpenError maps a failure to resolve or open a song file to a

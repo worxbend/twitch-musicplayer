@@ -1,7 +1,10 @@
 package meta
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +19,30 @@ type Info struct {
 	Artist       string
 	Album        string
 	DurationSecs float64
+	HasCover     bool
+}
+
+// maxCoverTagBytes caps the ID3v2 tag size whose pictures are parsed, so a
+// hostile or oversized tag cannot force a large allocation during a scan or
+// a cover request.
+const maxCoverTagBytes = 8 << 20
+
+const pictureFrame = "Attached picture"
+
+var (
+	// ErrNoCover reports that a file has no usable embedded cover image.
+	ErrNoCover = errors.New("no embedded cover art")
+	// ErrCoverTooLarge reports a tag over maxCoverTagBytes, which is not parsed.
+	ErrCoverTooLarge = errors.New("id3v2 tag too large to read cover art")
+)
+
+// coverMIMEs are the image types served as cover art, keyed by the type
+// http.DetectContentType reports. The tag's own MIME field is not trusted.
+var coverMIMEs = map[string]bool{
+	"image/jpeg": true,
+	"image/png":  true,
+	"image/gif":  true,
+	"image/webp": true,
 }
 
 // Extract reads ID3v2 tags from path, returning best-effort metadata.
@@ -24,15 +51,19 @@ func Extract(path string) Info {
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	info := Info{Title: name}
 
-	// Parse only the frames read below so cover art is not loaded during scans.
-	tag, err := id3.Open(path, id3.Options{
-		Parse:       true,
-		ParseFrames: []string{"Title", "Artist", "Album/Movie/Show title", "Length"},
-	})
+	// Parse only the frames read below; pictures only when the tag is small
+	// enough that loading them is bounded.
+	frames := []string{"Title", "Artist", "Album/Movie/Show title", "Length"}
+	if id3v2Size(path) <= maxCoverTagBytes {
+		frames = append(frames, pictureFrame)
+	}
+	tag, err := id3.Open(path, id3.Options{Parse: true, ParseFrames: frames})
 	if err != nil {
 		return withDurationEstimate(info, path)
 	}
 	defer tag.Close()
+
+	_, _, info.HasCover = coverPicture(tag)
 
 	if t := strings.TrimSpace(tag.Title()); t != "" {
 		info.Title = t
@@ -51,6 +82,53 @@ func Extract(path string) Info {
 	}
 
 	return withDurationEstimate(info, path)
+}
+
+// Cover returns the embedded cover image of the file at path and its sniffed
+// MIME type. It returns ErrNoCover when the file has no usable picture and
+// ErrCoverTooLarge, without parsing, when the tag exceeds maxCoverTagBytes.
+func Cover(path string) (mime string, data []byte, err error) {
+	return cover(path, maxCoverTagBytes)
+}
+
+func cover(path string, maxTagBytes int64) (string, []byte, error) {
+	if size := id3v2Size(path); size > maxTagBytes {
+		return "", nil, fmt.Errorf("%w: %d bytes", ErrCoverTooLarge, size)
+	}
+	tag, err := id3.Open(path, id3.Options{Parse: true, ParseFrames: []string{pictureFrame}})
+	if err != nil {
+		return "", nil, err
+	}
+	defer tag.Close()
+
+	mime, data, ok := coverPicture(tag)
+	if !ok {
+		return "", nil, ErrNoCover
+	}
+	return mime, data, nil
+}
+
+// coverPicture picks the picture to serve from tag: the first usable front
+// cover, else the first usable picture of any type. Usable means embedded
+// (not a URL link) image bytes of a type listed in coverMIMEs.
+func coverPicture(tag *id3.Tag) (mime string, data []byte, ok bool) {
+	for _, framer := range tag.GetFrames(tag.CommonID(pictureFrame)) {
+		pic, isPicture := framer.(id3.PictureFrame)
+		if !isPicture || pic.MimeType == "-->" || len(pic.Picture) == 0 {
+			continue
+		}
+		sniffed := http.DetectContentType(pic.Picture)
+		if !coverMIMEs[sniffed] {
+			continue
+		}
+		if pic.PictureType == id3.PTFrontCover {
+			return sniffed, pic.Picture, true
+		}
+		if !ok {
+			mime, data, ok = sniffed, pic.Picture, true
+		}
+	}
+	return mime, data, ok
 }
 
 // withDurationEstimate fills DurationSecs using a rough 128 kbps CBR assumption.

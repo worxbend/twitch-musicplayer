@@ -1,6 +1,9 @@
 package meta
 
 import (
+	"bytes"
+	"errors"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -189,4 +192,118 @@ func TestID3v2Size(t *testing.T) {
 			t.Errorf("id3v2Size() = %d, want 0", got)
 		}
 	})
+}
+
+// Signature-prefixed payloads: http.DetectContentType sniffs only the header.
+var (
+	pngBytes  = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01")
+	jpegBytes = []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01")
+)
+
+func withPictures(pictures ...id3.PictureFrame) func(*id3.Tag) {
+	return func(tag *id3.Tag) {
+		tag.SetTitle("Rain Walk")
+		for _, pic := range pictures {
+			pic.Encoding = id3.EncodingUTF8
+			tag.AddAttachedPicture(pic)
+		}
+	}
+}
+
+func TestCover(t *testing.T) {
+	tests := []struct {
+		name      string
+		tagger    func(*id3.Tag)
+		wantMIME  string
+		wantData  []byte
+		wantError error
+	}{
+		{
+			name:     "front cover png",
+			tagger:   withPictures(id3.PictureFrame{MimeType: "image/png", PictureType: id3.PTFrontCover, Picture: pngBytes}),
+			wantMIME: "image/png",
+			wantData: pngBytes,
+		},
+		{
+			name: "front cover preferred over earlier picture",
+			tagger: withPictures(
+				id3.PictureFrame{MimeType: "image/jpeg", PictureType: id3.PTOther, Picture: jpegBytes},
+				id3.PictureFrame{MimeType: "image/png", PictureType: id3.PTFrontCover, Picture: pngBytes},
+			),
+			wantMIME: "image/png",
+			wantData: pngBytes,
+		},
+		{
+			name:     "non-front picture when no front cover, MIME sniffed from bytes",
+			tagger:   withPictures(id3.PictureFrame{MimeType: "image/png", PictureType: id3.PTBackCover, Picture: jpegBytes}),
+			wantMIME: "image/jpeg",
+			wantData: jpegBytes,
+		},
+		{
+			name: "unusable front cover falls back to usable picture",
+			tagger: withPictures(
+				id3.PictureFrame{MimeType: "image/png", PictureType: id3.PTFrontCover, Picture: []byte("not an image")},
+				id3.PictureFrame{MimeType: "image/png", PictureType: id3.PTBackCover, Picture: pngBytes},
+			),
+			wantMIME: "image/png",
+			wantData: pngBytes,
+		},
+		{
+			name:      "non-image payload",
+			tagger:    withPictures(id3.PictureFrame{MimeType: "image/png", PictureType: id3.PTFrontCover, Picture: []byte("<svg></svg>")}),
+			wantError: ErrNoCover,
+		},
+		{
+			name:      "url link picture",
+			tagger:    withPictures(id3.PictureFrame{MimeType: "-->", PictureType: id3.PTFrontCover, Picture: pngBytes}),
+			wantError: ErrNoCover,
+		},
+		{
+			name:      "tag without picture",
+			tagger:    withLength("1000"),
+			wantError: ErrNoCover,
+		},
+		{
+			name:      "untagged file",
+			wantError: ErrNoCover,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeFixture(t, t.TempDir(), "song.mp3", 1_000, tt.tagger)
+
+			mime, data, err := Cover(path)
+			if !errors.Is(err, tt.wantError) {
+				t.Fatalf("Cover() error = %v, want %v", err, tt.wantError)
+			}
+			if mime != tt.wantMIME || !bytes.Equal(data, tt.wantData) {
+				t.Errorf("Cover() = %q/%q, want %q/%q", mime, data, tt.wantMIME, tt.wantData)
+			}
+			if hasCover := Extract(path).HasCover; hasCover != (tt.wantError == nil) {
+				t.Errorf("Extract().HasCover = %v, want %v", hasCover, tt.wantError == nil)
+			}
+		})
+	}
+}
+
+func TestCover_TagOverCapIsNotParsed(t *testing.T) {
+	t.Parallel()
+	path := writeFixture(t, t.TempDir(), "song.mp3", 1_000,
+		withPictures(id3.PictureFrame{MimeType: "image/png", PictureType: id3.PTFrontCover, Picture: pngBytes}))
+
+	if _, _, err := cover(path, id3v2Size(path)-1); !errors.Is(err, ErrCoverTooLarge) {
+		t.Fatalf("cover() error = %v, want ErrCoverTooLarge", err)
+	}
+	if _, _, err := cover(path, id3v2Size(path)); err != nil {
+		t.Fatalf("cover() at the cap error = %v, want nil", err)
+	}
+}
+
+func TestCover_MissingFile(t *testing.T) {
+	t.Parallel()
+	_, _, err := Cover(filepath.Join(t.TempDir(), "gone.mp3"))
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Cover() error = %v, want fs.ErrNotExist", err)
+	}
 }

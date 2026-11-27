@@ -45,7 +45,8 @@ Response:
 GET /v1/songs/{id}
 ```
 
-Returns a song resource.
+Returns a song resource. `has_cover` is `true` when the file embeds a usable ID3v2 cover
+image, so clients can skip the cover request for songs without art.
 
 ```http
 GET /v1/songs/{id}/content
@@ -57,6 +58,19 @@ Streams MP3 content. The backend uses `http.ServeContent`, so range requests are
 Returns `403` when the song path resolves outside the music directory, `404` when the file is
 missing or is not a regular file, `416` for a range past the end of the file, and `500` when the
 file cannot be read (for example, a permission error).
+
+```http
+GET /v1/songs/{id}/cover
+```
+
+Returns the embedded ID3v2 (APIC) cover image: the front cover when present, else the first
+other picture. The type is sniffed from the bytes, and only `image/jpeg`, `image/png`,
+`image/gif` and `image/webp` are served, with `X-Content-Type-Options: nosniff`. Responses carry
+`Cache-Control: public, max-age=3600` and an `ETag`; a matching `If-None-Match` returns `304`.
+
+Returns `404` for an unknown song, a missing file, or a file without a usable picture (tags over
+8 MiB are not parsed and count as no picture), `403` when the song path resolves outside the
+music directory, and `500` when the file cannot be read.
 
 ## 📋 Queue
 

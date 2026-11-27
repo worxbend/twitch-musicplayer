@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	id3 "github.com/bogem/id3v2/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -431,5 +435,122 @@ func TestStreamContentDropsStalledClient(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("stream handler still writing to a client that stopped reading")
+	}
+}
+
+// The song payload always carries has_cover so clients can skip cover
+// requests for songs without art.
+func TestSongsGetHasCover(t *testing.T) {
+	for _, hasCover := range []bool{true, false} {
+		repo := &fakeSongRepo{songs: []*models.Song{{ID: "a", HasCover: hasCover}}}
+		rec := serve(t, songsRouter(repo, t.TempDir()), http.MethodGet, "/v1/songs/a", "", nil)
+		var got map[string]any
+		decodeBody(t, rec, &got)
+		if v, ok := got["has_cover"]; !ok || v != hasCover {
+			t.Fatalf("has_cover = %v (present %v), want %v", v, ok, hasCover)
+		}
+	}
+}
+
+// writeTaggedSong writes a small file at path with an ID3v2 tag that embeds
+// picture as the front cover, or no picture when it is nil.
+func writeTaggedSong(t *testing.T, path string, picture []byte) {
+	t.Helper()
+	writeFile(t, path, strings.Repeat("\x00", 1_000))
+	tag, err := id3.Open(path, id3.Options{Parse: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tag.Close()
+	tag.SetTitle("Rain Walk")
+	if picture != nil {
+		tag.AddAttachedPicture(id3.PictureFrame{
+			Encoding:    id3.EncodingUTF8,
+			MimeType:    "image/png",
+			PictureType: id3.PTFrontCover,
+			Picture:     picture,
+		})
+	}
+	if err := tag.Save(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSongsCover(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need elevated rights on Windows")
+	}
+	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01")
+	sum := sha256.Sum256(png)
+	wantETag := `"` + hex.EncodeToString(sum[:])[:16] + `"`
+
+	base := t.TempDir()
+	musicDir := filepath.Join(base, "music")
+	if err := os.Mkdir(musicDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTaggedSong(t, filepath.Join(musicDir, "art.mp3"), png)
+	writeTaggedSong(t, filepath.Join(musicDir, "plain.mp3"), nil)
+	writeTaggedSong(t, filepath.Join(base, "secret.mp3"), png)
+	if err := os.Symlink(filepath.Join(base, "secret.mp3"), filepath.Join(musicDir, "link.mp3")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	repo := &fakeSongRepo{songs: []*models.Song{
+		{ID: "art", Path: "art.mp3"},
+		{ID: "plain", Path: "plain.mp3"},
+		{ID: "link", Path: "link.mp3"},
+		{ID: "gone", Path: "gone.mp3"},
+	}}
+	router := songsRouter(repo, musicDir)
+
+	t.Run("serves embedded image", func(t *testing.T) {
+		rec := serve(t, router, http.MethodGet, "/v1/songs/art/cover", "", nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+		}
+		want := map[string]string{
+			"Content-Type":           "image/png",
+			"ETag":                   wantETag,
+			"Cache-Control":          "public, max-age=3600",
+			"X-Content-Type-Options": "nosniff",
+		}
+		for name, value := range want {
+			if got := rec.Header().Get(name); got != value {
+				t.Errorf("%s = %q, want %q", name, got, value)
+			}
+		}
+		if !bytes.Equal(rec.Body.Bytes(), png) {
+			t.Errorf("body = %q, want the embedded picture", rec.Body.Bytes())
+		}
+	})
+
+	t.Run("matching If-None-Match is 304", func(t *testing.T) {
+		header := http.Header{"If-None-Match": {wantETag}}
+		rec := serve(t, router, http.MethodGet, "/v1/songs/art/cover", "", header)
+		if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+			t.Fatalf("status = %d body %q, want 304 with no body", rec.Code, rec.Body.String())
+		}
+	})
+
+	errorCases := []struct {
+		name     string
+		id       string
+		wantCode int
+	}{
+		{name: "unknown song", id: "nope", wantCode: http.StatusNotFound},
+		{name: "song without art", id: "plain", wantCode: http.StatusNotFound},
+		{name: "missing file", id: "gone", wantCode: http.StatusNotFound},
+		{name: "symlink outside music dir", id: "link", wantCode: http.StatusForbidden},
+	}
+	for _, tt := range errorCases {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := serve(t, router, http.MethodGet, "/v1/songs/"+tt.id+"/cover", "", nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d (body %q)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if rec.Header().Get("Content-Type") != "application/json" || bytes.Contains(rec.Body.Bytes(), []byte("PNG")) {
+				t.Fatalf("error response leaked image: %q %q", rec.Header().Get("Content-Type"), rec.Body.String())
+			}
+		})
 	}
 }
