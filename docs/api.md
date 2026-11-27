@@ -200,6 +200,9 @@ Returns the authoritative playback snapshot:
 }
 ```
 
+`total_songs` counts indexed songs in rotation; blocked songs are not counted. It matches the
+websocket `state` frame.
+
 `current_song` is omitted while nothing is playing. It is also cleared once a song finishes
 with nothing queued under `manual_only`, or with an empty library under an auto strategy
 (up to ~3s before the audio ends, at the crossfade lead); `/v1/now-playing.txt` then

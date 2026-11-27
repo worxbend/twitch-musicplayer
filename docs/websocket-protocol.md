@@ -195,6 +195,9 @@ which empties it.
 }
 ```
 
+`total_songs` counts indexed songs in rotation; blocked songs are not counted. It matches
+`GET /v1/player`.
+
 `current_song` is omitted while nothing is playing. The counts are looked up on a context
 detached from the HTTP upgrade request, so they stay accurate after the handler returns.
 

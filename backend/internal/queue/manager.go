@@ -676,23 +676,29 @@ func (m *Manager) BlockedSongs(ctx context.Context) ([]BlockedSong, error) {
 // BlockSong pulls a library song out of rotation and drops its queued
 // entries. The song playing now keeps playing. Blocking a blocked song is a
 // no-op apart from the purge. It returns ErrSongNotFound for an unknown song.
-func (m *Manager) BlockSong(ctx context.Context, songID string) error {
+//
+// The purge runs before the block is saved, so a failed purge leaves nothing
+// blocked. A failed save after a purge returns the purged count with the
+// error; the song stays unblocked. m.mu is held throughout, so no refill can
+// re-queue the song between the two steps.
+func (m *Manager) BlockSong(ctx context.Context, songID string) (purged int, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.blocklist == nil {
-		return errNoBlocklist
+		return 0, errNoBlocklist
 	}
 	if _, err := m.lookupSong(ctx, songID); err != nil {
-		return err
+		return 0, err
+	}
+	purged, err = m.queue.RemoveBySongID(ctx, songID)
+	if err != nil {
+		return 0, fmt.Errorf("purge blocked song %s: %w", songID, err)
 	}
 	if err := m.blocklist.Add(songID); err != nil {
-		return fmt.Errorf("block song %s: %w", songID, err)
+		return purged, fmt.Errorf("block song %s: %w", songID, err)
 	}
-	if _, err := m.queue.RemoveBySongID(ctx, songID); err != nil {
-		return fmt.Errorf("purge blocked song %s: %w", songID, err)
-	}
-	return nil
+	return purged, nil
 }
 
 // UnblockSong puts a song back in rotation. A blocked ID is removed even when

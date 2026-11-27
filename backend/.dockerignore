@@ -5,6 +5,8 @@ main
 *.db-shm
 *.db-wal
 *.bloom
+*.blocked.json
+.blocked-*
 
 # Local configuration and tooling
 .env

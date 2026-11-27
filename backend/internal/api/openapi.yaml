@@ -802,6 +802,7 @@ components:
           type: integer
         total_songs:
           type: integer
+          description: Indexed songs in rotation. Blocked songs are not counted. Same value as the websocket state frame.
 
     PlayEntry:
       type: object

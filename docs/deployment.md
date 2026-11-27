@@ -141,6 +141,8 @@ with `lofi-config: invalid BACKEND_URL`.
 ### 💾 What persists
 
 The `bloom-data` named volume holds the play history, so the rotation survives a restart.
+It also holds the blocklist (`lofi-radio.blocked.json`), so keep it persistent and include it
+in backups.
 Your music is mounted read-only and is never written to. Delete the volume with
 `docker compose down -v` to start the rotation fresh.
 
@@ -229,7 +231,7 @@ server {
 
 Persist:
 
-- Bloom-filter history path from `BLOOM_PATH` (defaults to `./lofi-radio.bloom`). Mount it on a persistent volume so play history survives restarts.
+- Bloom-filter history path from `BLOOM_PATH` (defaults to `./lofi-radio.bloom`). Mount it on a persistent volume so play history survives restarts. The blocklist is saved in the same directory as `<name>.blocked.json`; keep it on the same volume and include it in backups.
 - Music folder from `MUSIC_DIR`.
 
 Do not place these inside ephemeral container layers.

@@ -21,7 +21,7 @@ type queueManager interface {
 	ClearQueue(ctx context.Context) error
 	RemoveEntry(ctx context.Context, id string) error
 	MoveEntry(ctx context.Context, id string, delta int) (position int, moved bool, err error)
-	BlockSong(ctx context.Context, songID string) error
+	BlockSong(ctx context.Context, songID string) (purged int, err error)
 	UnblockSong(ctx context.Context, songID string) error
 	BlockedSongs(ctx context.Context) ([]queuemgr.BlockedSong, error)
 	skipSource
@@ -276,7 +276,11 @@ type missingSong struct {
 // and drops its queued entries; blocking a blocked song succeeds again.
 func (h *QueueHandler) Block(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := h.mgr.BlockSong(r.Context(), id); err != nil {
+	purged, err := h.mgr.BlockSong(r.Context(), id)
+	if err != nil {
+		if purged > 0 { // entries left the queue even though the block failed
+			h.broadcastQueueUpdated(r.Context(), "song_blocked")
+		}
 		if !writeSongError(w, err) {
 			writeError(w, http.StatusInternalServerError, "failed to block song")
 		}

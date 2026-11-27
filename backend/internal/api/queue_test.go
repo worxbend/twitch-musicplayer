@@ -30,6 +30,7 @@ type fakeQueueManager struct {
 	autoSelects  bool
 	emptyLibrary bool
 	libraryErr   error
+	totalSongs   int // 0 means one song
 	libraryCalls int
 	addedID      string
 	playNextID   string
@@ -38,6 +39,9 @@ type fakeQueueManager struct {
 
 	removeErr error
 	removedID string
+
+	blockPurged int
+	blockErr    error
 
 	movePos   int
 	moved     bool
@@ -66,12 +70,15 @@ func (f *fakeQueueManager) ListQueue(context.Context) ([]*models.QueueItem, erro
 
 func (f *fakeQueueManager) AutoSelects() bool { return f.autoSelects }
 
-// TotalSongs reports one song unless emptyLibrary is set, so the zero value is
-// a non-empty library.
+// TotalSongs reports totalSongs, or one song when it is unset, unless
+// emptyLibrary is set, so the zero value is a non-empty library.
 func (f *fakeQueueManager) TotalSongs(context.Context) (int, error) {
 	f.libraryCalls++
-	if f.emptyLibrary {
+	switch {
+	case f.emptyLibrary:
 		return 0, f.libraryErr
+	case f.totalSongs > 0:
+		return f.totalSongs, f.libraryErr
 	}
 	return 1, f.libraryErr
 }
@@ -91,7 +98,9 @@ func (f *fakeQueueManager) MoveEntry(_ context.Context, id string, delta int) (i
 	return f.movePos, f.moved, f.moveErr
 }
 
-func (f *fakeQueueManager) BlockSong(context.Context, string) error   { return nil }
+func (f *fakeQueueManager) BlockSong(context.Context, string) (int, error) {
+	return f.blockPurged, f.blockErr
+}
 func (f *fakeQueueManager) UnblockSong(context.Context, string) error { return nil }
 func (f *fakeQueueManager) BlockedSongs(context.Context) ([]queuemgr.BlockedSong, error) {
 	return nil, nil
@@ -312,6 +321,7 @@ func TestQueueSkip(t *testing.T) {
 		autoSelects  bool
 		emptyLibrary bool
 		libraryErr   error
+		totalSongs   int // 0 means one song
 		wantCode     int
 		wantSongID   string
 		wantErr      string
@@ -490,4 +500,37 @@ func TestBlockFlow(t *testing.T) {
 		t.Fatalf("blocked = %v, want empty after unblock", got)
 	}
 	expect(http.MethodPost, "/v1/queue", `{"song_id":"s1"}`, http.StatusCreated)
+}
+
+// A failed block still announces the queue when entries were purged.
+func TestBlockBroadcastsAfterPartialSuccess(t *testing.T) {
+	boom := errors.New("boom")
+	tests := []struct {
+		name       string
+		purged     int
+		err        error
+		wantCode   int
+		wantUpdate bool
+	}{
+		{name: "purged then save failed", purged: 1, err: boom, wantCode: http.StatusInternalServerError, wantUpdate: true},
+		{name: "purge failed", err: boom, wantCode: http.StatusInternalServerError},
+		{name: "blocked", purged: 1, wantCode: http.StatusOK, wantUpdate: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &fakeBroadcaster{}
+			mgr := &fakeQueueManager{blockPurged: tt.purged, blockErr: tt.err}
+			rec := serve(t, queueRouter(mgr, b), http.MethodPost, "/v1/songs/s1:block", "", nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if !tt.wantUpdate {
+				if len(b.msgs) != 0 {
+					t.Fatalf("unexpected broadcasts %v", b.types())
+				}
+				return
+			}
+			assertQueueUpdated(t, b, "song_blocked")
+		})
+	}
 }

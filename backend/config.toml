@@ -5,7 +5,8 @@ port = 8080
 base_url = "http://localhost:8080"
 
 [bloom]
-# Bloom filter persisting which songs have been played (the only on-disk state).
+# Bloom filter persisting which songs have been played. The blocklist is saved
+# next to it as <name>.blocked.json.
 path = "./lofi-radio.bloom"
 
 [music]

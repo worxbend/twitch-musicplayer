@@ -24,7 +24,7 @@ services:
     volumes:
       # Your music, mounted read-only: the service only ever reads it.
       - ${MUSIC_DIR:-./music}:/music:ro
-      # Bloom filter play history, so the rotation survives a restart.
+      # Play history (Bloom filter) and the blocklist, so both survive a restart.
       - bloom-data:/data
     environment:
       PORT: "8080"

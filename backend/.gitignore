@@ -39,4 +39,6 @@ main
 
 # Runtime state and local music library
 *.bloom
+*.blocked.json
+.blocked-*
 music/

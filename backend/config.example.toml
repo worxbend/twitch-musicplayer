@@ -9,7 +9,8 @@ base_url = "http://localhost:8080"
 allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 [bloom]
-# Bloom filter persisting which songs have been played (the only on-disk state).
+# Bloom filter persisting which songs have been played. The blocklist is saved
+# next to it as <name>.blocked.json.
 path = "./lofi-radio.bloom"
 
 [music]

@@ -2,5 +2,7 @@
 .env
 .env.local
 *.bloom
+*.blocked.json
+.blocked-*
 .DS_Store
 coverage.out

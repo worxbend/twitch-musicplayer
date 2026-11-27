@@ -15,7 +15,7 @@ import (
 	"lofi-radio-backend/internal/websocket"
 )
 
-// fakeCounter satisfies both playerSongRepo and playerQueueRepo.
+// fakeCounter satisfies playerQueueRepo.
 type fakeCounter struct {
 	n   int
 	err error
@@ -23,24 +23,27 @@ type fakeCounter struct {
 
 func (f fakeCounter) Count(context.Context) (int, error) { return f.n, f.err }
 
-func playerRouter(songs, queue fakeCounter, hub *fakeBroadcaster, st *player.StateTracker) http.Handler {
-	return RegisterRoutesHTTP(nil, nil, NewPlayerHandler(songs, queue, &fakeQueueManager{}, hub, st, "{artist} - {title}"))
+func playerRouter(mgr *fakeQueueManager, queue fakeCounter, hub *fakeBroadcaster, st *player.StateTracker) http.Handler {
+	return RegisterRoutesHTTP(nil, nil, NewPlayerHandler(queue, mgr, hub, st, "{artist} - {title}"))
 }
 
 func TestPlayerState(t *testing.T) {
 	boom := errors.New("boom")
 	tests := []struct {
 		name        string
-		songs       fakeCounter
+		mgr         *fakeQueueManager
 		queue       fakeCounter
 		current     *models.Song
 		wantCode    int
+		wantTotal   float64
 		wantCurrent bool
 	}{
-		{name: "playing", songs: fakeCounter{n: 12}, queue: fakeCounter{n: 3}, current: &models.Song{ID: "c", Title: "Rain"}, wantCode: http.StatusOK, wantCurrent: true},
-		{name: "idle omits current_song", songs: fakeCounter{n: 12}, queue: fakeCounter{n: 3}, wantCode: http.StatusOK},
-		{name: "song count error", songs: fakeCounter{err: boom}, wantCode: http.StatusInternalServerError},
-		{name: "queue count error", songs: fakeCounter{n: 1}, queue: fakeCounter{err: boom}, wantCode: http.StatusInternalServerError},
+		{name: "playing", mgr: &fakeQueueManager{totalSongs: 12}, queue: fakeCounter{n: 3}, current: &models.Song{ID: "c", Title: "Rain"}, wantCode: http.StatusOK, wantTotal: 12, wantCurrent: true},
+		{name: "idle omits current_song", mgr: &fakeQueueManager{totalSongs: 12}, queue: fakeCounter{n: 3}, wantCode: http.StatusOK, wantTotal: 12},
+		// A library of 3 with one song blocked: total_songs counts rotation only.
+		{name: "blocked songs not counted", mgr: &fakeQueueManager{totalSongs: 2}, queue: fakeCounter{n: 3}, wantCode: http.StatusOK, wantTotal: 2},
+		{name: "song count error", mgr: &fakeQueueManager{libraryErr: boom}, wantCode: http.StatusInternalServerError},
+		{name: "queue count error", mgr: &fakeQueueManager{}, queue: fakeCounter{err: boom}, wantCode: http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -48,7 +51,7 @@ func TestPlayerState(t *testing.T) {
 			if tt.current != nil {
 				st.SetCurrentSong(tt.current)
 			}
-			rec := serve(t, playerRouter(tt.songs, tt.queue, &fakeBroadcaster{}, st), http.MethodGet, "/v1/player", "", nil)
+			rec := serve(t, playerRouter(tt.mgr, tt.queue, &fakeBroadcaster{}, st), http.MethodGet, "/v1/player", "", nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
 			}
@@ -57,7 +60,7 @@ func TestPlayerState(t *testing.T) {
 			}
 			var got map[string]any
 			decodeBody(t, rec, &got)
-			if got["total_songs"] != float64(12) || got["queue_length"] != float64(3) {
+			if got["total_songs"] != tt.wantTotal || got["queue_length"] != float64(3) {
 				t.Fatalf("counts = %v", got)
 			}
 			cur, hasCurrent := got["current_song"].(map[string]any)
@@ -90,7 +93,7 @@ func TestPlayerNowPlayingText(t *testing.T) {
 			if tt.current != nil {
 				st.SetCurrentSong(tt.current)
 			}
-			h := NewPlayerHandler(fakeCounter{}, fakeCounter{}, &fakeQueueManager{}, &fakeBroadcaster{}, st, tt.format)
+			h := NewPlayerHandler(fakeCounter{}, &fakeQueueManager{}, &fakeBroadcaster{}, st, tt.format)
 			rec := serve(t, RegisterRoutesHTTP(nil, nil, h), http.MethodGet, "/v1/now-playing.txt", "", nil)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
@@ -137,7 +140,7 @@ func TestPlayerNowPlayingTextIdle(t *testing.T) {
 			if tt.current != nil {
 				st.SetCurrentSong(tt.current)
 			}
-			h := NewPlayerHandler(fakeCounter{}, fakeCounter{}, &fakeQueueManager{}, &fakeBroadcaster{}, st, "{artist} - {title}")
+			h := NewPlayerHandler(fakeCounter{}, &fakeQueueManager{}, &fakeBroadcaster{}, st, "{artist} - {title}")
 			rec := serve(t, RegisterRoutesHTTP(nil, nil, h), http.MethodGet, "/v1/now-playing.txt"+tt.query, "", nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body.String())
@@ -179,7 +182,7 @@ func TestPlayerSkip(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			hub := &fakeBroadcaster{}
-			h := NewPlayerHandler(fakeCounter{}, fakeCounter{}, tt.mgr, hub, player.NewStateTracker(), "{artist} - {title}")
+			h := NewPlayerHandler(fakeCounter{}, tt.mgr, hub, player.NewStateTracker(), "{artist} - {title}")
 			rec := serve(t, RegisterRoutesHTTP(nil, nil, h), http.MethodPost, "/v1/player:skip", "", nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body.String())
@@ -221,7 +224,7 @@ func TestPlayerHistory(t *testing.T) {
 			for i := range tt.songs {
 				st.SetCurrentSong(&models.Song{ID: strconv.Itoa(i)})
 			}
-			rec := serve(t, playerRouter(fakeCounter{}, fakeCounter{}, &fakeBroadcaster{}, st), http.MethodGet, tt.target, "", nil)
+			rec := serve(t, playerRouter(&fakeQueueManager{}, fakeCounter{}, &fakeBroadcaster{}, st), http.MethodGet, tt.target, "", nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body.String())
 			}

@@ -47,6 +47,22 @@ LOFI_CONFIG=/etc/lofi/config.toml ./lofi-radio-backend
 When `LOFI_CONFIG` is set, the file must exist and be readable, or startup fails. Without it,
 a missing `config.toml` means built-in defaults.
 
+### 🚫 Blocklist File
+
+Songs blocked with "Don't play this" are saved next to the Bloom file. The path is
+`bloom.path` with its extension replaced by `.blocked.json`: `./lofi-radio.bloom` gives
+`./lofi-radio.blocked.json`, and `/data/lofi-radio.bloom` gives `/data/lofi-radio.blocked.json`.
+
+The file is version-1 JSON with the blocked song IDs, sorted:
+
+```json
+{"version":1,"song_ids":["<song id>"]}
+```
+
+Every block or unblock rewrites it atomically: a temp file (`.blocked-*`) in the same directory,
+then a rename. A corrupt or unreadable file is logged at startup, the radio starts with an empty
+blocklist, and the file is replaced on the next block or unblock.
+
 ## 🌱 Backend Environment
 
 Example: `backend/.env.example`.

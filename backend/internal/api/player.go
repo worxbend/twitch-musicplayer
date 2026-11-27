@@ -19,10 +19,6 @@ const defaultHistoryLimit = 20
 // maxIdleTextRunes caps the ?idle= fallback text of GET /v1/now-playing.txt.
 const maxIdleTextRunes = 200
 
-type playerSongRepo interface {
-	Count(ctx context.Context) (int, error)
-}
-
 type playerQueueRepo interface {
 	Count(ctx context.Context) (int, error)
 }
@@ -34,7 +30,6 @@ type playerHub interface {
 
 // PlayerHandler handles player state endpoints.
 type PlayerHandler struct {
-	songRepo     playerSongRepo
 	queueRepo    playerQueueRepo
 	skipSource   skipSource
 	hub          playerHub
@@ -44,14 +39,13 @@ type PlayerHandler struct {
 }
 
 func NewPlayerHandler(
-	s playerSongRepo,
 	q playerQueueRepo,
 	skip skipSource,
 	hub playerHub,
 	st *player.StateTracker,
 	nowPlayingFormat string,
 ) *PlayerHandler {
-	return &PlayerHandler{songRepo: s, queueRepo: q, skipSource: skip, hub: hub, stateTracker: st, nowPlayingFormat: nowPlayingFormat}
+	return &PlayerHandler{queueRepo: q, skipSource: skip, hub: hub, stateTracker: st, nowPlayingFormat: nowPlayingFormat}
 }
 
 // Skip handles POST /v1/player:skip.
@@ -109,7 +103,7 @@ func (h *PlayerHandler) NowPlayingText(w http.ResponseWriter, r *http.Request) {
 func (h *PlayerHandler) State(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	totalSongs, err := h.songRepo.Count(ctx)
+	totalSongs, err := h.skipSource.TotalSongs(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to count songs")
 		return

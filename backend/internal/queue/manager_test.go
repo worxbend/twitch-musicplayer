@@ -791,7 +791,7 @@ func TestCycleResetsWhenOnlyUnplayedSongIsBlocked(t *testing.T) {
 			unplayed = id
 		}
 	}
-	if err := m.BlockSong(ctx, unplayed); err != nil {
+	if _, err := m.BlockSong(ctx, unplayed); err != nil {
 		t.Fatalf("BlockSong: %v", err)
 	}
 	for round := 0; round < 10; round++ {
@@ -846,12 +846,12 @@ func TestBlockSongPurgesQueuedEntries(t *testing.T) {
 			t.Fatalf("AddToQueue(%s): %v", id, err)
 		}
 	}
-	if err := m.BlockSong(ctx, "missing"); !errors.Is(err, ErrSongNotFound) {
+	if _, err := m.BlockSong(ctx, "missing"); !errors.Is(err, ErrSongNotFound) {
 		t.Fatalf("BlockSong(missing) = %v, want ErrSongNotFound", err)
 	}
-	for i := 0; i < 2; i++ { // the second call checks it is idempotent
-		if err := m.BlockSong(ctx, "s0"); err != nil {
-			t.Fatalf("BlockSong[%d]: %v", i, err)
+	for i, want := range []int{2, 0} { // the second call checks it is idempotent
+		if purged, err := m.BlockSong(ctx, "s0"); err != nil || purged != want {
+			t.Fatalf("BlockSong[%d] = %d, %v; want %d, nil", i, purged, err, want)
 		}
 	}
 	items := listQueue(t, m)
@@ -927,5 +927,52 @@ func TestBlockedSongs(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].ID != "s0" || got[0].Song == nil || got[1].ID != "s1" || got[1].Song != nil {
 		t.Fatalf("BlockedSongs = %+v, want s0 with its song, then s1 missing", got)
+	}
+}
+
+// failingPurgeRepo is a QueueRepository whose RemoveBySongID always fails.
+type failingPurgeRepo struct {
+	QueueRepository
+}
+
+func (failingPurgeRepo) RemoveBySongID(context.Context, string) (int, error) {
+	return 0, errors.New("purge failed")
+}
+
+func TestBlockSongFailedPurgeBlocksNothing(t *testing.T) {
+	ctx := context.Background()
+	songRepo := repository.NewMemSongRepo()
+	if err := songRepo.Create(ctx, library(1)[0]); err != nil {
+		t.Fatal(err)
+	}
+	store := blocklist.Empty(filepath.Join(t.TempDir(), "radio.blocked.json"))
+	m := New(songRepo, played.New(1000, 0.01), failingPurgeRepo{repository.NewMemQueueRepo(songRepo)}, ManagerConfig{
+		Fill:      FillConfig{Strategy: FillManualOnly},
+		Blocklist: store,
+	})
+	if purged, err := m.BlockSong(ctx, "s0"); err == nil || purged != 0 {
+		t.Fatalf("BlockSong = %d, %v; want 0 and an error", purged, err)
+	}
+	if got := store.List(); len(got) != 0 {
+		t.Fatalf("store = %v, want empty after a failed purge", got)
+	}
+}
+
+func TestBlockSongFailedSaveReportsPurge(t *testing.T) {
+	ctx := context.Background()
+	store := blocklist.Empty(filepath.Join(t.TempDir(), "missing-dir", "radio.blocked.json"))
+	m, _ := buildManagerWithSongs(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}, Blocklist: store}, library(2))
+	if _, err := m.AddToQueue(ctx, "s0", models.QueueSourceManual); err != nil {
+		t.Fatalf("AddToQueue: %v", err)
+	}
+	purged, err := m.BlockSong(ctx, "s0")
+	if err == nil || purged != 1 {
+		t.Fatalf("BlockSong = %d, %v; want 1 and an error", purged, err)
+	}
+	if store.Has("s0") {
+		t.Fatal("s0 blocked after a failed save")
+	}
+	if items := listQueue(t, m); len(items) != 0 {
+		t.Fatalf("queue = %+v, want empty after the purge", items)
 	}
 }
