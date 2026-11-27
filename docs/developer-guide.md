@@ -134,11 +134,11 @@ can be tested without a browser or an audio device.
 
 1. Frontend opens `/ws`.
 2. Frontend sends `need_song`.
-3. Backend selects the next song, records a history start, and sends `play_song`.
-4. Frontend sets `HTMLAudioElement.src` to the `stream_url`.
-5. Browser streams from `/v1/songs/{id}/content`.
-6. Frontend sends `song_finished` on media `ended`.
-7. Backend marks the history entry finished and sends the next song.
+3. Backend dequeues the next song (marking it played), sends `play_song` with a fresh `history_id`, records the start in the in-memory history, and broadcasts `now_playing`.
+4. Frontend loads the `stream_url` (`/v1/songs/{id}/content`) on the idle audio channel and crossfades it in with an equal-power curve.
+5. About 15 seconds before the end, frontend sends `peek_next`; backend answers `prebuffer_song` and the next track buffers on the idle channel without being dequeued.
+6. About 3 seconds before the end (or on media `ended`), frontend sends `song_finished`.
+7. Backend answers with the next `play_song`, or clears now-playing when the queue or library is empty.
 
 ## 📥 Queue Fill Behavior
 
@@ -178,15 +178,20 @@ This keeps playback state aligned with the backend protocol and avoids competing
 | `/` | `App` | no |
 | `/overlay` | `OverlayApp` | no |
 | `/logo`, `/logo-overlay` | `OverlayApp` | yes |
-| `/spectrum` | `SpectrumApp` | no |
-| `/spectrum-overlay` | `SpectrumApp` | yes |
+| `/scenes` | `ScenesIndex` | no |
+| `/now-playing` | `NowPlayingOverlay` | yes |
+| `/<slug>` (every scene in `src/viz/scenes.ts`) | `SceneApp` | no |
+| `/<slug>-overlay` | `SceneApp` | yes |
 
-`?transparent=1` forces transparency on the spectrum routes.
+`?transparent=1` forces transparency on the opaque `/<slug>` scene routes (`matchScene` in
+`src/viz/scenes.ts`); it does not affect `/`, `/overlay` or `/now-playing`.
 
-Overlay routes add the `overlay-page` class to the document element, and transparent ones
-also add `logo-overlay-page`, which drops the page background so OBS can composite the
-canvas over other sources. Both classes are removed on cleanup, so switching routes in a
-single-page session does not leave styling behind.
+`OverlayApp` adds the `overlay-page` class to the document element, and its transparent
+variant also adds `logo-overlay-page`, which drops the page background so OBS can composite
+the canvas over other sources. Transparent `SceneApp` routes and `/now-playing` add
+`logo-overlay-page` only; opaque scenes add the scene's own page class (`scene-page` by
+default). Each class is removed on cleanup, so switching routes in a single-page session
+does not leave styling behind.
 
 ## ✅ Verification
 

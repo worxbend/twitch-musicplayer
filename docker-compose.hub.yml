@@ -2,7 +2,7 @@
 # Run the station from images published on Docker Hub. Nothing is built, so
 # this file works on a machine that has never seen the source.
 #
-#   curl -O https://raw.githubusercontent.com/w0rxbend/twitch-musicplayer/main/docker-compose.hub.yml
+#   curl -O https://raw.githubusercontent.com/worxbend/twitch-musicplayer/main/docker-compose.hub.yml
 #   MUSIC_DIR=~/Music docker compose -f docker-compose.hub.yml up -d
 #
 # Frontend: http://localhost:3000        Admin: http://localhost:3000/admin

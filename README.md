@@ -138,7 +138,7 @@ real frequency data — not a canned animation.
 > **You'll need:** Docker, and a folder of MP3s.
 
 ```bash
-git clone https://github.com/w0rxbend/twitch-musicplayer.git
+git clone https://github.com/worxbend/twitch-musicplayer.git
 cd twitch-musicplayer
 MUSIC_DIR=~/Music docker compose up -d --build
 ```
@@ -154,7 +154,7 @@ That's it. 🎉 The station is on the air:
 **Don't want to clone anything?** Run the published images straight from Docker Hub:
 
 ```bash
-curl -O https://raw.githubusercontent.com/w0rxbend/twitch-musicplayer/main/docker-compose.hub.yml
+curl -O https://raw.githubusercontent.com/worxbend/twitch-musicplayer/main/docker-compose.hub.yml
 MUSIC_DIR=~/Music docker compose -f docker-compose.hub.yml up -d
 ```
 
@@ -318,8 +318,10 @@ naive linear crossfade dips by roughly 6 dB right at the seam. 🎚️
 
 ## ⚙️ Configuration
 
-Everything is set in `backend/config.toml`, and every value can be overridden by an
-environment variable — container-friendly by design.
+Everything is set in `backend/config.toml`. Five keys also take an environment override
+for containers: `PORT`, `MUSIC_DIR`, `BASE_URL`, `BLOOM_PATH` and `ALLOWED_ORIGINS`.
+`LOFI_CONFIG` picks the TOML file itself. Everything else (shuffle, queue, extensions, obs)
+is TOML-only — see [docs/configuration.md](docs/configuration.md).
 
 ```toml
 [server]

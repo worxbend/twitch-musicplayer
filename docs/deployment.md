@@ -53,7 +53,7 @@ Stop with `docker compose down`. Add `-v` to also discard the play history.
 No source checkout needed — one file is enough:
 
 ```bash
-curl -O https://raw.githubusercontent.com/w0rxbend/twitch-musicplayer/main/docker-compose.hub.yml
+curl -O https://raw.githubusercontent.com/worxbend/twitch-musicplayer/main/docker-compose.hub.yml
 MUSIC_DIR=~/Music docker compose -f docker-compose.hub.yml up -d
 ```
 

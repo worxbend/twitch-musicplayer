@@ -119,8 +119,9 @@ The server selects the next track and sends another `play_song`. Between those, 
 may send `{"type":"peek_next"}` to have the next URL buffered without dequeuing it. 🎚️
 
 > `history_id` is a per-playback correlation ID generated fresh for each `play_song`. It
-> lets the client ignore stale callbacks from a track that has already been replaced. It is
-> **not** persisted — there is no history store.
+> lets the client ignore stale callbacks from a track that has already been replaced. A
+> bounded in-memory history (the last 50 starts, `internal/player/state.go`) serves
+> `GET /v1/history` and is lost on restart; only the Bloom filter is persisted to disk.
 
 ## 🗃️ Why there is no database
 

@@ -105,7 +105,7 @@ Two more query parameters work everywhere:
 
 | Parameter | Effect |
 |:--|:--|
-| `?transparent=1` | Force a transparent background on any scene |
+| `?transparent=1` | Force a transparent background on any catalogue scene at `/<name>` |
 | `?autoplay=1` | Start audio without waiting for a click |
 
 ## 📺 Using It In OBS

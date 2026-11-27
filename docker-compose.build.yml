@@ -34,7 +34,7 @@ services:
       labels:
         org.opencontainers.image.title: lofi-radio-backend
         org.opencontainers.image.description: Backend DJ for the Twitch lofi radio — indexes MP3s, picks tracks, streams audio.
-        org.opencontainers.image.source: https://github.com/w0rxbend/twitch-musicplayer
+        org.opencontainers.image.source: https://github.com/worxbend/twitch-musicplayer
 
   frontend:
     image: ${DOCKERHUB_NAMESPACE:-worxbend}/lofi-radio-frontend:${IMAGE_TAG:-latest}
@@ -51,4 +51,4 @@ services:
       labels:
         org.opencontainers.image.title: lofi-radio-frontend
         org.opencontainers.image.description: Visualizer and admin console for the Twitch lofi radio.
-        org.opencontainers.image.source: https://github.com/w0rxbend/twitch-musicplayer
+        org.opencontainers.image.source: https://github.com/worxbend/twitch-musicplayer

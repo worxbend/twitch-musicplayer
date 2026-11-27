@@ -34,8 +34,6 @@ paths:
                   status:
                     type: string
                     example: up
-        "503":
-          description: Service is unhealthy
     head:
       summary: Health check (headers only)
       description: Same as GET without a body. Used by probes such as `wget --spider`.
