@@ -11,9 +11,11 @@ cd "$root"
 
 status=0
 
-# first_from FILE: image reference of the first FROM line.
+# first_from FILE: image reference of the first FROM line, skipping flags such
+# as --platform=$BUILDPLATFORM.
 first_from() {
-  { grep -m1 -E '^FROM[[:space:]]' "$1" || true; } | sed -E 's/^FROM[[:space:]]+([^[:space:]]+).*/\1/'
+  { grep -m1 -E '^FROM[[:space:]]' "$1" || true; } \
+    | sed -E 's/^FROM[[:space:]]+(--[^[:space:]]+[[:space:]]+)*([^[:space:]]+).*/\2/'
 }
 
 # compare LABEL LEFT_FILE LEFT_VALUE RIGHT_FILE RIGHT_VALUE

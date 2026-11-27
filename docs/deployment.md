@@ -75,6 +75,10 @@ IMAGE_TAG=0.1.0 docker buildx bake -f docker-compose.build.yml \
     --set '*.platform=linux/amd64,linux/arm64' --push
 ```
 
+The builder stages cross-compile on the host, so emulation only runs the small
+runtime-stage setup. CI also builds and smoke-tests both images natively on an
+arm64 runner.
+
 > [!NOTE]
 > The platform list is not baked into the compose file on purpose. Without the
 > emulators installed, a plain `docker compose build` would fail with

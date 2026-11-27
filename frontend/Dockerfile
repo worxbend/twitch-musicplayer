@@ -1,5 +1,7 @@
 # ── Build stage ───────────────────────────────────────────────────────────────
-FROM node:26-alpine AS builder
+# dist is plain HTML, CSS and JS, so the build runs on the build host's
+# architecture and only the runtime stage is per-platform.
+FROM --platform=$BUILDPLATFORM node:26-alpine AS builder
 
 WORKDIR /app
 

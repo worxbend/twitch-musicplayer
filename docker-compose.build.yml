@@ -14,6 +14,11 @@
 #   IMAGE_TAG=0.1.0 docker buildx bake -f docker-compose.build.yml \
 #       --set '*.platform=linux/amd64,linux/arm64' --push
 #
+# The builder stages run on the build host and cross-compile (Go via
+# TARGETOS/TARGETARCH; the frontend dist is architecture-independent), so the
+# emulators only run the final stage's apk and user setup, not the Go compile
+# or the npm build.
+#
 # The platform list is deliberately not baked into this file: without the
 # emulators installed, a plain `docker compose build` fails with
 # "exec format error" on the foreign architecture.
