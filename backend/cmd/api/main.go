@@ -85,10 +85,7 @@ func main() {
 		broadcastQueueUpdated(context.Background(), hub, queueMgr, "file_removed")
 	}
 	fsWatcher.OnUpdated = func(song *models.Song) {
-		if stateTracker.UpdateSong(song) {
-			broadcastNowPlaying(context.Background(), hub, queueMgr, song)
-		}
-		broadcastQueueUpdated(context.Background(), hub, queueMgr, "file_updated")
+		onSongUpdated(context.Background(), stateTracker, hub, queueMgr, song)
 	}
 
 	// ── HTTP API handlers ─────────────────────────────────────────────────────
@@ -280,19 +277,25 @@ func broadcastQueueUpdated(ctx context.Context, hub broadcaster, q queueLister, 
 	hub.Broadcast(msg)
 }
 
-// broadcastNowPlaying re-announces the current song, for example after a
-// retag, so overlays and the admin console show the new metadata at once.
-func broadcastNowPlaying(ctx context.Context, hub *websocket.Hub, queueMgr *queue.Manager, song *models.Song) {
-	items, err := queueMgr.ListQueue(ctx)
+// onSongUpdated handles a retag: when song is still the current song it
+// re-announces it so overlays and the admin console show the new metadata at
+// once, then reports the queue change. The queue depth is read first, outside
+// the tracker's announce lock; the update and its now_playing frame then run
+// under that lock, so the frame cannot land after a newer song start.
+func onSongUpdated(ctx context.Context, tracker *player.StateTracker, hub broadcaster, q queueLister, song *models.Song) {
+	items, err := q.ListQueue(ctx)
 	if err != nil {
 		log.Printf("list queue for now_playing: %v", err)
 	}
-	msg, err := websocket.Encode(websocket.MsgNowPlaying, websocket.NowPlayingPayload{Song: *song, QueueDepth: len(items)})
-	if err != nil {
-		log.Printf("encode now_playing: %v", err)
-		return
-	}
-	hub.Broadcast(msg)
+	tracker.RetagSong(song, func(updated models.Song) {
+		msg, err := websocket.Encode(websocket.MsgNowPlaying, websocket.NowPlayingPayload{Song: updated, QueueDepth: len(items)})
+		if err != nil {
+			log.Printf("encode now_playing: %v", err)
+			return
+		}
+		hub.Broadcast(msg)
+	})
+	broadcastQueueUpdated(ctx, hub, q, "file_updated")
 }
 
 func logStartupInventory(

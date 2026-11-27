@@ -20,7 +20,12 @@ type PlayEntry struct {
 // StateTracker holds the currently playing song and a bounded play history,
 // updated by the WebSocket layer when a new song starts and read by the HTTP
 // player endpoints.
+//
+// announceMu orders a state change together with its broadcast (see
+// StartSong, RetagSong and ClearAnd). It is separate from mu because the
+// change hook runs outside mu and may call back in.
 type StateTracker struct {
+	announceMu  sync.Mutex
 	mu          sync.RWMutex
 	currentSong *models.Song
 	history     []PlayEntry // oldest first, at most MaxHistory entries
@@ -44,20 +49,7 @@ func (t *StateTracker) OnSongChange(fn func(*models.Song)) {
 // start in the play history. The change hook, if any, then runs once with song
 // (nil included) after the lock is released.
 func (t *StateTracker) SetCurrentSong(song *models.Song) {
-	t.mu.Lock()
-	t.currentSong = song
-	if song != nil {
-		t.history = append(t.history, PlayEntry{Song: *song, StartedAt: t.now()})
-		if excess := len(t.history) - MaxHistory; excess > 0 {
-			t.history = t.history[excess:]
-		}
-	}
-	onChange := t.onChange
-	t.mu.Unlock()
-
-	if onChange != nil {
-		onChange(song)
-	}
+	runHook(t.setCurrent(song), song)
 }
 
 // ClearCurrentSong marks that nothing is playing, for example when the queue
@@ -66,19 +58,11 @@ func (t *StateTracker) SetCurrentSong(song *models.Song) {
 // rewrite or rebroadcast anything; otherwise the hook runs once with nil
 // outside the lock.
 func (t *StateTracker) ClearCurrentSong() bool {
-	t.mu.Lock()
-	if t.currentSong == nil {
-		t.mu.Unlock()
-		return false
+	hook, ok := t.clear()
+	if ok {
+		runHook(hook, nil)
 	}
-	t.currentSong = nil
-	onChange := t.onChange
-	t.mu.Unlock()
-
-	if onChange != nil {
-		onChange(nil)
-	}
-	return true
+	return ok
 }
 
 // UpdateSong replaces the current song's metadata when song has the same ID,
@@ -86,23 +70,106 @@ func (t *StateTracker) ClearCurrentSong() bool {
 // history entry is updated too when it is the same song. It returns whether
 // anything changed, and runs the change hook outside the lock when it did.
 func (t *StateTracker) UpdateSong(song *models.Song) bool {
+	updated, hook, ok := t.update(song)
+	if ok {
+		runHook(hook, &updated)
+	}
+	return ok
+}
+
+// StartSong is SetCurrentSong followed by announce, with no other StartSong,
+// RetagSong or ClearAnd change or announce in between. Announce callbacks
+// broadcast the change; because they run in the order the changes were made,
+// clients never receive an older song after a newer one. announce must not
+// block and must not call StartSong, RetagSong or ClearAnd. A nil announce is
+// skipped. The change hook runs after announce, outside both locks.
+func (t *StateTracker) StartSong(song *models.Song, announce func()) {
+	t.announceMu.Lock()
+	hook := t.setCurrent(song)
+	if announce != nil {
+		announce()
+	}
+	t.announceMu.Unlock()
+	runHook(hook, song)
+}
+
+// RetagSong is UpdateSong followed, when it changed the song, by announce with
+// the updated copy, ordered and constrained like StartSong. A retag of a song
+// that is no longer current returns false and announces nothing.
+func (t *StateTracker) RetagSong(song *models.Song, announce func(models.Song)) bool {
+	t.announceMu.Lock()
+	updated, hook, ok := t.update(song)
+	if ok && announce != nil {
+		announce(updated)
+	}
+	t.announceMu.Unlock()
+	if ok {
+		runHook(hook, &updated)
+	}
+	return ok
+}
+
+// ClearAnd is ClearCurrentSong followed, when it cleared a song, by announce,
+// ordered and constrained like StartSong.
+func (t *StateTracker) ClearAnd(announce func()) bool {
+	t.announceMu.Lock()
+	hook, ok := t.clear()
+	if ok && announce != nil {
+		announce()
+	}
+	t.announceMu.Unlock()
+	if ok {
+		runHook(hook, nil)
+	}
+	return ok
+}
+
+func runHook(hook func(*models.Song), song *models.Song) {
+	if hook != nil {
+		hook(song)
+	}
+}
+
+// setCurrent applies SetCurrentSong under mu and returns the change hook.
+func (t *StateTracker) setCurrent(song *models.Song) func(*models.Song) {
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.currentSong = song
+	if song != nil {
+		t.history = append(t.history, PlayEntry{Song: *song, StartedAt: t.now()})
+		if excess := len(t.history) - MaxHistory; excess > 0 {
+			t.history = t.history[excess:]
+		}
+	}
+	return t.onChange
+}
+
+// clear applies ClearCurrentSong under mu and returns the change hook and
+// whether a song was cleared.
+func (t *StateTracker) clear() (func(*models.Song), bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.currentSong == nil {
+		return nil, false
+	}
+	t.currentSong = nil
+	return t.onChange, true
+}
+
+// update applies UpdateSong under mu and returns the stored copy, the change
+// hook and whether anything changed.
+func (t *StateTracker) update(song *models.Song) (models.Song, func(*models.Song), bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if song == nil || t.currentSong == nil || t.currentSong.ID != song.ID {
-		t.mu.Unlock()
-		return false
+		return models.Song{}, nil, false
 	}
 	updated := *song
 	t.currentSong = &updated
 	if last := len(t.history) - 1; last >= 0 && t.history[last].Song.ID == song.ID {
 		t.history[last].Song = updated
 	}
-	onChange := t.onChange
-	t.mu.Unlock()
-
-	if onChange != nil {
-		onChange(&updated)
-	}
-	return true
+	return updated, t.onChange, true
 }
 
 func (t *StateTracker) GetCurrentSong() *models.Song {

@@ -2,6 +2,7 @@ package player
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -280,5 +281,103 @@ func TestClearCurrentSongIsIdempotent(t *testing.T) {
 	}
 	if got := tr.History(10); fmt.Sprint(ids(got)) != "[s0]" {
 		t.Fatalf("History = %v, want [s0]", ids(got))
+	}
+}
+
+func TestRetagSongIgnoresNonCurrentSong(t *testing.T) {
+	tr := NewStateTracker()
+	tr.SetCurrentSong(&models.Song{ID: "b", Title: "B"})
+
+	called := false
+	ok := tr.RetagSong(&models.Song{ID: "a", Title: "A2"}, func(models.Song) { called = true })
+
+	if ok || called {
+		t.Fatalf("RetagSong(non-current) = %v, announced = %v; want false, false", ok, called)
+	}
+	if got := tr.GetCurrentSong(); got.ID != "b" || got.Title != "B" {
+		t.Errorf("current = %+v, want b/B unchanged", got)
+	}
+}
+
+func TestRetagSongAnnouncesUpdatedCopy(t *testing.T) {
+	tr := NewStateTracker()
+	tr.SetCurrentSong(&models.Song{ID: "a", Title: "old"})
+
+	var announced models.Song
+	ok := tr.RetagSong(&models.Song{ID: "a", Title: "new"}, func(s models.Song) { announced = s })
+
+	if !ok || announced.ID != "a" || announced.Title != "new" {
+		t.Fatalf("RetagSong = %v, announced %+v; want true, a/new", ok, announced)
+	}
+}
+
+func TestClearAndOnEmptyTrackerDoesNotAnnounce(t *testing.T) {
+	tr := NewStateTracker()
+
+	called := false
+	if tr.ClearAnd(func() { called = true }) || called {
+		t.Fatalf("ClearAnd on empty tracker returned true or announced")
+	}
+
+	tr.SetCurrentSong(&models.Song{ID: "a"})
+	if !tr.ClearAnd(func() { called = true }) || !called {
+		t.Fatalf("ClearAnd with a current song did not clear and announce")
+	}
+}
+
+func TestStartAndRetagAnnouncesStayOrdered(t *testing.T) {
+	type announcement struct {
+		retag bool
+		id    string
+	}
+	tr := NewStateTracker()
+	var (
+		logMu sync.Mutex
+		log   []announcement
+	)
+	record := func(a announcement) {
+		runtime.Gosched() // widen the window between a change and its announce
+		logMu.Lock()
+		log = append(log, a)
+		logMu.Unlock()
+	}
+
+	const workers, iterations = 8, 200
+	var wg sync.WaitGroup
+	for w := range workers {
+		wg.Go(func() {
+			for i := range iterations {
+				if (w+i)%2 == 0 {
+					id := fmt.Sprintf("s%d", (w*iterations+i)%5)
+					tr.StartSong(&models.Song{ID: id}, func() { record(announcement{id: id}) })
+					continue
+				}
+				cur := tr.GetCurrentSong()
+				if cur == nil {
+					continue
+				}
+				retag := *cur
+				retag.Title = fmt.Sprintf("t%d-%d", w, i)
+				tr.RetagSong(&retag, func(s models.Song) { record(announcement{retag: true, id: s.ID}) })
+			}
+		})
+	}
+	wg.Wait()
+
+	if len(log) == 0 {
+		t.Fatal("no announcements recorded")
+	}
+	if last, cur := log[len(log)-1], tr.GetCurrentSong(); cur == nil || last.id != cur.ID {
+		t.Fatalf("last announcement %+v, current song %+v", last, cur)
+	}
+	started := ""
+	for i, a := range log {
+		if !a.retag {
+			started = a.id
+			continue
+		}
+		if a.id != started {
+			t.Fatalf("announcement %d retags %q after %q started", i, a.id, started)
+		}
 	}
 }

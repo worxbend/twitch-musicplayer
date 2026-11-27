@@ -304,17 +304,22 @@ func (c *Client) sendNextSong(ctx context.Context) error {
 		return nil
 	}
 
-	// Update shared state tracker so the REST player endpoint is current.
-	if c.stateTracker != nil {
-		c.stateTracker.SetCurrentSong(song)
-	}
-
 	// Broadcast to all peers so management UIs get live updates.
-	if nowMsg, encErr := Encode(MsgNowPlaying, NowPlayingPayload{Song: *song, QueueDepth: queueDepth, HistoryID: payload.HistoryID}); encErr == nil {
-		c.hub.Broadcast(nowMsg)
+	announce := func() {
+		if nowMsg, encErr := Encode(MsgNowPlaying, NowPlayingPayload{Song: *song, QueueDepth: queueDepth, HistoryID: payload.HistoryID}); encErr == nil {
+			c.hub.Broadcast(nowMsg)
+		}
+		if queueMsg, encErr := Encode(MsgQueueUpdated, QueueUpdatedPayload{QueueDepth: queueDepth, Reason: "song_started"}); encErr == nil {
+			c.hub.Broadcast(queueMsg)
+		}
 	}
-	if queueMsg, encErr := Encode(MsgQueueUpdated, QueueUpdatedPayload{QueueDepth: queueDepth, Reason: "song_started"}); encErr == nil {
-		c.hub.Broadcast(queueMsg)
+	// Update the shared tracker so the REST player endpoint is current, and
+	// broadcast under its announce lock so a concurrent retag re-announce of
+	// the previous song cannot reach clients after this start.
+	if c.stateTracker != nil {
+		c.stateTracker.StartSong(song, announce)
+	} else {
+		announce()
 	}
 	return nil
 }
@@ -326,16 +331,20 @@ func (c *Client) isPlayer() bool {
 
 // clearNowPlaying clears the tracked current song and broadcasts a state
 // snapshot without current_song, so overlays and the admin console stop
-// showing the finished song. It does nothing when no song was set.
+// showing the finished song. It does nothing when no song was set. The
+// snapshot is built and broadcast under the tracker's announce lock, so it
+// cannot land after a newer song start; it reads only the in-memory queue.
 func (c *Client) clearNowPlaying(ctx context.Context) {
-	if c.stateTracker == nil || !c.stateTracker.ClearCurrentSong() {
+	if c.stateTracker == nil {
 		return
 	}
-	if msg, err := Encode(MsgState, c.snapshotState(ctx)); err == nil {
-		c.hub.Broadcast(msg)
-	} else {
-		log.Printf("encode state: %v", err)
-	}
+	c.stateTracker.ClearAnd(func() {
+		if msg, err := Encode(MsgState, c.snapshotState(ctx)); err == nil {
+			c.hub.Broadcast(msg)
+		} else {
+			log.Printf("encode state: %v", err)
+		}
+	})
 }
 
 // sendPrebuffer peeks at the first playable queue entry and sends the next song's URL to this

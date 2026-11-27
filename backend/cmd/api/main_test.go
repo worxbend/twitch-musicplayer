@@ -394,3 +394,48 @@ func TestLoadBlocklistReplacesCorruptFile(t *testing.T) {
 		t.Fatalf("reloaded List = %v, want [s1]", got)
 	}
 }
+
+func TestOnSongUpdatedReannouncesCurrentSong(t *testing.T) {
+	tracker := player.NewStateTracker()
+	tracker.SetCurrentSong(&models.Song{ID: "a", Title: "old"})
+	hub := &capturingBroadcaster{}
+	q := fakeQueueLister{items: []*models.QueueItem{{}, {}}}
+
+	onSongUpdated(context.Background(), tracker, hub, q, &models.Song{ID: "a", Title: "new"})
+
+	if len(hub.msgs) != 2 || hub.msgs[0].Type != websocket.MsgNowPlaying || hub.msgs[1].Type != websocket.MsgQueueUpdated {
+		t.Fatalf("frames = %+v, want now_playing then queue_updated", hub.msgs)
+	}
+	var got websocket.NowPlayingPayload
+	if err := websocket.DecodePayload(hub.msgs[0], &got); err != nil {
+		t.Fatalf("decode now_playing: %v", err)
+	}
+	if got.Song.ID != "a" || got.Song.Title != "new" || got.QueueDepth != 2 {
+		t.Errorf("now_playing = %+v, want a/new depth 2", got)
+	}
+}
+
+// A retag of A that arrives after B started must not re-announce A.
+func TestOnSongUpdatedSkipsSongNoLongerCurrent(t *testing.T) {
+	tracker := player.NewStateTracker()
+	tracker.SetCurrentSong(&models.Song{ID: "a", Title: "A"})
+	hub := &capturingBroadcaster{}
+	tracker.StartSong(&models.Song{ID: "b", Title: "B"}, func() {
+		msg, err := websocket.Encode(websocket.MsgNowPlaying, websocket.NowPlayingPayload{Song: models.Song{ID: "b"}})
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		hub.Broadcast(msg)
+	})
+
+	onSongUpdated(context.Background(), tracker, hub, fakeQueueLister{}, &models.Song{ID: "a", Title: "A2"})
+
+	for i, msg := range hub.msgs[1:] {
+		if msg.Type == websocket.MsgNowPlaying {
+			t.Fatalf("frame %d after B's start is now_playing %s", i+1, msg.Payload)
+		}
+	}
+	if cur := tracker.GetCurrentSong(); cur.ID != "b" {
+		t.Errorf("current song = %q, want b", cur.ID)
+	}
+}
