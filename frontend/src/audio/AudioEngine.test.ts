@@ -101,8 +101,11 @@ class FakeAudioContext {
 
   resumeCalls = 0;
   resumeError: Error | null = null;
+  // Like a context that waits for a gesture or an interruption that never ends.
+  resumeHang = false;
   resume() {
     this.resumeCalls++;
+    if (this.resumeHang) return new Promise<void>(() => {});
     if (this.resumeError) return Promise.reject(this.resumeError);
     this.state = 'running';
     return Promise.resolve();
@@ -179,7 +182,7 @@ Object.assign(globalThis, {
   },
 });
 
-const { AudioEngine, PLAY_START_TIMEOUT_MS, STALL_TIMEOUT_MS, STALL_CHECK_MS } = await import('./AudioEngine.ts');
+const { AudioEngine, PLAY_START_TIMEOUT_MS, RESUME_TIMEOUT_MS, STALL_TIMEOUT_MS, STALL_CHECK_MS } = await import('./AudioEngine.ts');
 
 const FADE_MS = 2500;
 
@@ -608,6 +611,98 @@ test('playStream resumes an interrupted context before the element plays', async
 
   assert.deepEqual(order, ['resume', 'play']);
   assert.equal(ctx().state, 'running');
+});
+
+// Swaps in a fresh engine whose context exists but sits in state 'suspended'.
+function suspendedEngine(allowAutoplay: boolean) {
+  engine.dispose();
+  engine = new AudioEngine({ allowAutoplay });
+  engine['_ensureCtx']();
+  ctx().state = 'suspended';
+}
+
+function channelSources() {
+  return [engine['_channelA'], engine['_channelB']].map(channel => channel?.audioEl.src ?? '');
+}
+
+for (const [allowAutoplay, name] of [[false, 'NotAllowedError'], [true, 'TimeoutError']] as const) {
+  test(`a hung context resume fails with ${name} when allowAutoplay is ${allowAutoplay}`, async () => {
+    suspendedEngine(allowAutoplay);
+    ctx().resumeHang = true;
+    let settled = false;
+    const first = engine.playStream('/stream/a', 'A').finally(() => { settled = true; });
+    const rejected = assert.rejects(first, { name });
+
+    mock.timers.tick(RESUME_TIMEOUT_MS - 1);
+    await flush();
+    assert.equal(settled, false, 'no timeout before the limit');
+    mock.timers.tick(1);
+    await rejected;
+
+    assert.equal(ctx().resumeCalls, 1);
+    assert.deepEqual(channelSources(), ['', '']);
+    assert.equal(engine.playing, false);
+  });
+}
+
+// Holds the context's next resume() open until the test settles it.
+function holdResume() {
+  let settle: { resolve: () => void; reject: (error: Error) => void } | null = null;
+  mock.method(ctx(), 'resume', () => new Promise<void>((resolve, reject) => {
+    settle = {
+      resolve: () => {
+        ctx().state = 'running';
+        resolve();
+      },
+      reject,
+    };
+  }));
+  return () => {
+    assert.ok(settle, 'context resume was not called');
+    return settle;
+  };
+}
+
+test('a context resume that settles before the limit clears its timer', async () => {
+  suspendedEngine(false);
+  const settle = holdResume();
+  const setTimer = mock.method(window, 'setTimeout');
+  const clearTimer = mock.method(window, 'clearTimeout');
+  const first = engine.playStream('/stream/a', 'A');
+  await flush();
+  const resumeTimer = setTimer.mock.calls.find(call => call.arguments[1] === RESUME_TIMEOUT_MS)?.result;
+  assert.ok(resumeTimer !== undefined, 'resume timer was not armed');
+
+  mock.timers.tick(RESUME_TIMEOUT_MS - 1);
+  settle().resolve();
+  await flush();
+  assert.ok(clearTimer.mock.calls.some(call => call.arguments[0] === resumeTimer), 'resume timer left pending');
+  mock.timers.tick(FADE_MS);
+  await first;
+  assert.equal(engine.playing, true);
+  assert.deepEqual(channelSources().filter(Boolean), ['/stream/a']);
+});
+
+test('a context resume that rejects after the timeout causes no unhandled rejection', async () => {
+  suspendedEngine(false);
+  const settle = holdResume();
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const first = engine.playStream('/stream/a', 'A');
+    const rejected = assert.rejects(first, { name: 'NotAllowedError' });
+    await flush();
+    mock.timers.tick(RESUME_TIMEOUT_MS);
+    await rejected;
+
+    settle().reject(new DOMException('denied', 'NotAllowedError'));
+    await flush();
+    await flush();
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+  assert.deepEqual(unhandled, []);
 });
 
 test('preloadNext loads straight into the inactive channel when no fade runs', async () => {

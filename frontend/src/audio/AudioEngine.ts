@@ -7,6 +7,9 @@ const DEFAULT_FADE_OUT_MS = 2500;
 const DEFAULT_FADE_IN_MS = 2500;
 // A stream whose play() has not settled by then is treated as failed.
 export const PLAY_START_TIMEOUT_MS = 20_000;
+// A context resume that has not settled by then is treated as failed, so a play
+// cannot hang on a context that waits for a gesture or an ended interruption.
+export const RESUME_TIMEOUT_MS = 5_000;
 // A started stream whose position has not moved for this long while playing is
 // treated as failed: a half-open connection fires neither error nor ended.
 export const STALL_TIMEOUT_MS = 30_000;
@@ -141,8 +144,15 @@ export class AudioEngine {
     if (this._disposed) return;
     if (this._contextNeedsResume()) {
       this._assertCanStartAudio();
-      await this.ctx!.resume();
+      await this._withTimeout(this.ctx!.resume(), RESUME_TIMEOUT_MS, () => this._resumeTimeoutError());
     }
+  }
+
+  // A click can rescue a hung resume only when autoplay is not allowed; an autoplay
+  // page (OBS) gets a TimeoutError instead, so the caller retries on its own timer.
+  private _resumeTimeoutError(): DOMException {
+    const name = this._allowAutoplay ? 'TimeoutError' : 'NotAllowedError';
+    return new DOMException('audio context did not resume', name);
   }
 
   // Safari/iOS reports 'interrupted' after a call, Siri or a lock; AudioContextState lacks it.
@@ -375,7 +385,11 @@ export class AudioEngine {
       // play() clears paused at once, so a track change reports 'playing' with no 'paused' blip.
       this._emitPlayState();
       this._emitPosition();
-      await this._withStartTimeout(started);
+      await this._withTimeout(
+        started,
+        PLAY_START_TIMEOUT_MS,
+        () => new DOMException('stream did not start', 'TimeoutError'),
+      );
       if (superseded()) return;
       this.playing = true;
       handlers.onStarted?.();
@@ -502,18 +516,16 @@ export class AudioEngine {
     channel._stallCleanup = stop;
   }
 
-  // Rejects with TimeoutError when a stream never starts, e.g. a stalled proxy.
-  // Promise.race also handles a late rejection of `started`, so it is never unhandled.
-  private async _withStartTimeout(started: Promise<void>): Promise<void> {
+  // Rejects with makeError() when `pending` has not settled within `ms`, e.g. a stalled
+  // proxy or a context that never resumes. Promise.race also handles a late rejection
+  // of `pending`, so it is never unhandled.
+  private async _withTimeout(pending: Promise<void>, ms: number, makeError: () => DOMException): Promise<void> {
     let timer: number | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = window.setTimeout(
-        () => reject(new DOMException('stream did not start', 'TimeoutError')),
-        PLAY_START_TIMEOUT_MS,
-      );
+      timer = window.setTimeout(() => reject(makeError()), ms);
     });
     try {
-      await Promise.race([started, timeout]);
+      await Promise.race([pending, timeout]);
     } finally {
       window.clearTimeout(timer);
     }
