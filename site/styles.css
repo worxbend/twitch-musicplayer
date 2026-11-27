@@ -25,6 +25,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 img { display: block; max-width: 100%; height: auto; }
+/* <picture> only adds a WebP source; keep layout as if the img were a direct child. */
+picture { display: contents; }
 a { color: inherit; text-underline-offset: 3px; }
 code { font-family: var(--mono); font-size: .86em; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: 4px; }

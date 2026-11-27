@@ -14,6 +14,9 @@ function tuneTo(name, stations) {
   if (!scene) return;
   const shot = document.getElementById('tuner-shot');
   shot.src = `shots/${name}-desktop.png`;
+  // The <source> wins over img.src in WebP-capable browsers, so swap it too.
+  const webp = document.getElementById('tuner-shot-webp');
+  if (webp) webp.srcset = `shots/${name}-desktop.webp`;
   shot.alt = scene.alt;
   document.getElementById('tuner-route').textContent = scene.route;
   document.getElementById('tuner-text').textContent = scene.text;

@@ -8,6 +8,13 @@ on:
       - docs/signal-observatory/*.png
       - frontend/src/assets/worxbend-logo.png
       - .github/workflows/pages.yml
+  # Pull requests build and check the site but never deploy it.
+  pull_request:
+    paths:
+      - site/**
+      - docs/signal-observatory/*.png
+      - frontend/src/assets/worxbend-logo.png
+      - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:
@@ -25,20 +32,54 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: install webp tools
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends webp
       # The site reuses the README screenshots and logo instead of keeping copies.
+      # The source logo is 2048px; the page shows it at 40px, so ship an 80px copy.
       - name: assemble site
         run: |
           set -euo pipefail
           mkdir -p _site/shots
           cp site/index.html site/styles.css site/tuner.js _site/
-          cp frontend/src/assets/worxbend-logo.png _site/logo.png
-          cp docs/signal-observatory/*-desktop.png _site/shots/
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+          cwebp -quiet -lossless -resize 80 80 frontend/src/assets/worxbend-logo.png -o _site/logo.webp
+          dwebp -quiet _site/logo.webp -png -o _site/logo.png
+          for n in player spectrum bars mirror dots ribbon line lens console; do
+            cp "docs/signal-observatory/$n-desktop.png" _site/shots/
+            cwebp -quiet -q 80 -m 6 "_site/shots/$n-desktop.png" -o "_site/shots/$n-desktop.webp"
+          done
+      # Fail on a missing local asset or an oversized site before anything deploys.
+      - name: check site
+        run: |
+          set -euo pipefail
+          missing=0
+          html_refs=$(grep -oE '(src|srcset|href)="[^"]*"' _site/index.html | cut -d'"' -f2)
+          scene_refs=$(sed -nE 's/^  ([a-z]+): \{ route:.*/\1/p' _site/tuner.js |
+            sed -E 's#.*#shots/&-desktop.png shots/&-desktop.webp#')
+          for ref in $html_refs $scene_refs; do
+            case "$ref" in http://*|https://*|'#'*) continue ;; esac
+            path="${ref%%[?#]*}"
+            case "$path" in */) path="${path}index.html" ;; esac
+            if [ ! -f "_site/$path" ]; then
+              echo "::error::missing site asset: $ref"
+              missing=1
+            fi
+          done
+          size=$(du -sb _site | cut -f1)
+          echo "site size: $size bytes"
+          if [ "$size" -gt 2000000 ]; then
+            echo "::error::site is $size bytes, over the 2000000 byte budget"
+            missing=1
+          fi
+          exit "$missing"
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: _site
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5

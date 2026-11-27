@@ -23,7 +23,10 @@
 
   <header class="masthead">
     <a class="brand" href="./">
-      <img src="logo.png" alt="" width="40" height="40" />
+      <picture>
+        <source type="image/webp" srcset="logo.webp" />
+        <img src="logo.png" alt="" width="40" height="40" />
+      </picture>
       <span>Lofi Radio <em>for Twitch</em></span>
     </a>
     <nav aria-label="Page">
@@ -49,8 +52,11 @@
 
       <figure class="tuner" aria-labelledby="tuner-caption">
         <div class="tuner-screen">
-          <img id="tuner-shot" src="shots/player-desktop.png" width="1440" height="960"
-               alt="Ambient player: an orbital record, fine rain and a floating track deck" />
+          <picture>
+            <source id="tuner-shot-webp" type="image/webp" srcset="shots/player-desktop.webp" />
+            <img id="tuner-shot" src="shots/player-desktop.png" width="1440" height="960"
+                 alt="Ambient player: an orbital record, fine rain and a floating track deck" />
+          </picture>
         </div>
         <figcaption id="tuner-caption" class="tuner-readout">
           <span class="readout-route" id="tuner-route">/</span>
@@ -150,8 +156,11 @@
             "what was that?" in chat without guessing.</p>
           <p>It works from the keyboard, and screen readers hear every status change.</p>
         </div>
-        <img class="shot" src="shots/console-desktop.png" width="1440" height="1141" loading="lazy"
-             alt="Station console with the current track, a searchable music library and the upcoming queue" />
+        <picture>
+          <source type="image/webp" srcset="shots/console-desktop.webp" />
+          <img class="shot" src="shots/console-desktop.png" width="1440" height="1141" loading="lazy"
+               alt="Station console with the current track, a searchable music library and the upcoming queue" />
+        </picture>
       </div>
     </section>
 
