@@ -247,12 +247,23 @@ html.player-page body { overflow-y: auto; }
 .now-playing-overlay.np-theme-pill .np-track { display: inline-block; max-width: 100%; padding: .35em .7em; background: rgba(8, 12, 24, .82); border-radius: 999px; }
 .now-playing-overlay.np-theme-pill .np-track--art { display: inline-flex; border-radius: calc(var(--np-size) * .4); }
 .now-playing-overlay.np-font-mono { font-family: var(--mono); }
+/* ?ticker=1: one-line title. 100cqw is the title box width, so a title that fits moves 0px and a
+   long one scrolls to its end and back. Overflow is start-aligned for every text-align, so the
+   negative shift suits every ?align=. A size container has no intrinsic width, so the
+   shrink-to-fit track (pill inline-block, art inline-flex) gets a definite one. */
+.now-playing-overlay.np-ticker .np-track, .now-playing-overlay.np-ticker .np-track--art { display: flex; width: 100%; }
+.now-playing-overlay.np-ticker .np-text { flex: 1 1 auto; min-width: 0; }
+.now-playing-overlay.np-ticker .np-title { white-space: nowrap; overflow: hidden; overflow-wrap: normal; container-type: inline-size; }
+.now-playing-overlay.np-ticker .np-title-run { display: inline-block; animation: np-ticker 14s ease-in-out infinite alternate; }
 @keyframes np-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes np-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes np-ticker { 0%, 15% { transform: none; } 85%, 100% { transform: translateX(min(0px, calc(100cqw - 100%))); } }
 @media (prefers-reduced-motion: reduce) {
   .now-playing-overlay { transition: none; }
   .now-playing-overlay .np-track { animation: none; }
   /* Discrete jumps instead of continuous motion, still placed by elapsed time. !important and
      the higher specificity win over the global reduced-motion animation reset in tokens.css. */
   .now-playing-overlay .np-progress-fill { animation: np-progress var(--np-progress-duration) steps(40, end) var(--np-progress-delay) forwards !important; }
+  /* No scrolling: the title is cut with an ellipsis instead. */
+  .now-playing-overlay.np-ticker .np-title-run { animation: none !important; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }

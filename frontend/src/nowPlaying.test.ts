@@ -154,18 +154,18 @@ test('nowPlayingPath emits art=1 only when art is on', () => {
 });
 
 test('options default to left and 32px', () => {
-  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false });
+  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false, ticker: false });
 });
 
 test('options accept valid align and size values', () => {
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false });
-  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false, ticker: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false, ticker: false });
   assert.equal(parseNowPlayingOptions('?size=120').size, 120);
 });
 
 test('invalid options fall back to the defaults', () => {
   for (const search of ['?align=middle&size=11', '?align=LEFT&size=121', '?size=40.5', '?size=-20', '?size=abc', '?size=']) {
-    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false }, search);
+    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false, ticker: false }, search);
   }
 });
 
@@ -173,7 +173,7 @@ test('hold accepts whole seconds from 1 to 600', () => {
   assert.equal(parseNowPlayingOptions('?hold=5').hold, 5);
   assert.equal(parseNowPlayingOptions('?hold=1').hold, 1);
   assert.equal(parseNowPlayingOptions('?hold=600').hold, 600);
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10, art: false, theme: 'shadow', font: 'sans', next: false, progress: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10, art: false, theme: 'shadow', font: 'sans', next: false, progress: false, ticker: false });
 });
 
 test('invalid or missing hold means always visible', () => {
@@ -193,13 +193,14 @@ test('nowPlayingPath orders params align, size, hold', () => {
 
 test('nowPlayingPath round-trips through parseNowPlayingOptions', () => {
   const cases: NowPlayingOptions[] = [
-    { align: 'center', size: 48, hold: 8, art: true, theme: 'shadow', font: 'sans', next: false, progress: false },
-    { align: 'right', size: 12, hold: 600, art: false, theme: 'outline', font: 'sans', next: false, progress: false },
-    { align: 'left', size: 120, hold: 1, art: false, theme: 'pill', font: 'mono', next: false, progress: false },
-    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false },
-    { align: 'left', size: 32, hold: 0, art: true, theme: 'shadow', font: 'mono', next: false, progress: false },
-    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: true, progress: false },
-    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: true },
+    { align: 'center', size: 48, hold: 8, art: true, theme: 'shadow', font: 'sans', next: false, progress: false, ticker: false },
+    { align: 'right', size: 12, hold: 600, art: false, theme: 'outline', font: 'sans', next: false, progress: false, ticker: false },
+    { align: 'left', size: 120, hold: 1, art: false, theme: 'pill', font: 'mono', next: false, progress: false, ticker: false },
+    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false, ticker: false },
+    { align: 'left', size: 32, hold: 0, art: true, theme: 'shadow', font: 'mono', next: false, progress: false, ticker: false },
+    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: true, progress: false, ticker: false },
+    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: true, ticker: false },
+    { align: 'center', size: 32, hold: 0, art: true, theme: 'pill', font: 'sans', next: false, progress: false, ticker: true },
   ];
   for (const opts of cases) {
     assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts);
@@ -240,7 +241,7 @@ test('nowPlayingPath emits theme and font only when not the default', () => {
 test('every theme and font round-trips with the other params', () => {
   for (const theme of nowPlayingThemes) {
     for (const font of nowPlayingFonts) {
-      const opts: NowPlayingOptions = { align: 'center', size: 40, hold: 10, art: true, theme, font, next: true, progress: false };
+      const opts: NowPlayingOptions = { align: 'center', size: 40, hold: 10, art: true, theme, font, next: true, progress: false, ticker: false };
       assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts, `${theme}/${font}`);
     }
   }
@@ -254,9 +255,22 @@ test('next is on only for next=1', () => {
 });
 
 test('nowPlayingPath emits next=1 only when next is on, after the other params', () => {
-  assert.equal(nowPlayingPath({ next: true, progress: false }), '/now-playing?next=1');
-  assert.equal(nowPlayingPath({ next: false, progress: false }), '/now-playing');
-  assert.equal(nowPlayingPath({ align: 'center', next: true, progress: false }), '/now-playing?align=center&next=1');
+  assert.equal(nowPlayingPath({ next: true, progress: false, ticker: false }), '/now-playing?next=1');
+  assert.equal(nowPlayingPath({ next: false, progress: false, ticker: false }), '/now-playing');
+  assert.equal(nowPlayingPath({ align: 'center', next: true, progress: false, ticker: false }), '/now-playing?align=center&next=1');
+});
+
+test('ticker is on only for ticker=1', () => {
+  assert.equal(parseNowPlayingOptions('?ticker=1').ticker, true);
+  for (const search of ['', '?ticker=', '?ticker=0', '?ticker=true', '?ticker=yes']) {
+    assert.equal(parseNowPlayingOptions(search).ticker, false, search);
+  }
+});
+
+test('nowPlayingPath emits ticker=1 only when ticker is on, last', () => {
+  assert.equal(nowPlayingPath({ ticker: true }), '/now-playing?ticker=1');
+  assert.equal(nowPlayingPath({ ticker: false }), '/now-playing');
+  assert.equal(nowPlayingPath({ align: 'center', progress: true, ticker: true }), '/now-playing?align=center&progress=1&ticker=1');
 });
 
 test('reduceUpNext takes next_song from queue_updated', () => {
@@ -288,9 +302,9 @@ test('progress is on only for progress=1', () => {
 });
 
 test('nowPlayingPath emits progress=1 only when progress is on, after next', () => {
-  assert.equal(nowPlayingPath({ progress: true }), '/now-playing?progress=1');
-  assert.equal(nowPlayingPath({ progress: false }), '/now-playing');
-  assert.equal(nowPlayingPath({ next: true, progress: true }), '/now-playing?next=1&progress=1');
+  assert.equal(nowPlayingPath({ progress: true, ticker: false }), '/now-playing?progress=1');
+  assert.equal(nowPlayingPath({ progress: false, ticker: false }), '/now-playing');
+  assert.equal(nowPlayingPath({ next: true, progress: true, ticker: false }), '/now-playing?next=1&progress=1');
 });
 
 test('duration_secs and elapsed_secs become durationSecs and elapsedSecs', () => {

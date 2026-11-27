@@ -29,6 +29,7 @@ export type NowPlayingFont = 'sans' | 'mono';
 /**
  * `hold` is seconds the title stays visible after each change; 0 keeps it visible. `art` shows the cover.
  * `next` shows an "Up next" line with the next queued title. `progress` shows a track progress bar.
+ * `ticker` keeps the title on one line and scrolls it when it does not fit.
  */
 export type NowPlayingOptions = {
   align: NowPlayingAlign;
@@ -39,6 +40,7 @@ export type NowPlayingOptions = {
   font: NowPlayingFont;
   next: boolean;
   progress: boolean;
+  ticker: boolean;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -182,8 +184,8 @@ function pick<T extends string>(allowed: readonly T[], raw: unknown): T {
 
 /**
  * Reads `?align=`, `?size=` (px), `?hold=` (seconds, 1..600), `?art=1`, `?theme=`,
- * `?font=`, `?next=1` and `?progress=1`. Anything invalid falls back to left / 32 / 0 / no art /
- * shadow / sans / no up-next line / no progress bar, where hold 0 means always visible.
+ * `?font=`, `?next=1`, `?progress=1` and `?ticker=1`. Anything invalid falls back to left / 32 / 0 /
+ * no art / shadow / sans / no up-next line / no progress bar / wrapped title, where hold 0 means always visible.
  */
 export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const params = new URLSearchParams(search);
@@ -203,6 +205,7 @@ export function parseNowPlayingOptions(search: string): NowPlayingOptions {
     font,
     next: params.get('next') === '1',
     progress: params.get('progress') === '1',
+    ticker: params.get('ticker') === '1',
   };
 }
 
@@ -231,6 +234,7 @@ export function nowPlayingPath(opts: Partial<NowPlayingOptions>): string {
   if (font !== 'sans') params.set('font', font);
   if (opts.next === true) params.set('next', '1');
   if (opts.progress === true) params.set('progress', '1');
+  if (opts.ticker === true) params.set('ticker', '1');
   const query = params.toString();
   return query ? `/now-playing?${query}` : '/now-playing';
 }

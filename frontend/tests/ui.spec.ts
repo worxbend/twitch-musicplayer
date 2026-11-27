@@ -128,9 +128,10 @@ test('now playing overlay URL builder copies the configured URL', async ({ page,
   await page.getByLabel('Font').selectOption('mono');
   await page.getByLabel('Up next').check();
   await page.getByLabel('Progress bar').check();
+  await page.getByLabel('Scroll long titles').check();
   await page.getByRole('button', { name: 'Copy now playing overlay URL' }).click();
   await expect(page.getByRole('status')).toContainText('Browser-source URL copied');
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1&theme=pill&font=mono&next=1&progress=1');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1&theme=pill&font=mono&next=1&progress=1&ticker=1');
 });
 
 test('library search, queue add/remove, and keyboard-safe clear confirmation', async ({ page }) => {
@@ -811,6 +812,44 @@ test('now-playing without ?next=1 shows no up-next line', async ({ page }) => {
   await page.goto('/now-playing');
   await expect(page.getByText('Midnight compiler')).toBeVisible();
   await expect(page.locator('.np-next')).toHaveCount(0);
+});
+
+test('now-playing ?ticker=1 keeps a long title on one line and scrolls it; reduced motion cuts it with an ellipsis', async ({ page }) => {
+  const longTitle = 'An extremely long lofi title that keeps going well past the edge of any overlay '.repeat(3).trim();
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
+    ws.send(JSON.stringify({ type: 'now_playing', payload: { song: { ...songs[0], title: longTitle, has_cover: true }, history_id: 'h1', queue_depth: 1 } }));
+  });
+  await page.route('**/v1/songs/*/cover', route => route.fulfill({ contentType: 'image/png', body: onePixelPng }));
+  const title = page.locator('.np-title');
+  const run = page.locator('.np-title-run');
+  const widths = () => title.evaluate(el => ({ client: el.clientWidth, scroll: el.scrollWidth }));
+
+  await page.goto('/now-playing?ticker=1');
+  await expect(run).toHaveText(longTitle);
+  await expect(title).toHaveCSS('white-space', 'nowrap');
+  await expect(run).toHaveCSS('animation-name', 'np-ticker');
+  const plain = await widths();
+  expect(plain.client).toBeGreaterThan(0);
+  expect(plain.scroll).toBeGreaterThan(plain.client);
+
+  // A size container has no intrinsic width; the inline-flex art row and inline-block pill must still give it one.
+  for (const extra of ['&art=1', '&theme=pill', '&art=1&theme=pill']) {
+    await page.goto(`/now-playing?ticker=1${extra}`);
+    await expect(run).toHaveText(longTitle);
+    expect((await widths()).client, extra).toBeGreaterThan(0);
+  }
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/now-playing?ticker=1');
+  await expect(run).toHaveText(longTitle);
+  await expect(run).toHaveCSS('animation-name', 'none');
+  await expect(run).toHaveCSS('text-overflow', 'ellipsis');
+  await page.emulateMedia({ reducedMotion: null });
+
+  await page.goto('/now-playing');
+  await expect(run).toHaveText(longTitle);
+  await expect(title).not.toHaveCSS('white-space', 'nowrap');
+  await expect(run).toHaveCSS('animation-name', 'none');
 });
 
 test('now-playing hold re-shows a repeated title on a new history_id; a dry-queue state clears it', async ({ page }) => {

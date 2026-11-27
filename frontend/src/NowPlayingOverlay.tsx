@@ -24,7 +24,8 @@ const heartbeatFrame = JSON.stringify({ type: 'heartbeat' });
  * that many seconds after each new song start or title change. With `next` it
  * also shows the next queued title from the frames it already receives. With
  * `progress` it draws a progress bar as a CSS animation started at the server's
- * elapsed time on each song frame, so it needs no timer or polling.
+ * elapsed time on each song frame, so it needs no timer or polling. With
+ * `ticker` the title stays on one line and CSS scrolls it when it does not fit.
  */
 export function NowPlayingOverlay(props: Props) {
   const [song, setSong] = createSignal<NowPlayingSong | null>(null);
@@ -152,6 +153,7 @@ export function NowPlayingOverlay(props: Props) {
         'np-theme-outline': props.theme === 'outline',
         'np-theme-pill': props.theme === 'pill',
         'np-font-mono': props.font === 'mono',
+        'np-ticker': props.ticker,
       }} style={{ 'text-align': props.align, '--np-size': `${props.size}px` }}>
       <Show when={song()?.title} keyed>
         {title => (
@@ -160,7 +162,7 @@ export function NowPlayingOverlay(props: Props) {
               {url => <img class="np-art" src={url} alt="" decoding="async" onError={() => setFailedCover(url)} />}
             </Show>
             <div class="np-text">
-              <p class="np-title">{title}</p>
+              <p class="np-title"><span class="np-title-run">{title}</span></p>
               <Show when={song()?.artist}>
                 <p class="np-artist">{song()?.artist}</p>
               </Show>

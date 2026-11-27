@@ -104,8 +104,14 @@ duration, fades with `hold` like the text, and moves in discrete steps when the 
 for reduced motion. Its position is approximate: it counts from when the server sent the
 song, a moment before the audio is heard.
 
+`ticker=1` keeps the title on one line, for example `/now-playing?ticker=1&align=center`.
+A title that fits stays still; a title too long for the overlay scrolls slowly to its end
+and back. When the system asks for reduced motion it does not scroll and ends in an
+ellipsis instead. Without `ticker` a long title wraps onto more lines.
+
 The **Now playing text** card on the Scenes page builds this URL from align, size, hold,
-theme, font, album-art, up-next and progress-bar controls and copies it for you.
+theme, font, album-art, up-next, progress-bar and scroll-long-titles controls and copies it
+for you.
 
 ### 🎨 Recolouring
 

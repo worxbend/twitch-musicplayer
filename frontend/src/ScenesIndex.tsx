@@ -36,9 +36,10 @@ export function ScenesIndex() {
   const [art, setArt] = createSignal(false);
   const [next, setNext] = createSignal(false);
   const [progress, setProgress] = createSignal(false);
+  const [ticker, setTicker] = createSignal(false);
   const [theme, setTheme] = createSignal<NowPlayingTheme>('shadow');
   const [font, setFont] = createSignal<NowPlayingFont>('sans');
-  const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold(), art: art(), theme: theme(), font: font(), next: next(), progress: progress() });
+  const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold(), art: art(), theme: theme(), font: font(), next: next(), progress: progress(), ticker: ticker() });
   let timer = 0;
   onMount(() => {
     document.documentElement.classList.add('scenes-index-page');
@@ -162,6 +163,10 @@ export function ScenesIndex() {
                 <label class="overlay-check">
                   <input type="checkbox" checked={progress()} onChange={e => setProgress(e.currentTarget.checked)} />
                   Progress bar
+                </label>
+                <label class="overlay-check">
+                  <input type="checkbox" checked={ticker()} onChange={e => setTicker(e.currentTarget.checked)} />
+                  Scroll long titles
                 </label>
               </div>
               <div class="scene-urls">
