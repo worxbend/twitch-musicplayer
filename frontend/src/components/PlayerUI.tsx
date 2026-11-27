@@ -5,6 +5,7 @@ import type { ConnectionStatus, ErrorCode, PlaybackStatus } from '../audio/Backe
 import { TerminalHeader } from './TerminalHeader';
 import { playerStatus, playToggle } from './playerStatus';
 import { SCENES } from '../viz/scenes';
+import { sceneHref } from '../routes';
 
 interface Props {
   trackName: () => string;
@@ -121,8 +122,8 @@ export function PlayerUI(props: Props) {
         <div class="performance-space" aria-hidden="true"><span class="performance-coordinate">{props.sceneSlug || 'ambient'} / {status().live ? 'audio reactive' : 'idle study'}</span><span class="performance-coordinate">Signal field</span></div>
         <div class="player-controls">
         <div class="scene-switcher" role="group" aria-label="Scene selection">
-          <a href={`/${window.location.search}`} aria-current={!props.sceneSlug ? 'page' : undefined}>Ambient</a>
-          <For each={SCENES}>{scene => <a href={`/${scene.slug}${new URLSearchParams(window.location.search).has('ramp') ? `?ramp=${encodeURIComponent(new URLSearchParams(window.location.search).get('ramp')!)}` : ''}`} aria-current={props.sceneSlug === scene.slug ? 'page' : undefined}>{scene.label}</a>}</For>
+          <a href={sceneHref('', window.location.search)} aria-current={!props.sceneSlug ? 'page' : undefined}>Ambient</a>
+          <For each={SCENES}>{scene => <a href={sceneHref(scene.slug, window.location.search)} aria-current={props.sceneSlug === scene.slug ? 'page' : undefined}>{scene.label}</a>}</For>
         </div>
         <section class="player-deck" aria-label="Current track">
           <Show when={cover()} keyed fallback={<div class="deck-art" aria-hidden="true"><span /></div>}>
@@ -134,7 +135,7 @@ export function PlayerUI(props: Props) {
           <a class="btn deck-link" href="/scenes">Change scene ↗</a>
         </section>
         </div>
-        <footer class="player-footer"><span>Stay a little longer.</span><span>Your music. Your frequency.</span><a href={props.sceneSlug ? `/${props.sceneSlug}-overlay${window.location.search}` : `/overlay${window.location.search}`}>Clean OBS view ↗</a></footer>
+        <footer class="player-footer"><span>Stay a little longer.</span><span>Your music. Your frequency.</span><a href={sceneHref(props.sceneSlug ?? '', window.location.search, true)}>Clean OBS view ↗</a></footer>
       </main>
     </div>
   );

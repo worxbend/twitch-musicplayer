@@ -36,3 +36,27 @@ export function resolveRoute(pathname: string, search: string, sceneSlugs: reado
   }
   return { kind: 'player' };
 }
+
+/** The URL params a player page reads, in the order links write them. */
+export const PLAYER_LINK_PARAMS = ['ramp', 'autoplay'] as const;
+
+/** Keeps only the non-empty player params of `search`; '' when none remain. */
+export function playerLinkSearch(search: string): string {
+  const from = new URLSearchParams(search);
+  const kept = new URLSearchParams();
+  for (const name of PLAYER_LINK_PARAMS) {
+    const value = from.get(name);
+    if (value) kept.set(name, value);
+  }
+  const query = kept.toString();
+  return query ? `?${query}` : '';
+}
+
+/**
+ * The link to a scene that keeps the player params. Slug '' is the ambient
+ * player at `/`; `overlay` picks the transparent page.
+ */
+export function sceneHref(slug: string, search: string, overlay = false): string {
+  const path = slug ? `/${slug}${overlay ? '-overlay' : ''}` : overlay ? '/overlay' : '/';
+  return path + playerLinkSearch(search);
+}
