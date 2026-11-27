@@ -552,3 +552,100 @@ func TestWritePumpClosedClientRequeuesBufferedPlaySong(t *testing.T) {
 		t.Fatalf("send buffer holds %d messages after exit, want 0", n)
 	}
 }
+
+// newPlayerTestClients registers n unconnected clients on one hub, sharing one
+// state tracker and a queue manager that always yields song-1.
+func newPlayerTestClients(n int) []*Client {
+	h := NewHub()
+	st := player.NewStateTracker()
+	mgr := &recordingQueueManager{song: &models.Song{ID: "song-1", Title: "Rain"}}
+	clients := make([]*Client, n)
+	for i := range clients {
+		clients[i] = NewClient(h, nil, mgr, "", st)
+		h.Register(clients[i], nil)
+	}
+	return clients
+}
+
+// startPlaying makes c act as a player that got song-1, then empties its send
+// buffer and the hub's broadcast channel.
+func startPlaying(t *testing.T, c *Client) {
+	t.Helper()
+	c.handleMessage(Message{Type: MsgNeedSong})
+	drainSent(t, c, MsgPlaySong)
+	for len(c.hub.broadcast) > 0 {
+		<-c.hub.broadcast
+	}
+}
+
+func TestLastPlayerDisconnectClearsNowPlaying(t *testing.T) {
+	c := newPlayerTestClients(1)[0]
+	startPlaying(t, c)
+
+	c.hub.Unregister(c)
+
+	assertNowPlayingCleared(t, c)
+}
+
+func TestPlayerDisconnectKeepsNowPlayingWhileAnotherPlayerRemains(t *testing.T) {
+	clients := newPlayerTestClients(2)
+	first, second := clients[0], clients[1]
+	startPlaying(t, first)
+	second.handleMessage(Message{Type: MsgPeekNext})
+
+	first.hub.Unregister(first)
+	assertSongKept(t, first)
+
+	second.hub.Unregister(second)
+	assertNowPlayingCleared(t, second)
+}
+
+func TestNonPlayerDisconnectKeepsNowPlaying(t *testing.T) {
+	clients := newPlayerTestClients(2)
+	playing, overlay := clients[0], clients[1]
+	startPlaying(t, playing)
+	overlay.handleMessage(Message{Type: MsgHeartbeat})
+	drainSent(t, overlay, MsgHeartbeatAck)
+
+	overlay.hub.Unregister(overlay)
+
+	assertSongKept(t, playing)
+}
+
+func TestLastPlayerDisconnectWithNoSongBroadcastsNothing(t *testing.T) {
+	c := NewClient(NewHub(), nil, emptyQueueManager{}, "", player.NewStateTracker())
+	c.hub.Register(c, nil)
+	c.handleMessage(Message{Type: MsgNeedSong})
+	drainSent(t, c, MsgError)
+
+	c.hub.Unregister(c)
+
+	assertNothingPublished(t, c)
+}
+
+func TestShutdownKeepsNowPlaying(t *testing.T) {
+	c := newPlayerTestClients(1)[0]
+	startPlaying(t, c)
+
+	if err := c.hub.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown = %v, want nil", err)
+	}
+
+	assertSongKept(t, c)
+}
+
+func TestDroppingLastPlayerTwiceClearsOnce(t *testing.T) {
+	c := newPlayerTestClients(1)[0]
+	startPlaying(t, c)
+
+	c.hub.Unregister(c)
+	c.stateTracker.SetCurrentSong(&models.Song{ID: "song-1", Title: "Rain"})
+	c.hub.Unregister(c)
+
+	if cur := c.stateTracker.GetCurrentSong(); cur == nil {
+		t.Fatal("second drop cleared now-playing again, want no-op")
+	}
+	if n := len(c.hub.broadcast); n != 1 {
+		t.Fatalf("hub.broadcast holds %d messages, want 1", n)
+	}
+}

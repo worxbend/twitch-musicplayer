@@ -165,6 +165,10 @@ showing the finished song. Because the player sends `song_finished` at the cross
 this happens up to ~3s before the audio ends. A `need_song` on an empty queue never clears
 it: a second player tab sends one on connect while the first may still be playing.
 
+The same cleared `state` is broadcast when the last connection that acted as a player (sent
+`need_song`, `song_finished` or `peek_next`) closes. A silent network drop is noticed only
+after the pong timeout (60s). Server shutdown does not clear `current_song`.
+
 ```json
 {
   "type": "state",

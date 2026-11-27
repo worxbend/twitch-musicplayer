@@ -143,7 +143,10 @@ Returns the authoritative playback snapshot:
 `current_song` is omitted while nothing is playing. It is also cleared once a song finishes
 with nothing queued under `manual_only`, or with an empty library under an auto strategy
 (up to ~3s before the audio ends, at the crossfade lead); `/v1/now-playing.txt` then
-returns an empty body and the OBS now-playing file is emptied.
+returns an empty body and the OBS now-playing file is emptied. The same happens when the last
+WebSocket connection that acted as a player (sent `need_song`, `song_finished` or `peek_next`)
+closes; a silent network drop counts only after the 60s pong timeout, and server shutdown
+does not clear it.
 
 ```http
 POST /v1/player:skip

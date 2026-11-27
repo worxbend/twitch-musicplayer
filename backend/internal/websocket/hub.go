@@ -61,15 +61,35 @@ func (h *Hub) deliver(msg Message) {
 }
 
 // drop removes a client from the hub and signals its write pump to finish.
+// When c was the last client acting as a player, it clears now-playing, since
+// nothing plays any more. Shutdown does not come through here, so it keeps it.
 func (h *Hub) drop(c *Client) {
 	h.mu.Lock()
 	_, known := h.clients[c]
 	delete(h.clients, c)
+	last := known && c.isPlayer() && !h.hasPlayerLocked()
 	h.mu.Unlock()
 
 	if known {
 		c.close()
 	}
+	// Outside h.mu: clearNowPlaying broadcasts and reads the queue manager.
+	// A second tab whose first need_song is in flight may set a song again
+	// right after; that is the correct end state.
+	if last {
+		c.clearNowPlaying(context.Background())
+	}
+}
+
+// hasPlayerLocked reports whether any registered client acts as a player.
+// The caller must hold h.mu.
+func (h *Hub) hasPlayerLocked() bool {
+	for other := range h.clients {
+		if other.isPlayer() {
+			return true
+		}
+	}
+	return false
 }
 
 // Broadcast enqueues msg for delivery to all connected clients (non-blocking).

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ws "github.com/gorilla/websocket"
@@ -61,6 +62,9 @@ type Client struct {
 	// after <-closed.
 	closeCode int
 	closeText string
+	// player is set once the peer sends need_song, song_finished or
+	// peek_next; only audio players send those.
+	player atomic.Bool
 }
 
 // NewClient constructs a Client. Serve peers through Endpoint instead.
@@ -215,6 +219,11 @@ func (c *Client) handleMessage(msg Message) {
 	ctx := context.Background()
 
 	switch msg.Type {
+	case MsgNeedSong, MsgSongFinished, MsgPeekNext:
+		c.player.Store(true)
+	}
+
+	switch msg.Type {
 	case MsgNeedSong:
 		c.sendNextSong(ctx)
 
@@ -301,6 +310,11 @@ func (c *Client) sendNextSong(ctx context.Context) error {
 		c.hub.Broadcast(queueMsg)
 	}
 	return nil
+}
+
+// isPlayer reports whether the peer has acted as an audio player.
+func (c *Client) isPlayer() bool {
+	return c.player.Load()
 }
 
 // clearNowPlaying clears the tracked current song and broadcasts a state
