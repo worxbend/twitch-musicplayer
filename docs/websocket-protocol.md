@@ -155,10 +155,22 @@ Known reasons:
 {
   "type": "error",
   "payload": {
+    "code": "queue_empty",
     "message": "queue is empty"
   }
 }
 ```
+
+Sent to the player when `need_song` or `song_finished` cannot get a song. `code` is a closed enum:
+
+| `code` | Meaning |
+| --- | --- |
+| `queue_empty` | The `manual_only` queue is empty. |
+| `library_empty` | The library has no playable songs. |
+| `internal` | Any other server error. The details go to the server log, never to the client. |
+
+`message` is display-only and may change. Clients must branch on `code`, and must treat an
+unknown or missing `code` (for example from an older server) as `internal`.
 
 ### `heartbeat_ack`
 

@@ -1013,6 +1013,50 @@ test('an error with no audible track is reported at once', () => {
   assert.equal(statuses.at(-1)?.message, 'queue is empty');
 });
 
+for (const [code, want] of [
+  ['queue_empty', 'queue_empty'],
+  ['library_empty', 'library_empty'],
+  ['internal', 'internal'],
+  ['quota_exceeded', 'internal'],
+  [42, 'internal'],
+  [undefined, 'internal'],
+] as const) {
+  test(`an error frame with code ${String(code)} reports errorCode ${want}`, () => {
+    const ws = socket();
+    ws.open();
+    ws.message({ type: 'error', payload: { code, message: 'no song' } });
+    assert.equal(lastPlayback(), 'error', 'a frame from an old backend still reports an error');
+    assert.equal(statuses.at(-1)?.errorCode, want);
+  });
+}
+
+test('the error code is cleared once a song starts', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message({ type: 'error', payload: { code: 'queue_empty', message: 'queue is empty' } });
+  ws.message(playSong('a', 'A'));
+  audio.plays[0].start();
+  audio.plays[0].settle.resolve();
+  await flush();
+  assert.equal(lastPlayback(), 'playing');
+  assert.equal(statuses.at(-1)?.errorCode, undefined);
+});
+
+test('a deferred tail error keeps its code', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a', 'A'));
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  audio.plays[0].callbacks.onNearEnd();
+  ws.message({ type: 'error', payload: { code: 'library_empty', message: 'no songs available' } });
+  assert.equal(lastPlayback(), 'playing', 'the tail is still audible');
+  audio.plays[0].callbacks.onEnded();
+  assert.equal(lastPlayback(), 'error');
+  assert.equal(statuses.at(-1)?.errorCode, 'library_empty');
+});
+
 for (const [name, cancel] of [
   ['skip_now', () => socket().message({ type: 'skip_now' })],
   ['stop', () => client.stop()],

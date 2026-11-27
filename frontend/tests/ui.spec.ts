@@ -420,13 +420,14 @@ test('deck stays on air when an error frame arrives during the audible tail', as
   const { songFinished } = await mockStation(page, { requireGesture: true, trackSecs: 6, answerOnce: true });
   await startPlayback(page);
   const ws = await songFinished;
-  ws.send(JSON.stringify({ type: 'error', payload: { message: 'queue is empty' } }));
+  ws.send(JSON.stringify({ type: 'error', payload: { code: 'queue_empty', message: 'queue is empty' } }));
   // Give the frame time to land; the old track still has ~3s to play.
   await page.waitForTimeout(500);
   const deckToggle = page.getByRole('button', { name: 'Pause', exact: true });
   await expect(page.locator('.status')).toHaveText('On air');
   await expect(deckToggle).not.toHaveAttribute('aria-disabled', 'true');
   await expect(page.locator('.status')).toHaveText('Standby', { timeout: 10000 });
+  await expect(page.locator('.player-message')).toContainText('The queue is empty. Add a track in the console.');
 });
 
 test('K and M ignore key auto-repeat', async ({ page }) => {

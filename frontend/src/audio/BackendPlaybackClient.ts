@@ -34,8 +34,18 @@ interface PlaySongPayload {
   history_id: string;
 }
 
+// `code` is checked by parseErrorCode, so a newer or older backend still parses.
 interface ErrorPayload {
+  code?: unknown;
   message: string;
+}
+
+/** Why the server could not send a song. Unknown or missing codes read as 'internal'. */
+export type ErrorCode = 'queue_empty' | 'library_empty' | 'internal';
+
+interface ServerError {
+  message: string;
+  code: ErrorCode;
 }
 
 export interface SongInfo { title: string; artist?: string; coverUrl?: string }
@@ -57,6 +67,8 @@ export interface RadioStatus {
   playback: PlaybackStatus;
   /** Human-readable detail, for logs and tooltips only. */
   message: string;
+  /** Set only while playback is 'error'. */
+  errorCode?: ErrorCode;
 }
 
 interface BackendPlaybackOptions {
@@ -114,6 +126,7 @@ export class BackendPlaybackClient {
   private errorRetryAttempts = 0;
   private awaitSongTimer = 0;
   private connection: ConnectionStatus = 'disconnected';
+  private errorCode: ErrorCode | undefined;
   private playback: PlaybackStatus = 'idle';
   // Bumped by every play(); a play that settles after a newer one started is ignored.
   private playToken = 0;
@@ -125,7 +138,7 @@ export class BackendPlaybackClient {
   // through the near-end handoff, while the old track is still audible.
   private displayedHistoryId: string | null = null;
   // Server error held back while a track that finished early is still audible.
-  private deferredError: string | null = null;
+  private deferredError: ServerError | null = null;
   // Reports the deferred error if the tail never fires onEnded (stalled or silent element).
   private tailFallbackTimer = 0;
 
@@ -136,13 +149,21 @@ export class BackendPlaybackClient {
   }
 
   /** Records the latest status and notifies the listener. */
+  // The error code lives as long as the 'error' playback it explains; any other
+  // playback clears it, and connection-only reports keep it.
   private report(
     change: { connection?: ConnectionStatus; playback?: PlaybackStatus },
     message: string,
+    errorCode: ErrorCode = 'internal',
   ) {
     if (change.connection) this.connection = change.connection;
-    if (change.playback) this.playback = change.playback;
-    this.onStatus?.({ connection: this.connection, playback: this.playback, message });
+    if (change.playback) {
+      this.playback = change.playback;
+      this.errorCode = change.playback === 'error' ? errorCode : undefined;
+    }
+    const status: RadioStatus = { connection: this.connection, playback: this.playback, message };
+    if (this.errorCode) status.errorCode = this.errorCode;
+    this.onStatus?.(status);
   }
 
   start() {
@@ -316,10 +337,10 @@ export class BackendPlaybackClient {
         if (msg.payload !== undefined && !isErrorPayload(msg.payload)) return;
         this.awaitingSong = false;
         window.clearTimeout(this.awaitSongTimer);
-        const message = msg.payload?.message ?? 'radio error';
+        const error: ServerError = { message: msg.payload?.message ?? 'radio error', code: parseErrorCode(msg.payload?.code) };
         // After an early song_finished the old track's tail is still audible; report once it ends.
-        if (this.displayedHistoryId !== null && !this.current && !this.pendingPlay) this.deferError(this.displayedHistoryId, message);
-        else this.report({ playback: 'error' }, message);
+        if (this.displayedHistoryId !== null && !this.current && !this.pendingPlay) this.deferError(this.displayedHistoryId, error);
+        else this.report({ playback: 'error' }, error.message, error.code);
         this.scheduleErrorRetry();
         break;
       }
@@ -435,14 +456,14 @@ export class BackendPlaybackClient {
     this.clearDisplayedSong();
     const deferred = this.deferredError;
     this.deferredError = null;
-    if (deferred !== null && !this.current && !this.pendingPlay) this.report({ playback: 'error' }, deferred);
+    if (deferred !== null && !this.current && !this.pendingPlay) this.report({ playback: 'error' }, deferred.message, deferred.code);
   }
 
   // A stalled or broken tail never fires onEnded, so the error is also reported
   // shortly after the tail's expected end. An armed timer already belongs to this
   // tail (onStarted cancels it), so it is kept and its ceiling still holds.
-  private deferError(historyId: string, message: string) {
-    this.deferredError = message;
+  private deferError(historyId: string, error: ServerError) {
+    this.deferredError = error;
     if (this.tailFallbackTimer) return;
     const delay = this.tailRemainingMs() + tailGraceMs;
     this.scheduleTailCheck(historyId, Date.now() + delay + tailCeilingMs, delay);
@@ -686,6 +707,10 @@ function isPlaySongPayload(value: unknown): value is PlaySongPayload {
 
 function isErrorPayload(value: unknown): value is ErrorPayload {
   return isRecord(value) && typeof value.message === 'string';
+}
+
+function parseErrorCode(value: unknown): ErrorCode {
+  return value === 'queue_empty' || value === 'library_empty' ? value : 'internal';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

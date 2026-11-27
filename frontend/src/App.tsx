@@ -1,7 +1,7 @@
 import { createSignal, onCleanup } from 'solid-js';
 import { Stage } from './components/Stage';
 import { PlayerUI } from './components/PlayerUI';
-import type { ConnectionStatus, PlaybackStatus } from './audio/BackendPlaybackClient';
+import type { ConnectionStatus, ErrorCode, PlaybackStatus } from './audio/BackendPlaybackClient';
 import type { AudioEngine } from './audio/AudioEngine';
 import { getMediaSession } from './audio/mediaSession';
 import { startRadio, type RadioHandle } from './audio/radioSession';
@@ -13,6 +13,7 @@ export function App() {
   const [trackCover, setTrackCover] = createSignal<string | undefined>();
   const [wsStatus, setWsStatus]     = createSignal<ConnectionStatus>('disconnected');
   const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
+  const [errorCode, setErrorCode] = createSignal<ErrorCode | undefined>();
   const [mediaState, setMediaState] = createSignal<MediaSessionPlaybackState>('none');
   let radio: RadioHandle | null = null;
 
@@ -30,9 +31,10 @@ export function App() {
         setTrackArtist(artist);
         setTrackCover(cover);
       },
-      onStatus: (conn, playback) => {
+      onStatus: (conn, playback, code) => {
         setWsStatus(conn);
         setPlaybackStatus(playback);
+        setErrorCode(code);
       },
       onMediaState: setMediaState,
     });
@@ -49,6 +51,7 @@ export function App() {
         trackCover={trackCover}
         wsStatus={wsStatus}
         playbackStatus={playbackStatus}
+        errorCode={errorCode}
         paused={() => mediaState() === 'paused'}
         onEnableAudio={() => radio?.retryPendingPlay()}
         audio={audio}

@@ -384,6 +384,58 @@ func TestNeedSongOnEmptyLibraryKeepsNowPlaying(t *testing.T) {
 	assertSongKept(t, c)
 }
 
+// erroringQueueManager fails NextSong with err.
+type erroringQueueManager struct {
+	emptyQueueManager
+	err error
+}
+
+func (m erroringQueueManager) NextSong(context.Context) (*models.Song, error) {
+	return nil, m.err
+}
+
+func TestNeedSongErrorFrameCarriesCodeWithoutInternalText(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantCode string
+	}{
+		{"queue empty", queue.ErrQueueEmpty, ErrCodeQueueEmpty},
+		{"wrapped queue empty", fmt.Errorf("x: %w", queue.ErrQueueEmpty), ErrCodeQueueEmpty},
+		{"library empty", queue.ErrLibraryEmpty, ErrCodeLibraryEmpty},
+		{"wrapped library empty", fmt.Errorf("auto-select: %w", queue.ErrLibraryEmpty), ErrCodeLibraryEmpty},
+		{"internal", fmt.Errorf("list songs: %w", errors.New("open /secret/path: disk failed")), ErrCodeInternal},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newDryTestClient(erroringQueueManager{err: tc.err})
+
+			c.handleMessage(Message{Type: MsgNeedSong})
+
+			if n := len(c.send); n != 1 {
+				t.Fatalf("send buffer holds %d messages, want 1", n)
+			}
+			frame := <-c.send
+			raw, err := json.Marshal(frame)
+			if err != nil {
+				t.Fatalf("marshal frame: %v", err)
+			}
+			var got ErrorPayload
+			if frame.Type != MsgError || DecodePayload(frame, &got) != nil {
+				t.Fatalf("frame = %s, want %s with ErrorPayload", raw, MsgError)
+			}
+			if got.Code != tc.wantCode || got.Message == "" {
+				t.Fatalf("payload = %+v, want code %q and a message", got, tc.wantCode)
+			}
+			for _, leak := range []string{"secret", "disk", "list songs", "auto-select", "x:"} {
+				if strings.Contains(string(raw), leak) {
+					t.Fatalf("frame %s leaks %q", raw, leak)
+				}
+			}
+		})
+	}
+}
+
 // racingQueueManager starts song b and broadcasts now_playing the first time
 // ListQueue runs, which is while Endpoint builds the connect snapshot. It then
 // waits, giving the hub time to deliver that broadcast if it is allowed to.

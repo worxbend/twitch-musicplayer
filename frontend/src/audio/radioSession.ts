@@ -4,7 +4,7 @@
  */
 import type { AudioEngine } from './AudioEngine';
 import { BackendPlaybackClient } from './BackendPlaybackClient.ts';
-import type { ConnectionStatus, PlaybackStatus } from './BackendPlaybackClient';
+import type { ConnectionStatus, ErrorCode, PlaybackStatus } from './BackendPlaybackClient';
 import {
   bindMediaSession,
   setMediaPlayState,
@@ -27,7 +27,8 @@ export interface RadioOptions {
   /** Artist for a missing song or a song without an artist. */
   artistFallback: string;
   onTrack(name: string, artist: string, cover: string | undefined): void;
-  onStatus(conn: ConnectionStatus, playback: PlaybackStatus): void;
+  /** errorCode is set only while playback is 'error'. */
+  onStatus(conn: ConnectionStatus, playback: PlaybackStatus, errorCode?: ErrorCode): void;
   onMediaState(state: MediaSessionPlaybackState): void;
   /** Test seam; defaults to a real BackendPlaybackClient. */
   createClient?: (options: ClientOptions) => RadioClient;
@@ -50,7 +51,7 @@ export function startRadio(opts: RadioOptions): RadioHandle {
     // "radio connection error", because that string contains "connect".
     onStatus: (status) => {
       playback = status.playback;
-      opts.onStatus(status.connection, status.playback);
+      opts.onStatus(status.connection, status.playback, status.errorCode);
     },
     // The client keeps the title up through a crossfade and sends null only
     // once a track has really ended, so no debounce is needed here.

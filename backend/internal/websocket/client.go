@@ -256,6 +256,21 @@ func (c *Client) handleMessage(msg Message) {
 	}
 }
 
+// errorPayloadFor maps a NextSong error to a client-safe error frame. Only the
+// queue sentinels get their own code; every other error becomes internal with
+// a fixed message, because wrapped repository errors can carry paths and
+// driver text.
+func errorPayloadFor(err error) ErrorPayload {
+	switch {
+	case errors.Is(err, queue.ErrQueueEmpty):
+		return ErrorPayload{Code: ErrCodeQueueEmpty, Message: "queue is empty"}
+	case errors.Is(err, queue.ErrLibraryEmpty):
+		return ErrorPayload{Code: ErrCodeLibraryEmpty, Message: "no songs available"}
+	default:
+		return ErrorPayload{Code: ErrCodeInternal, Message: "internal error"}
+	}
+}
+
 // sendNextSong dequeues the next song and pushes a play_song message to this
 // client. A closed client dequeues nothing. When the message cannot be queued
 // (client closed meanwhile or send buffer full) the song goes back to the
@@ -274,7 +289,7 @@ func (c *Client) sendNextSong(ctx context.Context) error {
 	song, err := c.queueMgr.NextSong(ctx)
 	if err != nil {
 		log.Printf("next song error: %v", err)
-		if errMsg, encErr := Encode(MsgError, ErrorPayload{Message: err.Error()}); encErr == nil {
+		if errMsg, encErr := Encode(MsgError, errorPayloadFor(err)); encErr == nil {
 			c.trySend(errMsg)
 		}
 		return err

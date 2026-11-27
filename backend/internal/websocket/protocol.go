@@ -63,8 +63,18 @@ type NowPlayingPayload struct {
 	HistoryID string `json:"history_id,omitempty"`
 }
 
-// ErrorPayload carries an error description to the client.
+// Error codes carried by ErrorPayload.Code. The set is closed: clients treat
+// an unknown or missing code as ErrCodeInternal.
+const (
+	ErrCodeQueueEmpty   = "queue_empty"   // manual_only queue ran dry
+	ErrCodeLibraryEmpty = "library_empty" // no songs in the library
+	ErrCodeInternal     = "internal"      // anything else; details stay in the server log
+)
+
+// ErrorPayload carries a stable error code and a display-only message to the
+// client. Message is never raw error text, so internal details do not leak.
 type ErrorPayload struct {
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 

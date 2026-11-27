@@ -1,7 +1,7 @@
 import { createEffect, createSignal, onMount, onCleanup, Show, For } from 'solid-js';
 import type { AudioEngine } from '../audio/AudioEngine';
 import { loadVolume, saveVolume, shouldIgnoreVolumeKey, stepVolume, VOLUME_STEP } from '../audio/volumeStore';
-import type { ConnectionStatus, PlaybackStatus } from '../audio/BackendPlaybackClient';
+import type { ConnectionStatus, ErrorCode, PlaybackStatus } from '../audio/BackendPlaybackClient';
 import { TerminalHeader } from './TerminalHeader';
 import { playerStatus, playToggle } from './playerStatus';
 import { SCENES } from '../viz/scenes';
@@ -13,6 +13,8 @@ interface Props {
   trackCover: () => string | undefined;
   wsStatus: () => ConnectionStatus;
   playbackStatus: () => PlaybackStatus;
+  /** Why playback is in error, so the status line can name the fix. */
+  errorCode?: () => ErrorCode | undefined;
   audio: () => AudioEngine | null;
   /** The audio element is paused, e.g. by a media key, while the radio still reports playing. */
   paused?: () => boolean;
@@ -103,7 +105,7 @@ export function PlayerUI(props: Props) {
     const interval = window.setInterval(tick, 250);
     onCleanup(() => window.clearInterval(interval));
   });
-  const status = () => playerStatus(props.wsStatus(), props.playbackStatus(), props.paused?.() ?? false);
+  const status = () => playerStatus(props.wsStatus(), props.playbackStatus(), props.paused?.() ?? false, props.errorCode?.());
   return (
     <div class="player-shell">
       <TerminalHeader active="player" />

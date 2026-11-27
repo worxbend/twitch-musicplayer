@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AudioEngine } from './AudioEngine';
-import type { BackendPlaybackClient, RadioStatus, SongInfo } from './BackendPlaybackClient';
+import type { BackendPlaybackClient, ErrorCode, RadioStatus, SongInfo } from './BackendPlaybackClient';
 import { startRadio, type RadioOptions } from './radioSession.ts';
 
 class FakeMediaMetadata {
@@ -59,8 +59,8 @@ class FakeClient {
   start() { this.started++; }
   retryPendingPlay() { this.retries++; return undefined; }
   dispose() { this.disposals++; }
-  status(playback: RadioStatus['playback']) {
-    this.options.onStatus?.({ connection: 'connected', playback, message: '' });
+  status(playback: RadioStatus['playback'], errorCode?: RadioStatus['errorCode']) {
+    this.options.onStatus?.({ connection: 'connected', playback, message: '', errorCode });
   }
   song(song: SongInfo | null) { this.options.onSongChange?.(song); }
 }
@@ -159,6 +159,14 @@ test('status reports reach onStatus', () => {
   start();
   client.status('playing');
   assert.deepEqual(statuses, [['connected', 'playing']]);
+});
+
+test('the error code reaches onStatus', () => {
+  const codes: (ErrorCode | undefined)[] = [];
+  start({ onStatus: (_conn, _playback, code) => codes.push(code) });
+  client.status('error', 'queue_empty');
+  client.status('playing');
+  assert.deepEqual(codes, ['queue_empty', undefined]);
 });
 
 test('the play key retries a blocked play and plays otherwise', () => {

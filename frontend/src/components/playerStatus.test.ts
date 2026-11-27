@@ -29,6 +29,23 @@ test('connected but not playing reads Standby with the cause', () => {
   });
 });
 
+test('an error names the fix for its code', () => {
+  const generic = 'Waiting for playable audio. Check your library; the player will retry automatically.';
+  for (const [code, detail] of [
+    ['queue_empty', 'The queue is empty. Add a track in the console.'],
+    ['library_empty', 'Your library is empty. Add MP3 files to the music folder.'],
+    ['internal', generic],
+    [undefined, generic],
+  ] as const) {
+    assert.deepEqual(playerStatus('connected', 'error', false, code), { live: false, label: 'Standby', detail });
+  }
+});
+
+test('an error code does not change a non-error status', () => {
+  assert.equal(playerStatus('connected', 'idle', false, 'queue_empty').detail, 'Connected. Waiting for the next track.');
+  assert.equal(playerStatus('disconnected', 'error', false, 'queue_empty').label, 'Offline');
+});
+
 test('connected and playing reads On air', () => {
   assert.deepEqual(playerStatus('connected', 'playing', false), {
     live: true, label: 'On air', detail: 'Your library, on a continuous frequency.',
