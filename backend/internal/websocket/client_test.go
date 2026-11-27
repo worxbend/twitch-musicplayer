@@ -56,8 +56,14 @@ func dialTestHub(t *testing.T, queueMgr QueueManager) (*Hub, *ws.Conn) {
 	go hub.Run()
 	srv := httptest.NewServer(&Endpoint{Hub: hub, QueueMgr: queueMgr, StateTracker: player.NewStateTracker()})
 	t.Cleanup(srv.Close)
+	return hub, dialWS(t, "ws"+strings.TrimPrefix(srv.URL, "http"))
+}
 
-	conn, _, err := ws.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+// dialWS connects to url and consumes the initial state frame. By then the
+// server has registered the peer.
+func dialWS(t *testing.T, url string) *ws.Conn {
+	t.Helper()
+	conn, _, err := ws.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -68,7 +74,7 @@ func dialTestHub(t *testing.T, queueMgr QueueManager) (*Hub, *ws.Conn) {
 	if err := conn.ReadJSON(&first); err != nil || first.Type != MsgState {
 		t.Fatalf("first frame = %+v, %v; want %s", first, err, MsgState)
 	}
-	return hub, conn
+	return conn
 }
 
 func TestReadPumpAnswersSmallMessages(t *testing.T) {
@@ -553,10 +559,15 @@ func TestWritePumpClosedClientRequeuesBufferedPlaySong(t *testing.T) {
 	}
 }
 
+// testClearGrace replaces the hub's 5s last-player clear grace in tests.
+const testClearGrace = 50 * time.Millisecond
+
 // newPlayerTestClients registers n unconnected clients on one hub, sharing one
-// state tracker and a queue manager that always yields song-1.
+// state tracker and a queue manager that always yields song-1. The hub clears
+// now-playing testClearGrace after its last player leaves.
 func newPlayerTestClients(n int) []*Client {
 	h := NewHub()
+	h.clearGrace = testClearGrace
 	st := player.NewStateTracker()
 	mgr := &recordingQueueManager{song: &models.Song{ID: "song-1", Title: "Rain"}}
 	clients := make([]*Client, n)
@@ -578,13 +589,42 @@ func startPlaying(t *testing.T, c *Client) {
 	}
 }
 
+// waitNowPlayingCleared waits for the grace-delayed clear's broadcast, then
+// checks it as assertNowPlayingCleared does.
+func waitNowPlayingCleared(t *testing.T, c *Client) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(c.hub.broadcast) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("now-playing not cleared within 5s")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	assertNowPlayingCleared(t, c)
+}
+
+// assertSongKeptPastGrace waits well past the hub's clear grace, then checks
+// song-1 is still current and nothing was broadcast.
+func assertSongKeptPastGrace(t *testing.T, c *Client) {
+	t.Helper()
+	time.Sleep(3 * c.hub.clearGrace)
+	assertSongKept(t, c)
+}
+
+// hasPendingClear reports whether h has a last-player clear scheduled.
+func hasPendingClear(h *Hub) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.pendingClear != nil
+}
+
 func TestLastPlayerDisconnectClearsNowPlaying(t *testing.T) {
 	c := newPlayerTestClients(1)[0]
 	startPlaying(t, c)
 
 	c.hub.Unregister(c)
 
-	assertNowPlayingCleared(t, c)
+	waitNowPlayingCleared(t, c)
 }
 
 func TestPlayerDisconnectKeepsNowPlayingWhileAnotherPlayerRemains(t *testing.T) {
@@ -597,7 +637,7 @@ func TestPlayerDisconnectKeepsNowPlayingWhileAnotherPlayerRemains(t *testing.T) 
 	assertSongKept(t, first)
 
 	second.hub.Unregister(second)
-	assertNowPlayingCleared(t, second)
+	waitNowPlayingCleared(t, second)
 }
 
 func TestNonPlayerDisconnectKeepsNowPlaying(t *testing.T) {
@@ -614,12 +654,14 @@ func TestNonPlayerDisconnectKeepsNowPlaying(t *testing.T) {
 
 func TestLastPlayerDisconnectWithNoSongBroadcastsNothing(t *testing.T) {
 	c := NewClient(NewHub(), nil, emptyQueueManager{}, "", player.NewStateTracker())
+	c.hub.clearGrace = testClearGrace
 	c.hub.Register(c, nil)
 	c.handleMessage(Message{Type: MsgNeedSong})
 	drainSent(t, c, MsgError)
 
 	c.hub.Unregister(c)
 
+	time.Sleep(3 * testClearGrace)
 	assertNothingPublished(t, c)
 }
 
@@ -639,13 +681,96 @@ func TestDroppingLastPlayerTwiceClearsOnce(t *testing.T) {
 	startPlaying(t, c)
 
 	c.hub.Unregister(c)
+	waitNowPlayingCleared(t, c)
 	c.stateTracker.SetCurrentSong(&models.Song{ID: "song-1", Title: "Rain"})
 	c.hub.Unregister(c)
 
-	if cur := c.stateTracker.GetCurrentSong(); cur == nil {
-		t.Fatal("second drop cleared now-playing again, want no-op")
+	assertSongKeptPastGrace(t, c)
+}
+
+// An old frontend reconnects without ?role and only becomes a player on its
+// need_song; that must cancel the clear the previous player's leaving set up.
+func TestLegacyPlayerNeedSongCancelsPendingClear(t *testing.T) {
+	clients := newPlayerTestClients(2)
+	gone, legacy := clients[0], clients[1]
+	startPlaying(t, gone)
+
+	gone.hub.Unregister(gone)
+	if !hasPendingClear(gone.hub) {
+		t.Fatal("last player left, want a pending clear")
 	}
-	if n := len(c.hub.broadcast); n != 1 {
-		t.Fatalf("hub.broadcast holds %d messages, want 1", n)
+	startPlaying(t, legacy)
+
+	if hasPendingClear(legacy.hub) {
+		t.Fatal("need_song left the clear pending, want it cancelled")
+	}
+	assertSongKeptPastGrace(t, legacy)
+}
+
+func TestShutdownCancelsPendingClear(t *testing.T) {
+	c := newPlayerTestClients(1)[0]
+	startPlaying(t, c)
+	c.hub.Unregister(c)
+
+	if err := c.hub.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown = %v, want nil", err)
+	}
+
+	if hasPendingClear(c.hub) {
+		t.Fatal("clear still pending after Shutdown")
+	}
+	assertSongKeptPastGrace(t, c)
+}
+
+// newRoleTestServer serves an Endpoint whose tracker holds song-1 and whose
+// hub clears now-playing grace after its last player leaves. It returns the
+// tracker and the /ws URL.
+func newRoleTestServer(t *testing.T, grace time.Duration) (*player.StateTracker, string) {
+	t.Helper()
+	hub := NewHub()
+	hub.clearGrace = grace
+	go hub.Run()
+	tracker := player.NewStateTracker()
+	tracker.SetCurrentSong(&models.Song{ID: "song-1", Title: "Rain"})
+	srv := httptest.NewServer(&Endpoint{Hub: hub, QueueMgr: emptyQueueManager{}, StateTracker: tracker})
+	t.Cleanup(srv.Close)
+	return tracker, "ws" + strings.TrimPrefix(srv.URL, "http")
+}
+
+// A peer that connects with ?role=player is a player before it sends
+// anything: its leaving clears now-playing for the overlay that stays.
+func TestRolePlayerDisconnectClearsNowPlaying(t *testing.T) {
+	tracker, url := newRoleTestServer(t, testClearGrace)
+	overlay := dialWS(t, url)
+	dialWS(t, url+"?role=player").Close()
+
+	var msg Message
+	if err := overlay.ReadJSON(&msg); err != nil || msg.Type != MsgState {
+		t.Fatalf("overlay frame = %+v, %v; want %s", msg, err, MsgState)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(msg.Payload, &fields); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	if _, ok := fields["current_song"]; ok {
+		t.Fatalf("state payload %s has current_song, want none", msg.Payload)
+	}
+	if cur := tracker.GetCurrentSong(); cur != nil {
+		t.Fatalf("current song = %s, want nil", cur.ID)
+	}
+}
+
+// A player that reconnects mid-track sends nothing until the track ends, so
+// its ?role=player reconnect alone must keep now-playing.
+func TestRolePlayerReconnectInsideGraceKeepsNowPlaying(t *testing.T) {
+	const grace = 300 * time.Millisecond
+	tracker, url := newRoleTestServer(t, grace)
+	dialWS(t, url+"?role=player").Close()
+	dialWS(t, url+"?role=player")
+
+	time.Sleep(2 * grace)
+
+	if cur := tracker.GetCurrentSong(); cur == nil || cur.ID != "song-1" {
+		t.Fatalf("current song = %v, want song-1", cur)
 	}
 }

@@ -57,6 +57,21 @@ test('the ws URL drops the backend query string', () => {
   assert.equal(getWebSocketURL(), 'ws://host:8080/ws');
 });
 
+test('the player ws URL carries role=player and keeps the path prefix', () => {
+  useBackend('https://host/radio/');
+  assert.equal(getWebSocketURL('player'), 'wss://host/radio/ws?role=player');
+});
+
+test('the player ws URL over http maps to ws with role=player', () => {
+  useBackend('http://host:8080');
+  assert.equal(getWebSocketURL('player'), 'ws://host:8080/ws?role=player');
+});
+
+test('the player ws URL replaces the backend query string with role=player', () => {
+  useBackend('http://host:8080/?x=1');
+  assert.equal(getWebSocketURL('player'), 'ws://host:8080/ws?role=player');
+});
+
 test('the runtime backend URL is trimmed of spaces and trailing slashes', () => {
   useBackend('  https://host/radio//  ');
   assert.equal(getBackendURL(), 'https://host/radio');

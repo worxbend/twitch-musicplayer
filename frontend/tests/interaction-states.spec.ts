@@ -4,7 +4,7 @@ import AxeBuilder from '@axe-core/playwright';
 const song = { id: 'a', title: 'Midnight compiler', filename: 'a.mp3', artist: 'Soft Circuit', album: 'After hours', duration_secs: 180 };
 
 test('keyboard skip link, shared navigation, and visible focus', async ({ page }) => {
-  await page.routeWebSocket('**/ws', () => {});
+  await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
   await page.route('**/v1/**', route => route.fulfill({ json: { songs: [], items: [], current_song: null } }));
   await page.goto('/scenes');
   await page.keyboard.press('Tab');
@@ -24,7 +24,7 @@ test('keyboard skip link, shared navigation, and visible focus', async ({ page }
 
 test('failed actions report an error, then recover without losing the library', async ({ page }) => {
   let fail = false;
-  await page.routeWebSocket('**/ws', () => {});
+  await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
   await page.route('**/v1/**', route => {
     if (fail) return route.fulfill({ status: 503, json: {} });
     const path = new URL(route.request().url()).pathname;
@@ -44,7 +44,7 @@ test('failed actions report an error, then recover without losing the library', 
 });
 
 test('a rejected action shows the backend reason, not a connection failure', async ({ page }) => {
-  await page.routeWebSocket('**/ws', () => {});
+  await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
   await page.route('**/v1/**', route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/v1/player:skip') return route.fulfill({ status: 409, json: { error: 'queue is empty' } });
@@ -59,7 +59,7 @@ test('a rejected action shows the backend reason, not a connection failure', asy
 });
 
 test('a slow previous search never overwrites a newer result', async ({ page }) => {
-  await page.routeWebSocket('**/ws', () => {});
+  await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
   await page.route('**/v1/**', async route => {
     const url = new URL(route.request().url());
     const query = url.searchParams.get('q');
@@ -80,7 +80,7 @@ test('a busy action button keeps keyboard focus and ignores repeat presses', asy
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   let posts = 0;
-  await page.routeWebSocket('**/ws', () => {});
+  await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
   await page.route('**/v1/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/v1/queue' && route.request().method() === 'POST') { posts++; await gate; }

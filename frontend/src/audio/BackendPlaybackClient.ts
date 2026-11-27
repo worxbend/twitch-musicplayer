@@ -184,7 +184,7 @@ export class BackendPlaybackClient {
     if (this.socket && this.socket.readyState <= WebSocket.OPEN) return;
 
     this.connecting = true;
-    const socket = new WebSocket(getWebSocketURL());
+    const socket = new WebSocket(getWebSocketURL('player'));
     this.socket = socket;
     this.lastMessageAt = Date.now();
 

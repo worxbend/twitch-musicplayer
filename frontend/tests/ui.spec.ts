@@ -22,7 +22,7 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
   let queue = options.empty ? [] : [{ id: 'q1', song_id: 'b', song: songs[1], position: 1, source: 'auto' }];
   let sawNeedSong!: () => void;
   const needSong = new Promise<void>(resolve => { sawNeedSong = resolve; });
-  await page.routeWebSocket('**/ws', ws => {
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
     ws.onMessage(message => {
       if (JSON.parse(String(message)).type !== 'need_song') return;
       sawNeedSong();
@@ -178,7 +178,7 @@ test('admin recently played lists history newest first', async ({ page }) => {
 test('admin refetches the library when the socket reconnects', async ({ page }) => {
   await mockStation(page);
   const sockets: WebSocketRoute[] = [];
-  await page.routeWebSocket('**/ws', ws => { sockets.push(ws); });
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { sockets.push(ws); });
   let library = songs;
   let songRequests = 0;
   await page.route(url => url.pathname === '/v1/songs', route => { songRequests++; return route.fulfill({ json: { songs: library } }); });
@@ -200,7 +200,7 @@ test('admin drops a silent socket and reconnects', async ({ page }) => {
   await mockStation(page);
   await page.clock.install();
   const sockets: WebSocketRoute[] = [];
-  await page.routeWebSocket('**/ws', ws => { sockets.push(ws); });
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { sockets.push(ws); });
   await page.goto('/admin');
   await expect.poll(() => sockets.length).toBe(1);
   // No heartbeat_ack: stale after STALE_AFTER_MS, checked on the next heartbeat tick, then backoff.
@@ -478,7 +478,7 @@ test('audio starts when PixiJS has no renderer at all', async ({ page }) => {
 });
 
 test('now-playing hold fades the title out; no hold keeps it visible', async ({ page }) => {
-  await page.routeWebSocket('**/ws', ws => {
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
     ws.send(JSON.stringify({ type: 'now_playing', payload: { song: songs[0], queue_depth: 1 } }));
   });
   const overlay = page.locator('.now-playing-overlay');
@@ -493,7 +493,7 @@ test('now-playing hold fades the title out; no hold keeps it visible', async ({ 
 
 test('now-playing hold re-shows a repeated title on a new history_id; a dry-queue state clears it', async ({ page }) => {
   let route!: WebSocketRoute;
-  await page.routeWebSocket('**/ws', ws => { route = ws; });
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { route = ws; });
   const send = (msg: object) => route.send(JSON.stringify(msg));
   const overlay = page.locator('.now-playing-overlay');
   const title = page.getByText('Midnight compiler');
@@ -533,7 +533,7 @@ test('now-playing hold re-shows a repeated title on a new history_id; a dry-queu
 test('now-playing overlay reconnects a silent socket', async ({ page }) => {
   await page.clock.install();
   const sockets: WebSocketRoute[] = [];
-  await page.routeWebSocket('**/ws', ws => { sockets.push(ws); });
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { sockets.push(ws); });
   await page.goto('/now-playing');
   await expect.poll(() => sockets.length).toBe(1);
   await page.clock.runFor(62_500 + 25_000 + 1_000);
@@ -544,7 +544,7 @@ test('now-playing overlay keeps a socket that answers heartbeats', async ({ page
   await page.clock.install();
   const sockets: WebSocketRoute[] = [];
   let acks = 0;
-  await page.routeWebSocket('**/ws', ws => {
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
     sockets.push(ws);
     ws.onMessage(message => {
       if (JSON.parse(String(message)).type !== 'heartbeat') return;

@@ -4,12 +4,17 @@ import (
 	"context"
 	"log"
 	"sync"
+	"time"
 
 	ws "github.com/gorilla/websocket"
 )
 
 // shutdownReason is the close text peers receive with 1001 Going Away.
 const shutdownReason = "server shutting down"
+
+// lastPlayerClearGrace is how long now-playing survives its last player, so
+// a player that reconnects mid-track keeps it.
+const lastPlayerClearGrace = 5 * time.Second
 
 // Hub manages all active WebSocket connections.
 type Hub struct {
@@ -23,13 +28,20 @@ type Hub struct {
 	// pumps counts write pumps Shutdown waits for. Add only runs under mu
 	// while closing is false, so no Add can race Shutdown's Wait.
 	pumps sync.WaitGroup
+
+	// clearGrace is the delay before the last player's leaving clears
+	// now-playing. pendingClear is that scheduled clear, nil when none is
+	// pending (guarded by mu).
+	clearGrace   time.Duration
+	pendingClear *time.Timer
 }
 
 // NewHub creates a new Hub ready to Run.
 func NewHub() *Hub {
 	return &Hub{
-		clients:   make(map[*Client]struct{}),
-		broadcast: make(chan Message, 256),
+		clients:    make(map[*Client]struct{}),
+		broadcast:  make(chan Message, 256),
+		clearGrace: lastPlayerClearGrace,
 	}
 }
 
@@ -61,24 +73,63 @@ func (h *Hub) deliver(msg Message) {
 }
 
 // drop removes a client from the hub and signals its write pump to finish.
-// When c was the last client acting as a player, it clears now-playing, since
-// nothing plays any more. Shutdown does not come through here, so it keeps it.
+// When c was the last client acting as a player, it schedules a clear of
+// now-playing after clearGrace; a player joining inside that window cancels
+// it. Shutdown does not come through here, so it keeps now-playing.
 func (h *Hub) drop(c *Client) {
 	h.mu.Lock()
 	_, known := h.clients[c]
 	delete(h.clients, c)
-	last := known && c.isPlayer() && !h.hasPlayerLocked()
+	if known && c.isPlayer() && !h.hasPlayerLocked() {
+		h.scheduleClearLocked(c)
+	}
 	h.mu.Unlock()
 
 	if known {
 		c.close()
 	}
-	// Outside h.mu: clearNowPlaying broadcasts and reads the queue manager.
-	// A second tab whose first need_song is in flight may set a song again
-	// right after; that is the correct end state.
-	if last {
-		c.clearNowPlaying(context.Background())
+}
+
+// scheduleClearLocked replaces any pending clear with one that runs after
+// clearGrace unless the hub is closing, a player has joined, or a newer clear
+// replaced it. The caller must hold h.mu.
+func (h *Hub) scheduleClearLocked(c *Client) {
+	h.cancelClearLocked()
+	var timer *time.Timer
+	timer = time.AfterFunc(h.clearGrace, func() {
+		h.mu.Lock()
+		run := !h.closing && h.pendingClear == timer && !h.hasPlayerLocked()
+		if run {
+			h.pendingClear = nil
+		}
+		h.mu.Unlock()
+
+		// Outside h.mu: clearNowPlaying broadcasts and reads the queue
+		// manager. A player whose first need_song is in flight may set a song
+		// again right after; that is the correct end state.
+		if run {
+			c.clearNowPlaying(context.Background())
+		}
+	})
+	h.pendingClear = timer
+}
+
+// cancelClearLocked stops the pending clear, if any. The caller must hold h.mu.
+func (h *Hub) cancelClearLocked() {
+	if h.pendingClear != nil {
+		h.pendingClear.Stop()
+		h.pendingClear = nil
 	}
+}
+
+// playerJoined cancels the pending clear once c starts acting as a player.
+// A client already dropped cancels nothing.
+func (h *Hub) playerJoined(c *Client) {
+	h.mu.Lock()
+	if _, ok := h.clients[c]; ok {
+		h.cancelClearLocked()
+	}
+	h.mu.Unlock()
 }
 
 // hasPlayerLocked reports whether any registered client acts as a player.
@@ -116,6 +167,9 @@ func (h *Hub) Register(c *Client, first func() (Message, error)) {
 			queueFirstFrame(c, first)
 		}
 		h.clients[c] = struct{}{}
+		if c.isPlayer() {
+			h.cancelClearLocked()
+		}
 	}
 	h.mu.Unlock()
 
@@ -159,6 +213,7 @@ func (h *Hub) goPump(pump func()) {
 func (h *Hub) Shutdown(ctx context.Context) error {
 	h.mu.Lock()
 	h.closing = true
+	h.cancelClearLocked()
 	clients := make([]*Client, 0, len(h.clients))
 	for c := range h.clients {
 		clients = append(clients, c)

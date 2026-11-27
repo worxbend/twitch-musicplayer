@@ -53,7 +53,7 @@ async function station(page: Page, play = false) {
       });
     });
   }
-  await page.routeWebSocket('**/ws', ws => {
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
     ws.onMessage(message => {
       if (play && JSON.parse(String(message)).type === 'need_song') {
         ws.send(JSON.stringify({ type: 'play_song', payload: {

@@ -62,8 +62,8 @@ type Client struct {
 	// after <-closed.
 	closeCode int
 	closeText string
-	// player is set once the peer sends need_song, song_finished or
-	// peek_next; only audio players send those.
+	// player is set when the peer connects with ?role=player, or once it
+	// sends need_song, song_finished or peek_next; only audio players do.
 	player atomic.Bool
 }
 
@@ -145,6 +145,11 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := NewClient(e.Hub, conn, e.QueueMgr, e.BaseURL, e.StateTracker)
+	// Set before Register so a reconnecting player cancels a pending
+	// now-playing clear. Other role values are ignored.
+	if r.URL.Query().Get("role") == "player" {
+		c.player.Store(true)
+	}
 	// Register queues the snapshot as the first frame, ahead of any
 	// broadcast. The request context is not used here: it is cancelled as
 	// soon as ServeHTTP returns, which would abort these lookups.
@@ -220,7 +225,9 @@ func (c *Client) handleMessage(msg Message) {
 
 	switch msg.Type {
 	case MsgNeedSong, MsgSongFinished, MsgPeekNext:
-		c.player.Store(true)
+		if c.player.CompareAndSwap(false, true) {
+			c.hub.playerJoined(c)
+		}
 	}
 
 	switch msg.Type {

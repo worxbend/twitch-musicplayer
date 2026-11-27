@@ -18,6 +18,10 @@ Endpoint:
 ws://localhost:8080/ws
 ```
 
+Audio players connect with `?role=player` (`ws://localhost:8080/ws?role=player`), so the
+backend counts them as players from the start. Admin consoles and overlays omit it. Other
+values are ignored.
+
 ## ✉️ Message Envelope
 
 All messages use:
@@ -165,11 +169,12 @@ showing the finished song. Because the player sends `song_finished` at the cross
 this happens up to ~3s before the audio ends. A `need_song` on an empty queue never clears
 it: a second player tab sends one on connect while the first may still be playing.
 
-The same cleared `state` is broadcast when the last connection that acted as a player (sent
-`need_song`, `song_finished` or `peek_next`) closes. A silent network drop is noticed only
-after the pong timeout (60s). Server shutdown does not clear `current_song`. A player that
-reconnects mid-track does not restore it: `current_song` stays absent until that player's next
-`play_song`.
+The same cleared `state` is broadcast about 5s after the last player connection closes. A
+connection is a player once it connects with `?role=player` or sends `need_song`,
+`song_finished` or `peek_next`. A player reconnecting inside that window, or a legacy client
+that reconnects without the parameter and sends `need_song`, keeps `current_song`. A reconnect
+after the window leaves `current_song` absent until the next `play_song`. A silent network drop
+is noticed only after the pong timeout (60s). Server shutdown does not clear `current_song`.
 
 ```json
 {

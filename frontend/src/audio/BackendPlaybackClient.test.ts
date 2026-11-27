@@ -18,13 +18,15 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
 
   readyState = FakeWebSocket.CONNECTING;
+  url: string;
   sent: unknown[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
 
-  constructor() {
+  constructor(url: string) {
+    this.url = url;
     FakeWebSocket.instances.push(this);
   }
 
@@ -181,6 +183,10 @@ function internals() {
     queueOrSend: (message: unknown) => void;
   };
 }
+
+test('the player connects to /ws as role=player', () => {
+  assert.ok(socket().url.endsWith('/ws?role=player'), socket().url);
+});
 
 test('a play that settles after a newer one is ignored', async () => {
   socket().open();

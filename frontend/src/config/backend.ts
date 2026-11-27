@@ -37,12 +37,14 @@ export function getBackendURL(): string {
 /**
  * The `/ws` endpoint, with the scheme upgraded to match the page's security.
  * A path prefix in the backend URL (a reverse proxy on a subpath) is kept.
+ * The audio player passes `'player'` so the backend counts it as a player from
+ * the moment it connects; other pages pass nothing.
  */
-export function getWebSocketURL(): string {
+export function getWebSocketURL(role?: 'player'): string {
   const url = new URL(getBackendURL());
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.pathname = url.pathname.replace(/\/+$/, '') + '/ws';
-  url.search = '';
+  url.search = role ? `?role=${role}` : '';
   return url.toString();
 }
 
