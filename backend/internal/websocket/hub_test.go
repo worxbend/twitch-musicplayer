@@ -3,6 +3,8 @@ package websocket
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -45,6 +47,8 @@ func TestSendAfterDropDoesNotPanic(t *testing.T) {
 // stalled clients than that buffer held are used here on purpose.
 func TestDeliverDropsStalledClientsWithoutDeadlock(t *testing.T) {
 	h := NewHub()
+	logs := &logCapture{}
+	h.logf = logs.logf
 	const stalledClients = 64
 
 	for i := 0; i < stalledClients; i++ {
@@ -66,6 +70,9 @@ func TestDeliverDropsStalledClientsWithoutDeadlock(t *testing.T) {
 
 	if got := h.ClientCount(); got != 0 {
 		t.Fatalf("expected all stalled clients dropped, %d remain", got)
+	}
+	if got := len(logs.snapshot()); got != stalledClients {
+		t.Fatalf("logged %d drops, want %d", got, stalledClients)
 	}
 }
 
@@ -247,5 +254,85 @@ func TestShutdownRespectsContext(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("Shutdown took %v, want well under 1s", elapsed)
+	}
+}
+
+// logCapture records formatted log lines; safe for concurrent use.
+type logCapture struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *logCapture) logf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *logCapture) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.lines...)
+}
+
+// newDropTestHub returns an unrun hub whose broadcast channel holds one
+// message, its captured log, and a pointer to its fake clock.
+func newDropTestHub() (*Hub, *logCapture, *time.Time) {
+	h := NewHub()
+	h.broadcast = make(chan Message, 1)
+	logs := &logCapture{}
+	h.logf = logs.logf
+	clock := time.Unix(1_700_000_000, 0)
+	h.now = func() time.Time { return clock }
+	return h, logs, &clock
+}
+
+func TestBroadcastDropLogIsRateLimited(t *testing.T) {
+	h, logs, clock := newDropTestHub()
+
+	for i := 0; i < 3; i++ { // first fills the channel, then two drops
+		h.Broadcast(Message{Type: MsgSkipNow})
+	}
+	want := []string{`websocket: dropped 1 broadcast(s), channel full (last type "skip_now")`}
+	if got := logs.snapshot(); !slices.Equal(got, want) {
+		t.Fatalf("logs after first drops = %q, want %q", got, want)
+	}
+
+	*clock = clock.Add(dropLogInterval - time.Second)
+	h.Broadcast(Message{Type: MsgSkipNow})
+	if got := logs.snapshot(); len(got) != 1 {
+		t.Fatalf("drop inside the interval logged again: %q", got)
+	}
+
+	// Counts every drop since the last log: the unlogged third broadcast,
+	// the one inside the interval, and this one.
+	*clock = clock.Add(time.Second)
+	h.Broadcast(Message{Type: MsgHeartbeatAck})
+	want = append(want, `websocket: dropped 3 broadcast(s), channel full (last type "heartbeat_ack")`)
+	if got := logs.snapshot(); !slices.Equal(got, want) {
+		t.Fatalf("logs after interval = %q, want %q", got, want)
+	}
+}
+
+func TestBroadcastWithRoomLogsNothing(t *testing.T) {
+	h, logs, _ := newDropTestHub()
+
+	h.Broadcast(Message{Type: MsgSkipNow})
+
+	if got := logs.snapshot(); len(got) != 0 {
+		t.Fatalf("successful broadcast logged %q", got)
+	}
+}
+
+func TestDeliverLogsStalledClientDrop(t *testing.T) {
+	h, logs, _ := newDropTestHub()
+	h.clients[newTestClient(0)] = struct{}{}
+	h.clients[newTestClient(1)] = struct{}{}
+
+	h.deliver(Message{Type: MsgSkipNow})
+
+	want := []string{"websocket: dropping client whose send buffer is full"}
+	if got := logs.snapshot(); !slices.Equal(got, want) {
+		t.Fatalf("logs = %q, want %q", got, want)
 	}
 }

@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1040,5 +1043,58 @@ func TestRolePlayerReconnectInsideGraceKeepsNowPlaying(t *testing.T) {
 
 	if cur := tracker.GetCurrentSong(); cur == nil || cur.ID != "song-1" {
 		t.Fatalf("current song = %v, want song-1", cur)
+	}
+}
+
+// listErrorQueueManager fails every ListQueue.
+type listErrorQueueManager struct{ emptyQueueManager }
+
+func (listErrorQueueManager) ListQueue(context.Context) ([]*models.QueueItem, error) {
+	return nil, errors.New("store offline")
+}
+
+// captureStdLog routes the standard logger into the returned capture until
+// the test ends.
+func captureStdLog(t *testing.T) *logCapture {
+	t.Helper()
+	logs := &logCapture{}
+	flags, prefix := log.Flags(), log.Prefix()
+	log.SetFlags(0)
+	log.SetPrefix("")
+	log.SetOutput(logWriter{logs})
+	t.Cleanup(func() {
+		log.SetOutput(os.Stderr)
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+	})
+	return logs
+}
+
+// logWriter adapts logCapture to the io.Writer the standard logger needs.
+type logWriter struct{ logs *logCapture }
+
+func (w logWriter) Write(p []byte) (int, error) {
+	w.logs.logf("%s", strings.TrimSuffix(string(p), "\n"))
+	return len(p), nil
+}
+
+func TestSendPrebufferLogsListQueueError(t *testing.T) {
+	logs := captureStdLog(t)
+	c := NewClient(NewHub(), nil, listErrorQueueManager{}, "", nil)
+
+	c.sendPrebuffer(context.Background())
+
+	var prebufferLines []string
+	for _, line := range logs.snapshot() {
+		if strings.Contains(line, "prebuffer") {
+			prebufferLines = append(prebufferLines, line)
+		}
+	}
+	want := []string{"websocket prebuffer: list queue: store offline"}
+	if !slices.Equal(prebufferLines, want) {
+		t.Fatalf("prebuffer logs = %q, want %q", prebufferLines, want)
+	}
+	if n := len(c.send); n != 0 {
+		t.Fatalf("send holds %d frames, want 0", n)
 	}
 }

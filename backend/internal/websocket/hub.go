@@ -21,6 +21,9 @@ const lastPlayerClearGrace = 5 * time.Second
 // about 3 s before the audio ends; the extra second is margin.
 const dryQueueClearGrace = 4 * time.Second
 
+// dropLogInterval is the least time between two logs of dropped broadcasts.
+const dropLogInterval = 10 * time.Second
+
 // Hub manages all active WebSocket connections.
 type Hub struct {
 	clients   map[*Client]struct{}
@@ -45,6 +48,17 @@ type Hub struct {
 	// none is pending (guarded by mu).
 	dryClearGrace   time.Duration
 	pendingDryClear *time.Timer
+
+	// logf and now are log.Printf and time.Now outside tests.
+	logf func(string, ...any)
+	now  func() time.Time
+
+	// dropped counts broadcasts dropped since lastDropLog, the last time a
+	// drop was logged; zero means the next drop logs at once (guarded by
+	// dropMu).
+	dropMu      sync.Mutex
+	dropped     int
+	lastDropLog time.Time
 }
 
 // NewHub creates a new Hub ready to Run.
@@ -54,6 +68,8 @@ func NewHub() *Hub {
 		broadcast:     make(chan Message, 256),
 		clearGrace:    lastPlayerClearGrace,
 		dryClearGrace: dryQueueClearGrace,
+		logf:          log.Printf,
+		now:           time.Now,
 	}
 }
 
@@ -80,7 +96,9 @@ func (h *Hub) deliver(msg Message) {
 
 	// Dropped only after RUnlock: drop takes the write lock.
 	for _, c := range stalled {
-		h.drop(c)
+		if h.drop(c) {
+			h.logf("websocket: dropping client whose send buffer is full")
+		}
 	}
 }
 
@@ -88,8 +106,9 @@ func (h *Hub) deliver(msg Message) {
 // When c was the last client acting as a player, it schedules a clear of
 // now-playing after clearGrace; a player joining inside that window cancels
 // it. Shutdown does not come through here and schedules no clear; main
-// clears now-playing itself right after Shutdown returns.
-func (h *Hub) drop(c *Client) {
+// clears now-playing itself right after Shutdown returns. It reports whether
+// c was still registered.
+func (h *Hub) drop(c *Client) bool {
 	h.mu.Lock()
 	_, known := h.clients[c]
 	delete(h.clients, c)
@@ -101,6 +120,7 @@ func (h *Hub) drop(c *Client) {
 	if known {
 		c.close()
 	}
+	return known
 }
 
 // scheduleClearLocked replaces any pending clear with one that runs after
@@ -201,7 +221,23 @@ func (h *Hub) Broadcast(msg Message) {
 	case h.broadcast <- msg:
 	default:
 		// Drop if the broadcast channel itself is full rather than blocking the caller.
+		h.noteDrop(msg.Type)
 	}
+}
+
+// noteDrop counts a dropped broadcast and logs the count since the last log
+// at most once per dropLogInterval, so a stuck hub cannot flood the log.
+func (h *Hub) noteDrop(msgType string) {
+	h.dropMu.Lock()
+	defer h.dropMu.Unlock()
+	h.dropped++
+	now := h.now()
+	if !h.lastDropLog.IsZero() && now.Sub(h.lastDropLog) < dropLogInterval {
+		return
+	}
+	h.logf("websocket: dropped %d broadcast(s), channel full (last type %q)", h.dropped, msgType)
+	h.dropped = 0
+	h.lastDropLog = now
 }
 
 // Register adds a client to the hub. During shutdown it refuses the client

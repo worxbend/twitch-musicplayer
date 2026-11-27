@@ -400,6 +400,7 @@ func (c *Client) broadcastClearedState(ctx context.Context) {
 func (c *Client) sendPrebuffer(ctx context.Context) {
 	items, err := c.queueMgr.ListQueue(ctx)
 	if err != nil {
+		log.Printf("websocket prebuffer: list queue: %v", err)
 		return
 	}
 	first := models.FirstPlayable(items)
@@ -413,6 +414,7 @@ func (c *Client) sendPrebuffer(ctx context.Context) {
 	}
 	msg, err := Encode(MsgPrebufferSong, payload)
 	if err != nil {
+		log.Printf("websocket prebuffer: encode: %v", err)
 		return
 	}
 	c.trySend(msg)
