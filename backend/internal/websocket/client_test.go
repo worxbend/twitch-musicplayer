@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -437,5 +438,117 @@ func TestConnectSnapshotPrecedesRacingNowPlaying(t *testing.T) {
 		if msg.Type != want.msgType || song == nil || song.ID != want.songID {
 			t.Fatalf("frame = %s song %v, want %s song %s", msg.Type, song, want.msgType, want.songID)
 		}
+	}
+}
+
+// newServerConn returns the server side of a live WebSocket connection whose
+// peer is kept open until the test ends.
+func newServerConn(t *testing.T) *ws.Conn {
+	t.Helper()
+	conns := make(chan *ws.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&ws.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		conns <- conn
+	}))
+	t.Cleanup(srv.Close)
+
+	peer, _, err := ws.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { peer.Close() })
+
+	select {
+	case conn := <-conns:
+		t.Cleanup(func() { conn.Close() })
+		return conn
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never upgraded the connection")
+		return nil
+	}
+}
+
+// newPumpTestClient is newSendTestClient on a live server-side connection.
+func newPumpTestClient(t *testing.T) (*Client, *recordingQueueManager) {
+	t.Helper()
+	c, mgr := newSendTestClient()
+	c.conn = newServerConn(t)
+	return c, mgr
+}
+
+func mustPlaySong(t *testing.T, songID string) Message {
+	t.Helper()
+	msg, err := Encode(MsgPlaySong, PlaySongPayload{Song: models.Song{ID: songID}})
+	if err != nil {
+		t.Fatalf("encode play_song: %v", err)
+	}
+	return msg
+}
+
+// runWritePump runs c.writePump and fails the test if it does not return.
+func runWritePump(t *testing.T, c *Client) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		c.writePump()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writePump did not return")
+	}
+}
+
+// A failed write must close the client, so no later need_song dequeues a song
+// for a dead peer, and must put back every play_song the peer never got: the
+// one that failed and any still buffered, the failed one at the front.
+func TestWritePumpWriteErrorClosesAndRequeues(t *testing.T) {
+	c, mgr := newPumpTestClient(t)
+	c.send <- mustPlaySong(t, "failed")
+	c.send <- Message{Type: MsgHeartbeatAck}
+	c.send <- mustPlaySong(t, "buffered")
+	if err := c.conn.UnderlyingConn().Close(); err != nil {
+		t.Fatalf("close underlying conn: %v", err)
+	}
+
+	runWritePump(t, c)
+
+	select {
+	case <-c.closed:
+	default:
+		t.Fatal("client still open after write error")
+	}
+	if _, requeued := mgr.calls(); strings.Join(requeued, ",") != "buffered,failed" {
+		t.Fatalf("requeued = %v, want [buffered failed]", requeued)
+	}
+
+	c.sendNextSong(context.Background())
+
+	if next, _ := mgr.calls(); next != 0 {
+		t.Fatalf("NextSong calls after write error = %d, want 0", next)
+	}
+	assertNothingPublished(t, c)
+}
+
+// A client the hub dropped or that closed normally must hand its buffered
+// play_song back to the queue instead of losing it.
+func TestWritePumpClosedClientRequeuesBufferedPlaySong(t *testing.T) {
+	c, mgr := newPumpTestClient(t)
+	c.send <- mustPlaySong(t, "buffered")
+	c.send <- Message{Type: MsgHeartbeatAck}
+	c.close()
+
+	runWritePump(t, c)
+
+	if _, requeued := mgr.calls(); len(requeued) != 1 || requeued[0] != "buffered" {
+		t.Fatalf("requeued = %v, want [buffered]", requeued)
+	}
+	if n := len(c.send); n != 0 {
+		t.Fatalf("send buffer holds %d messages after exit, want 0", n)
 	}
 }

@@ -52,6 +52,10 @@ type Client struct {
 	// default. Signalling through a separate channel lets senders bail safely.
 	closed    chan struct{}
 	closeOnce sync.Once
+	// sendMu makes trySend's closed check and buffer send one step against
+	// closeWith, so nothing enters send once closed is closed and writePump's
+	// final drain sees every frame left behind.
+	sendMu sync.Mutex
 	// closeCode and closeText go into the close frame writePump sends. They
 	// are written before closed is closed, so writePump reads them safely
 	// after <-closed.
@@ -81,6 +85,8 @@ func (c *Client) close() {
 // closeWith is close with an explicit close code and reason. The first call
 // wins; later calls do nothing.
 func (c *Client) closeWith(code int, text string) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 	c.closeOnce.Do(func() {
 		c.closeCode = code
 		c.closeText = text
@@ -91,6 +97,9 @@ func (c *Client) closeWith(code int, text string) {
 // trySend queues msg for delivery without ever blocking the caller. It reports
 // false when the client is already closed or its send buffer is full.
 func (c *Client) trySend(msg Message) bool {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
 	// Checked in two steps on purpose. A single select listing both cases
 	// would pick at random whenever both are ready, so a closed client with a
 	// free buffer slot would still accept messages.
@@ -337,7 +346,9 @@ func (c *Client) streamURL(songID string) string {
 }
 
 // writePump drains the client's send channel and writes messages to the
-// connection. It exits when the hub closes the client or a write fails.
+// connection. It exits when the hub closes the client or a write fails; a
+// failed write closes the client itself. Either way every play_song the peer
+// never got goes back to the front of the queue.
 func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
@@ -346,24 +357,84 @@ func (c *Client) writePump() {
 	}()
 
 	for {
+		// Checked alone first: a select with both cases ready picks at
+		// random, and a closed client should write no more buffered frames.
+		select {
+		case <-c.closed:
+			c.finishClosed()
+			return
+		default:
+		}
+
 		select {
 		case msg := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteJSON(msg); err != nil {
 				log.Printf("websocket write error: %v", err)
+				c.abandon(msg)
 				return
 			}
 
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(ws.PingMessage, nil); err != nil {
+				c.abandon()
 				return
 			}
 
 		case <-c.closed:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.conn.WriteMessage(ws.CloseMessage, ws.FormatCloseMessage(c.closeCode, c.closeText)) //nolint:errcheck
+			c.finishClosed()
 			return
+		}
+	}
+}
+
+// finishClosed sends the close frame and requeues buffered play_song frames.
+func (c *Client) finishClosed() {
+	c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	c.conn.WriteMessage(ws.CloseMessage, ws.FormatCloseMessage(c.closeCode, c.closeText)) //nolint:errcheck
+	c.requeueUndelivered(c.drainSend())
+}
+
+// abandon closes the client after a failed write, so sendNextSong dequeues
+// nothing more for a dead peer, and requeues the play_song frames in failed
+// and in the send buffer. A write can fail after the peer already got the
+// frame; that song then plays twice, which beats losing it.
+func (c *Client) abandon(failed ...Message) {
+	c.closeWith(ws.CloseAbnormalClosure, "")
+	c.requeueUndelivered(append(failed, c.drainSend()...))
+}
+
+// drainSend empties the send buffer without blocking. Called only once the
+// client is closed, when trySend adds nothing more, so it always finishes.
+func (c *Client) drainSend() []Message {
+	var left []Message
+	for {
+		select {
+		case msg := <-c.send:
+			left = append(left, msg)
+		default:
+			return left
+		}
+	}
+}
+
+// requeueUndelivered puts the songs of the play_song frames in msgs back at the
+// front of the queue and ignores other frames. msgs is in send order and is
+// requeued last first, so the earliest song ends up at the front.
+func (c *Client) requeueUndelivered(msgs []Message) {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Type != MsgPlaySong {
+			continue
+		}
+		var payload PlaySongPayload
+		if err := json.Unmarshal(msgs[i].Payload, &payload); err != nil {
+			log.Printf("decode undelivered play_song: %v", err)
+			continue
+		}
+		log.Printf("play_song not delivered (write failed or client closed); requeueing %s", payload.Song.ID)
+		if err := c.queueMgr.Requeue(context.Background(), payload.Song.ID); err != nil {
+			log.Printf("requeue undelivered song: %v", err)
 		}
 	}
 }
