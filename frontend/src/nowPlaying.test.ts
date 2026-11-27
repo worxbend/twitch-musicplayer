@@ -11,6 +11,7 @@ import {
   nowPlayingThemes,
   parseNowPlayingOptions,
   reduceNowPlaying,
+  reduceUpNext,
   type NowPlayingOptions,
   type NowPlayingSong,
   type ShownKey,
@@ -138,18 +139,18 @@ test('nowPlayingPath emits art=1 only when art is on', () => {
 });
 
 test('options default to left and 32px', () => {
-  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans' });
+  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false });
 });
 
 test('options accept valid align and size values', () => {
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0, art: false, theme: 'shadow', font: 'sans' });
-  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0, art: false, theme: 'shadow', font: 'sans' });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false });
   assert.equal(parseNowPlayingOptions('?size=120').size, 120);
 });
 
 test('invalid options fall back to the defaults', () => {
   for (const search of ['?align=middle&size=11', '?align=LEFT&size=121', '?size=40.5', '?size=-20', '?size=abc', '?size=']) {
-    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans' }, search);
+    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false }, search);
   }
 });
 
@@ -157,7 +158,7 @@ test('hold accepts whole seconds from 1 to 600', () => {
   assert.equal(parseNowPlayingOptions('?hold=5').hold, 5);
   assert.equal(parseNowPlayingOptions('?hold=1').hold, 1);
   assert.equal(parseNowPlayingOptions('?hold=600').hold, 600);
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10, art: false, theme: 'shadow', font: 'sans' });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10, art: false, theme: 'shadow', font: 'sans', next: false });
 });
 
 test('invalid or missing hold means always visible', () => {
@@ -177,11 +178,12 @@ test('nowPlayingPath orders params align, size, hold', () => {
 
 test('nowPlayingPath round-trips through parseNowPlayingOptions', () => {
   const cases: NowPlayingOptions[] = [
-    { align: 'center', size: 48, hold: 8, art: true, theme: 'shadow', font: 'sans' },
-    { align: 'right', size: 12, hold: 600, art: false, theme: 'outline', font: 'sans' },
-    { align: 'left', size: 120, hold: 1, art: false, theme: 'pill', font: 'mono' },
-    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans' },
-    { align: 'left', size: 32, hold: 0, art: true, theme: 'shadow', font: 'mono' },
+    { align: 'center', size: 48, hold: 8, art: true, theme: 'shadow', font: 'sans', next: false },
+    { align: 'right', size: 12, hold: 600, art: false, theme: 'outline', font: 'sans', next: false },
+    { align: 'left', size: 120, hold: 1, art: false, theme: 'pill', font: 'mono', next: false },
+    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false },
+    { align: 'left', size: 32, hold: 0, art: true, theme: 'shadow', font: 'mono', next: false },
+    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: true },
   ];
   for (const opts of cases) {
     assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts);
@@ -222,8 +224,42 @@ test('nowPlayingPath emits theme and font only when not the default', () => {
 test('every theme and font round-trips with the other params', () => {
   for (const theme of nowPlayingThemes) {
     for (const font of nowPlayingFonts) {
-      const opts: NowPlayingOptions = { align: 'center', size: 40, hold: 10, art: true, theme, font };
+      const opts: NowPlayingOptions = { align: 'center', size: 40, hold: 10, art: true, theme, font, next: true };
       assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts, `${theme}/${font}`);
     }
   }
+});
+
+test('next is on only for next=1', () => {
+  assert.equal(parseNowPlayingOptions('?next=1').next, true);
+  for (const search of ['', '?next=', '?next=0', '?next=true']) {
+    assert.equal(parseNowPlayingOptions(search).next, false, search);
+  }
+});
+
+test('nowPlayingPath emits next=1 only when next is on, after the other params', () => {
+  assert.equal(nowPlayingPath({ next: true }), '/now-playing?next=1');
+  assert.equal(nowPlayingPath({ next: false }), '/now-playing');
+  assert.equal(nowPlayingPath({ align: 'center', next: true }), '/now-playing?align=center&next=1');
+});
+
+test('reduceUpNext takes next_song from queue_updated', () => {
+  const raw = frame('queue_updated', { queue_depth: 2, reason: 'song_added', next_song: song({ title: 'Snow' }) });
+  assert.deepEqual(reduceUpNext(null, raw), { title: 'Snow', artist: 'Lofi Cat' });
+});
+
+test('reduceUpNext clears on queue_updated without next_song', () => {
+  assert.equal(reduceUpNext(prev, frame('queue_updated', { queue_depth: 0, reason: 'song_started' })), null);
+});
+
+test('reduceUpNext reads next_song from state and clears on a state without it', () => {
+  const raw = frame('state', { current_song: song({}), queue_length: 1, total_songs: 9, next_song: song({ title: 'Snow' }) });
+  assert.deepEqual(reduceUpNext(null, raw), { title: 'Snow', artist: 'Lofi Cat' });
+  assert.equal(reduceUpNext(prev, frame('state', { queue_length: 0, total_songs: 9 })), null);
+});
+
+test('reduceUpNext keeps prev on now_playing and on garbage', () => {
+  assert.equal(reduceUpNext(prev, frame('now_playing', { song: song({}), queue_depth: 1 })), prev);
+  assert.equal(reduceUpNext(prev, 'not json'), prev);
+  assert.equal(reduceUpNext(prev, frame('queue_updated')), prev);
 });

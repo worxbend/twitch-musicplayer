@@ -24,3 +24,14 @@ func TestFirstPlayable(t *testing.T) {
 		})
 	}
 }
+
+func TestNextPlayableSong(t *testing.T) {
+	dead := &QueueItem{ID: "q1", SongID: "gone"}
+	live := &QueueItem{ID: "q2", SongID: "a", Song: &Song{ID: "a"}}
+	if got := NextPlayableSong([]*QueueItem{dead, live}); got != live.Song {
+		t.Fatalf("NextPlayableSong = %+v, want song a", got)
+	}
+	if got := NextPlayableSong([]*QueueItem{dead}); got != nil {
+		t.Fatalf("NextPlayableSong(all dead) = %+v, want nil", got)
+	}
+}

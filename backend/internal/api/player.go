@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -119,6 +120,12 @@ func (h *PlayerHandler) State(w http.ResponseWriter, r *http.Request) {
 		CurrentSong: h.stateTracker.GetCurrentSong(),
 		TotalSongs:  totalSongs,
 		QueueLength: queueLength,
+	}
+	// next_song is optional: a failed queue read omits it instead of failing.
+	if items, err := h.skipSource.ListQueue(ctx); err == nil {
+		state.NextSong = models.NextPlayableSong(items)
+	} else {
+		log.Printf("player state: list queue: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, state)

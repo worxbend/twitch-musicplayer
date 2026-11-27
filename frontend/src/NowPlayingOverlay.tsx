@@ -1,7 +1,7 @@
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { coverURL, getWebSocketURL } from './config/backend';
 import { HEARTBEAT_MS, armHandshakeTimeout, isStale, reconnectDelay } from './config/reconnect';
-import { nextShown, reduceNowPlaying, type NowPlayingOptions, type NowPlayingSong, type ShownKey } from './nowPlaying';
+import { nextShown, reduceNowPlaying, reduceUpNext, type NowPlayingOptions, type NowPlayingSong, type ShownKey } from './nowPlaying';
 
 type Props = NowPlayingOptions;
 
@@ -12,10 +12,12 @@ const heartbeatFrame = JSON.stringify({ type: 'heartbeat' });
  * need_song or song_finished, and this socket sends nothing but heartbeat, so
  * it can never advance the queue. Silence past STALE_AFTER_MS (no heartbeat_ack)
  * means a half-open socket, so it reconnects. With `hold` > 0 the text fades out
- * that many seconds after each new song start or title change.
+ * that many seconds after each new song start or title change. With `next` it
+ * also shows the next queued title from the frames it already receives.
  */
 export function NowPlayingOverlay(props: Props) {
   const [song, setSong] = createSignal<NowPlayingSong | null>(null);
+  const [upNext, setUpNext] = createSignal<NowPlayingSong | null>(null);
   const [visible, setVisible] = createSignal(true);
   // A cover that fails to load is dropped, so OBS never shows a broken image.
   const [failedCover, setFailedCover] = createSignal('');
@@ -83,7 +85,10 @@ export function NowPlayingOverlay(props: Props) {
     };
     ws.onmessage = event => {
       lastMessageAt = Date.now();
-      if (typeof event.data === 'string') setSong(prev => reduceNowPlaying(prev, event.data));
+      if (typeof event.data !== 'string') return;
+      const raw = event.data;
+      setSong(prev => reduceNowPlaying(prev, raw));
+      setUpNext(prev => reduceUpNext(prev, raw));
     };
     ws.onclose = () => {
       closeSocket();
@@ -132,6 +137,9 @@ export function NowPlayingOverlay(props: Props) {
               <p class="np-title">{title}</p>
               <Show when={song()?.artist}>
                 <p class="np-artist">{song()?.artist}</p>
+              </Show>
+              <Show when={props.next && upNext()?.title}>
+                <p class="np-next">Up next: {upNext()?.title}</p>
               </Show>
             </div>
           </div>

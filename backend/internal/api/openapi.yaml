@@ -803,6 +803,9 @@ components:
         total_songs:
           type: integer
           description: Indexed songs in rotation. Blocked songs are not counted. Same value as the websocket state frame.
+        next_song:
+          $ref: "#/components/schemas/Song"
+          description: First playable queued song. Omitted when nothing playable is queued or the queue cannot be read.
 
     PlayEntry:
       type: object

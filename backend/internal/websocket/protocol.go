@@ -50,6 +50,18 @@ type SongFinishedPayload struct {
 type QueueUpdatedPayload struct {
 	QueueDepth int    `json:"queue_depth"`
 	Reason     string `json:"reason"` // "song_added" | "song_removed" | "song_moved" | "skipped" | "play_next" | "cleared" | "new_file" | "file_removed" | "file_updated" | "song_started" | "song_blocked" | "song_unblocked"
+	// NextSong is the first playable queued song, absent when none is queued.
+	NextSong *models.Song `json:"next_song,omitempty"`
+}
+
+// QueueUpdatedMessage builds the queue_updated frame for the queue items and
+// reason: the depth counts every entry, next_song is the first playable one.
+func QueueUpdatedMessage(items []*models.QueueItem, reason string) (Message, error) {
+	return Encode(MsgQueueUpdated, QueueUpdatedPayload{
+		QueueDepth: len(items),
+		Reason:     reason,
+		NextSong:   models.NextPlayableSong(items),
+	})
 }
 
 // NowPlayingPayload is broadcast whenever a new song starts playing.

@@ -34,9 +34,10 @@ export function ScenesIndex() {
   const [size, setSize] = createSignal(32);
   const [hold, setHold] = createSignal(0);
   const [art, setArt] = createSignal(false);
+  const [next, setNext] = createSignal(false);
   const [theme, setTheme] = createSignal<NowPlayingTheme>('shadow');
   const [font, setFont] = createSignal<NowPlayingFont>('sans');
-  const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold(), art: art(), theme: theme(), font: font() });
+  const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold(), art: art(), theme: theme(), font: font(), next: next() });
   let timer = 0;
   onMount(() => {
     document.documentElement.classList.add('scenes-index-page');
@@ -152,6 +153,10 @@ export function ScenesIndex() {
                 <label class="overlay-check">
                   <input type="checkbox" checked={art()} onChange={e => setArt(e.currentTarget.checked)} />
                   Album art
+                </label>
+                <label class="overlay-check">
+                  <input type="checkbox" checked={next()} onChange={e => setNext(e.currentTarget.checked)} />
+                  Up next
                 </label>
               </div>
               <div class="scene-urls">

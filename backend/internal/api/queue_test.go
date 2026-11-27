@@ -151,6 +151,40 @@ func assertQueueUpdated(t *testing.T, b *fakeBroadcaster, reason string) {
 	}
 }
 
+// A queue_updated broadcast names the next playable song, skipping a dead
+// head; a failed queue read still broadcasts, with depth 0 and no next_song.
+func TestBroadcastQueueUpdatedCarriesNextSong(t *testing.T) {
+	dead := &models.QueueItem{ID: "q1", SongID: "gone"}
+	live := &models.QueueItem{ID: "q2", SongID: "b", Song: &models.Song{ID: "b"}}
+	tests := []struct {
+		name      string
+		mgr       *fakeQueueManager
+		wantDepth int
+		wantNext  string
+	}{
+		{name: "next song", mgr: &fakeQueueManager{items: []*models.QueueItem{dead, live}}, wantDepth: 2, wantNext: "b"},
+		{name: "list error", mgr: &fakeQueueManager{items: []*models.QueueItem{live}, listErr: errors.New("boom")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &fakeBroadcaster{}
+			NewQueueHandler(tt.mgr, b).broadcastQueueUpdated(context.Background(), "cleared")
+			assertQueueUpdated(t, b, "cleared")
+			var p websocket.QueueUpdatedPayload
+			if err := json.Unmarshal(b.msgs[0].Payload, &p); err != nil {
+				t.Fatalf("decode payload: %v", err)
+			}
+			gotNext := ""
+			if p.NextSong != nil {
+				gotNext = p.NextSong.ID
+			}
+			if p.QueueDepth != tt.wantDepth || gotNext != tt.wantNext {
+				t.Fatalf("depth = %d, next = %q; want %d, %q", p.QueueDepth, gotNext, tt.wantDepth, tt.wantNext)
+			}
+		})
+	}
+}
+
 // oversizeBody is a syntactically valid request just over maxJSONBody.
 var oversizeBody = fmt.Sprintf(`{"song_id":%q}`, strings.Repeat("a", 5<<10))
 

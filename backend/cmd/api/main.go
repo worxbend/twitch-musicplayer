@@ -268,14 +268,15 @@ type queueLister interface {
 }
 
 // broadcastQueueUpdated tells every client the queue changed for reason and
-// how deep it now is. A failed queue read still sends the frame, with depth 0.
+// how deep it now is. A failed queue read still sends the frame, with depth 0
+// and no next_song.
 func broadcastQueueUpdated(ctx context.Context, hub broadcaster, q queueLister, reason string) {
 	items, err := q.ListQueue(ctx)
 	if err != nil {
 		log.Printf("list queue for queue_updated (%s): %v", reason, err)
+		items = nil
 	}
-	payload := websocket.QueueUpdatedPayload{QueueDepth: len(items), Reason: reason}
-	msg, err := websocket.Encode(websocket.MsgQueueUpdated, payload)
+	msg, err := websocket.QueueUpdatedMessage(items, reason)
 	if err != nil {
 		log.Printf("encode queue_updated (%s): %v", reason, err)
 		return

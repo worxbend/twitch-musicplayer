@@ -127,7 +127,8 @@ Broadcast when queue state changes.
   "type": "queue_updated",
   "payload": {
     "queue_depth": 1,
-    "reason": "song_added"
+    "reason": "song_added",
+    "next_song": { "id": "...", "title": "...", "artist": "..." }
   }
 }
 ```
@@ -148,6 +149,11 @@ Known reasons:
 - `song_unblocked` (an admin put a blocked song back in rotation)
 
 `queue_depth` is the live queue length after the change, for every reason.
+
+`next_song` is the first playable queued song, the one the next `need_song` would get from
+the queue. Queued entries whose file is gone are skipped. The key is absent when nothing
+playable is queued. An auto strategy may still pick a song then, but that pick is not known
+in advance. The `/now-playing?next=1` overlay shows it as its "Up next" line.
 
 ### `error`
 
@@ -203,8 +209,9 @@ which empties it.
   "type": "state",
   "payload": {
     "current_song": { "id": "...", "title": "...", "artist": "..." },
-    "queue_length": 0,
-    "total_songs": 0
+    "queue_length": 1,
+    "total_songs": 0,
+    "next_song": { "id": "...", "title": "...", "artist": "..." }
   }
 }
 ```
@@ -212,7 +219,8 @@ which empties it.
 `total_songs` counts indexed songs in rotation; blocked songs are not counted. It matches
 `GET /v1/player`.
 
-`current_song` is omitted while nothing is playing. The counts are looked up on a context
+`current_song` is omitted while nothing is playing. `next_song` follows the `queue_updated`
+rule and is also in `GET /v1/player`. The counts are looked up on a context
 detached from the HTTP upgrade request, so they stay accurate after the handler returns.
 
 ## 🤝 Frontend Contract

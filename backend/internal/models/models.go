@@ -45,9 +45,20 @@ func FirstPlayable(items []*QueueItem) *QueueItem {
 	return nil
 }
 
+// NextPlayableSong returns the Song of FirstPlayable(items), or nil when no
+// entry is playable. It is the "up next" title shown to overlays.
+func NextPlayableSong(items []*QueueItem) *Song {
+	if first := FirstPlayable(items); first != nil {
+		return first.Song
+	}
+	return nil
+}
+
 // PlayerState is the snapshot of current playback state sent over WebSocket.
 type PlayerState struct {
 	CurrentSong *Song `json:"current_song,omitempty"`
 	QueueLength int   `json:"queue_length"`
 	TotalSongs  int   `json:"total_songs"`
+	// NextSong is the first playable queued song, absent when none is queued.
+	NextSong *Song `json:"next_song,omitempty"`
 }

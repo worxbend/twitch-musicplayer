@@ -37,11 +37,15 @@ func TestPlayerState(t *testing.T) {
 		wantCode    int
 		wantTotal   float64
 		wantCurrent bool
+		wantNext    string // "" means next_song is absent
 	}{
 		{name: "playing", mgr: &fakeQueueManager{totalSongs: 12}, queue: fakeCounter{n: 3}, current: &models.Song{ID: "c", Title: "Rain"}, wantCode: http.StatusOK, wantTotal: 12, wantCurrent: true},
 		{name: "idle omits current_song", mgr: &fakeQueueManager{totalSongs: 12}, queue: fakeCounter{n: 3}, wantCode: http.StatusOK, wantTotal: 12},
 		// A library of 3 with one song blocked: total_songs counts rotation only.
 		{name: "blocked songs not counted", mgr: &fakeQueueManager{totalSongs: 2}, queue: fakeCounter{n: 3}, wantCode: http.StatusOK, wantTotal: 2},
+		{name: "next song", mgr: &fakeQueueManager{totalSongs: 12, items: []*models.QueueItem{{ID: "q1", SongID: "gone"}, {ID: "q2", SongID: "n", Song: &models.Song{ID: "n"}}}}, queue: fakeCounter{n: 3}, wantCode: http.StatusOK, wantTotal: 12, wantNext: "n"},
+		// next_song is optional, so a failed queue read omits it instead of a 500.
+		{name: "queue list error omits next_song", mgr: &fakeQueueManager{totalSongs: 12, listErr: boom, items: []*models.QueueItem{{ID: "q2", SongID: "n", Song: &models.Song{ID: "n"}}}}, queue: fakeCounter{n: 3}, wantCode: http.StatusOK, wantTotal: 12},
 		{name: "song count error", mgr: &fakeQueueManager{libraryErr: boom}, wantCode: http.StatusInternalServerError},
 		{name: "queue count error", mgr: &fakeQueueManager{}, queue: fakeCounter{err: boom}, wantCode: http.StatusInternalServerError},
 	}
@@ -69,6 +73,10 @@ func TestPlayerState(t *testing.T) {
 			}
 			if hasCurrent && cur["id"] != "c" {
 				t.Fatalf("current_song = %v", cur)
+			}
+			next, hasNext := got["next_song"].(map[string]any)
+			if hasNext != (tt.wantNext != "") || (hasNext && next["id"] != tt.wantNext) {
+				t.Fatalf("next_song = %v, want id %q", got["next_song"], tt.wantNext)
 			}
 		})
 	}

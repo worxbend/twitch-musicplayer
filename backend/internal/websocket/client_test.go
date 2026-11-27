@@ -146,7 +146,8 @@ func TestPeekNextAllDeadSendsNothing(t *testing.T) {
 // and requeued song IDs.
 type recordingQueueManager struct {
 	emptyQueueManager
-	song *models.Song
+	song  *models.Song
+	items []*models.QueueItem // what ListQueue returns after the dequeue
 
 	mu        sync.Mutex
 	nextCalls int
@@ -158,6 +159,10 @@ func (m *recordingQueueManager) NextSong(context.Context) (*models.Song, error) 
 	defer m.mu.Unlock()
 	m.nextCalls++
 	return m.song, nil
+}
+
+func (m *recordingQueueManager) ListQueue(context.Context) ([]*models.QueueItem, error) {
+	return m.items, nil
 }
 
 func (m *recordingQueueManager) Requeue(_ context.Context, songID string) error {
@@ -250,6 +255,87 @@ func TestSendNextSongDeliversAndPublishes(t *testing.T) {
 		default:
 			t.Fatalf("broadcast missing %s", want)
 		}
+	}
+}
+
+// The song_started queue_updated frame names the next playable song, skipping
+// a dead head, so overlays can show "Up next"; an empty queue omits the key.
+func TestSendNextSongQueueUpdatedCarriesNextSong(t *testing.T) {
+	dead := &models.QueueItem{ID: "q1", SongID: "gone"}
+	live := &models.QueueItem{ID: "q2", SongID: "b", Song: &models.Song{ID: "b", Title: "Snow"}}
+	tests := []struct {
+		name      string
+		items     []*models.QueueItem
+		wantDepth float64
+		wantNext  string // "" means next_song is absent
+	}{
+		{name: "dead head skipped", items: []*models.QueueItem{dead, live}, wantDepth: 2, wantNext: "b"},
+		{name: "empty queue omits key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, mgr := newSendTestClient()
+			mgr.items = tt.items
+
+			c.sendNextSong(context.Background())
+
+			<-c.hub.broadcast // now_playing
+			got := decodeObject(t, <-c.hub.broadcast)
+			if got["reason"] != "song_started" || got["queue_depth"] != tt.wantDepth {
+				t.Fatalf("queue_updated = %v, want song_started depth %v", got, tt.wantDepth)
+			}
+			assertNextSong(t, got, tt.wantNext)
+		})
+	}
+}
+
+// The connect state frame names the next playable song.
+func TestConnectStateCarriesNextSong(t *testing.T) {
+	live := &models.QueueItem{ID: "q1", SongID: "b", Song: &models.Song{ID: "b", Title: "Snow"}}
+	hub := NewHub()
+	go hub.Run()
+	srv := httptest.NewServer(&Endpoint{Hub: hub, QueueMgr: listedQueueManager{items: []*models.QueueItem{live}}, StateTracker: player.NewStateTracker()})
+	t.Cleanup(srv.Close)
+
+	conn, _, err := ws.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
+
+	var first Message
+	if err := conn.ReadJSON(&first); err != nil || first.Type != MsgState {
+		t.Fatalf("first frame = %+v, %v; want %s", first, err, MsgState)
+	}
+	assertNextSong(t, decodeObject(t, first), "b")
+}
+
+// decodeObject decodes msg's payload as a JSON object, so tests can tell an
+// absent key from a zero value.
+func decodeObject(t *testing.T, msg Message) map[string]any {
+	t.Helper()
+	var got map[string]any
+	if err := json.Unmarshal(msg.Payload, &got); err != nil {
+		t.Fatalf("decode %s: %v", msg.Type, err)
+	}
+	return got
+}
+
+// assertNextSong checks payload's next_song id, or that the key is absent
+// when wantID is empty.
+func assertNextSong(t *testing.T, payload map[string]any, wantID string) {
+	t.Helper()
+	next, ok := payload["next_song"]
+	if wantID == "" {
+		if ok {
+			t.Fatalf("next_song = %v, want key absent", next)
+		}
+		return
+	}
+	song, _ := next.(map[string]any)
+	if song == nil || song["id"] != wantID {
+		t.Fatalf("next_song = %v, want id %q", next, wantID)
 	}
 }
 

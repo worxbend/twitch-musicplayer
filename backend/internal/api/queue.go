@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -323,18 +324,18 @@ func (h *QueueHandler) broadcastQueueUpdated(ctx context.Context, reason string)
 		return
 	}
 
-	depth := 0
-	if items, err := h.mgr.ListQueue(ctx); err == nil {
-		depth = len(items)
+	// A failed read still sends the frame, with depth 0 and no next_song.
+	items, err := h.mgr.ListQueue(ctx)
+	if err != nil {
+		log.Printf("list queue for queue_updated (%s): %v", reason, err)
+		items = nil
 	}
-
-	msg, err := websocket.Encode(websocket.MsgQueueUpdated, websocket.QueueUpdatedPayload{
-		QueueDepth: depth,
-		Reason:     reason,
-	})
-	if err == nil {
-		h.broadcaster.Broadcast(msg)
+	msg, err := websocket.QueueUpdatedMessage(items, reason)
+	if err != nil {
+		log.Printf("encode queue_updated (%s): %v", reason, err)
+		return
 	}
+	h.broadcaster.Broadcast(msg)
 }
 
 // decodeJSONBody decodes a size-capped JSON body into dst. On failure it writes

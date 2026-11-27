@@ -175,6 +175,7 @@ func (c *Client) snapshotState(ctx context.Context) models.PlayerState {
 	state := models.PlayerState{CurrentSong: c.stateTracker.GetCurrentSong()}
 	if items, err := c.queueMgr.ListQueue(ctx); err == nil {
 		state.QueueLength = len(items)
+		state.NextSong = models.NextPlayableSong(items)
 	} else {
 		log.Printf("websocket state: list queue: %v", err)
 	}
@@ -298,7 +299,12 @@ func (c *Client) sendNextSong(ctx context.Context) error {
 		return err
 	}
 
-	items, _ := c.queueMgr.ListQueue(ctx)
+	// A failed read degrades to depth 0 and no next_song; the song still plays.
+	items, err := c.queueMgr.ListQueue(ctx)
+	if err != nil {
+		log.Printf("list queue after next song: %v", err)
+		items = nil
+	}
 	queueDepth := len(items)
 
 	payload := PlaySongPayload{
@@ -329,7 +335,7 @@ func (c *Client) sendNextSong(ctx context.Context) error {
 		if nowMsg, encErr := Encode(MsgNowPlaying, NowPlayingPayload{Song: *song, QueueDepth: queueDepth, HistoryID: payload.HistoryID}); encErr == nil {
 			c.hub.Broadcast(nowMsg)
 		}
-		if queueMsg, encErr := Encode(MsgQueueUpdated, QueueUpdatedPayload{QueueDepth: queueDepth, Reason: "song_started"}); encErr == nil {
+		if queueMsg, encErr := QueueUpdatedMessage(items, "song_started"); encErr == nil {
 			c.hub.Broadcast(queueMsg)
 		}
 	}

@@ -3,7 +3,8 @@
  *
  * Kept free of config, Vite env and Pixi imports so `node --test` can load it.
  * It reads the two server frames that carry the current song: `state`, sent
- * once on connect, and `now_playing`, broadcast whenever a song starts. Frames
+ * once on connect, and `now_playing`, broadcast whenever a song starts. The
+ * "Up next" line reads `next_song` from `state` and `queue_updated`. Frames
  * are `{type, payload}` envelopes (backend/internal/websocket/protocol.go).
  */
 
@@ -17,7 +18,10 @@ export type NowPlayingAlign = 'left' | 'center' | 'right';
 export type NowPlayingTheme = 'shadow' | 'outline' | 'pill';
 /** `sans` is the page font; `mono` is the bundled JetBrains Mono. */
 export type NowPlayingFont = 'sans' | 'mono';
-/** `hold` is seconds the title stays visible after each change; 0 keeps it visible. `art` shows the cover. */
+/**
+ * `hold` is seconds the title stays visible after each change; 0 keeps it visible. `art` shows the cover.
+ * `next` shows an "Up next" line with the next queued title.
+ */
 export type NowPlayingOptions = {
   align: NowPlayingAlign;
   size: number;
@@ -25,6 +29,7 @@ export type NowPlayingOptions = {
   art: boolean;
   theme: NowPlayingTheme;
   font: NowPlayingFont;
+  next: boolean;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -68,6 +73,17 @@ export function reduceNowPlaying(prev: NowPlayingSong | null, raw: string): NowP
 
   if (msg.type === 'state') return toSong(msg.payload.current_song);
   if (msg.type === 'now_playing') return withStartId(toSong(msg.payload.song), asText(msg.payload.history_id)) ?? prev;
+  return prev;
+}
+
+/**
+ * Applies one raw socket frame to the "Up next" song. `state` and `queue_updated` carry the
+ * next queued song as `next_song`; a missing key means nothing is queued. Other frames keep `prev`.
+ */
+export function reduceUpNext(prev: NowPlayingSong | null, raw: string): NowPlayingSong | null {
+  const msg = parse(raw);
+  if (!msg || !isObject(msg.payload)) return prev;
+  if (msg.type === 'state' || msg.type === 'queue_updated') return toSong(msg.payload.next_song);
   return prev;
 }
 
@@ -116,9 +132,9 @@ function pick<T extends string>(allowed: readonly T[], raw: unknown): T {
 }
 
 /**
- * Reads `?align=`, `?size=` (px), `?hold=` (seconds, 1..600), `?art=1`, `?theme=` and
- * `?font=`. Anything invalid falls back to left / 32 / 0 / no art / shadow / sans,
- * where hold 0 means always visible.
+ * Reads `?align=`, `?size=` (px), `?hold=` (seconds, 1..600), `?art=1`, `?theme=`,
+ * `?font=` and `?next=1`. Anything invalid falls back to left / 32 / 0 / no art / shadow /
+ * sans / no up-next line, where hold 0 means always visible.
  */
 export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const params = new URLSearchParams(search);
@@ -129,7 +145,7 @@ export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const hold = secs >= 1 && secs <= maxHoldSecs ? secs : 0;
   const theme = pick(nowPlayingThemes, params.get('theme'));
   const font = pick(nowPlayingFonts, params.get('font'));
-  return { align, size, hold, art: params.get('art') === '1', theme, font };
+  return { align, size, hold, art: params.get('art') === '1', theme, font, next: params.get('next') === '1' };
 }
 
 /** Rounds to a whole number inside min..max; a missing or non-numeric value gives `fallback`. */
@@ -155,6 +171,7 @@ export function nowPlayingPath(opts: Partial<NowPlayingOptions>): string {
   if (opts.art === true) params.set('art', '1');
   if (theme !== 'shadow') params.set('theme', theme);
   if (font !== 'sans') params.set('font', font);
+  if (opts.next === true) params.set('next', '1');
   const query = params.toString();
   return query ? `/now-playing?${query}` : '/now-playing';
 }

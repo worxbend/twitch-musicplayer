@@ -122,9 +122,10 @@ test('now playing overlay URL builder copies the configured URL', async ({ page,
   await page.getByLabel('Album art').check();
   await page.getByLabel('Theme').selectOption('pill');
   await page.getByLabel('Font').selectOption('mono');
+  await page.getByLabel('Up next').check();
   await page.getByRole('button', { name: 'Copy now playing overlay URL' }).click();
   await expect(page.getByRole('status')).toContainText('Browser-source URL copied');
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1&theme=pill&font=mono');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1&theme=pill&font=mono&next=1');
 });
 
 test('library search, queue add/remove, and keyboard-safe clear confirmation', async ({ page }) => {
@@ -686,6 +687,30 @@ test('now-playing shows cover art only with ?art=1', async ({ page }) => {
   await page.goto('/now-playing');
   await expect(page.getByText('Midnight compiler')).toBeVisible();
   await expect(page.locator('.np-art')).toHaveCount(0);
+});
+
+test('now-playing ?next=1 shows the next queued title; an empty queue hides it', async ({ page }) => {
+  let route!: WebSocketRoute;
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { route = ws; });
+  const send = (msg: object) => route.send(JSON.stringify(msg));
+  const upNext = page.locator('.np-next');
+  await page.goto('/now-playing?next=1');
+  await expect.poll(() => route).toBeTruthy();
+
+  send({ type: 'state', payload: { current_song: songs[0], queue_length: 1, total_songs: 2, next_song: songs[1] } });
+  await expect(upNext).toHaveText('Up next: Buffering dreams');
+  send({ type: 'queue_updated', payload: { queue_depth: 0, reason: 'song_started' } });
+  await expect(upNext).toHaveCount(0);
+  await expect(page.getByText('Midnight compiler')).toBeVisible();
+});
+
+test('now-playing without ?next=1 shows no up-next line', async ({ page }) => {
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
+    ws.send(JSON.stringify({ type: 'state', payload: { current_song: songs[0], queue_length: 1, total_songs: 2, next_song: songs[1] } }));
+  });
+  await page.goto('/now-playing');
+  await expect(page.getByText('Midnight compiler')).toBeVisible();
+  await expect(page.locator('.np-next')).toHaveCount(0);
 });
 
 test('now-playing hold re-shows a repeated title on a new history_id; a dry-queue state clears it', async ({ page }) => {
