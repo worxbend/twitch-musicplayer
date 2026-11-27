@@ -44,4 +44,4 @@ main
 music/
 
 # local config; copy from config.example.toml
-config.toml
+/config.toml
