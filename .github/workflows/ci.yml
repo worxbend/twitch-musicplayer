@@ -9,9 +9,10 @@ on:
 permissions:
   contents: read
 
+# Push runs are keyed by commit: a group holds one pending run, so a shared group would drop a head's verdict.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.ref) || format('ci-{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend:
