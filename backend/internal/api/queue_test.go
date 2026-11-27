@@ -31,6 +31,14 @@ type fakeQueueManager struct {
 	playNextID   string
 	addedSource  models.QueueSource
 	clearedCalls int
+
+	removeErr error
+	removedID string
+
+	movePos   int
+	moved     bool
+	moveErr   error
+	moveCalls []moveCall
 }
 
 func (f *fakeQueueManager) AddToQueue(_ context.Context, songID string, source models.QueueSource) (*models.QueueItem, error) {
@@ -69,27 +77,17 @@ func (f *fakeQueueManager) ClearQueue(context.Context) error {
 	return f.clearErr
 }
 
-type fakeQueueRepo struct {
-	removeErr error
-	removedID string
-
-	movePos   int
-	moved     bool
-	moveErr   error
-	moveCalls []moveCall
-}
-
 type moveCall struct {
 	id    string
 	delta int
 }
 
-func (f *fakeQueueRepo) Move(_ context.Context, id string, delta int) (int, bool, error) {
+func (f *fakeQueueManager) MoveEntry(_ context.Context, id string, delta int) (int, bool, error) {
 	f.moveCalls = append(f.moveCalls, moveCall{id: id, delta: delta})
 	return f.movePos, f.moved, f.moveErr
 }
 
-func (f *fakeQueueRepo) Remove(_ context.Context, id string) error {
+func (f *fakeQueueManager) RemoveEntry(_ context.Context, id string) error {
 	f.removedID = id
 	return f.removeErr
 }
@@ -114,8 +112,8 @@ func (f *fakeBroadcaster) types() []string {
 	return out
 }
 
-func queueRouter(mgr *fakeQueueManager, repo *fakeQueueRepo, b *fakeBroadcaster) http.Handler {
-	return RegisterRoutesHTTP(nil, NewQueueHandler(mgr, repo, b), nil)
+func queueRouter(mgr *fakeQueueManager, b *fakeBroadcaster) http.Handler {
+	return RegisterRoutesHTTP(nil, NewQueueHandler(mgr, b), nil)
 }
 
 // assertQueueUpdated checks that exactly one queue_updated message with the
@@ -155,7 +153,7 @@ func TestQueueAdd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mgr := &fakeQueueManager{addErr: tt.addErr}
 			b := &fakeBroadcaster{}
-			rec := serve(t, queueRouter(mgr, &fakeQueueRepo{}, b), http.MethodPost, "/v1/queue", tt.body, nil)
+			rec := serve(t, queueRouter(mgr, b), http.MethodPost, "/v1/queue", tt.body, nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d (body %q)", rec.Code, tt.wantCode, rec.Body.String())
 			}
@@ -183,17 +181,18 @@ func TestQueueRemove(t *testing.T) {
 	}{
 		{name: "removed", wantCode: http.StatusNoContent},
 		{name: "unknown item", removeErr: sql.ErrNoRows, wantCode: http.StatusNotFound},
+		{name: "manager error", removeErr: errors.New("boom"), wantCode: http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &fakeQueueRepo{removeErr: tt.removeErr}
+			mgr := &fakeQueueManager{removeErr: tt.removeErr}
 			b := &fakeBroadcaster{}
-			rec := serve(t, queueRouter(&fakeQueueManager{}, repo, b), http.MethodDelete, "/v1/queue/q7", "", nil)
+			rec := serve(t, queueRouter(mgr, b), http.MethodDelete, "/v1/queue/q7", "", nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
 			}
-			if repo.removedID != "q7" {
-				t.Fatalf("removed id = %q, want q7", repo.removedID)
+			if mgr.removedID != "q7" {
+				t.Fatalf("removed id = %q, want q7", mgr.removedID)
 			}
 			if tt.wantCode == http.StatusNoContent {
 				assertQueueUpdated(t, b, "song_removed")
@@ -208,39 +207,39 @@ func TestQueueMove(t *testing.T) {
 	tests := []struct {
 		name      string
 		body      string
-		repo      fakeQueueRepo
+		mgr       fakeQueueManager
 		wantCode  int
-		wantDelta int // 0 means the repo must not be called
+		wantDelta int // 0 means the manager must not be called
 		wantBody  string
 	}{
-		{name: "up", body: `{"direction":"up"}`, repo: fakeQueueRepo{movePos: 1, moved: true}, wantCode: http.StatusOK, wantDelta: -1, wantBody: `{"id":"q7","moved":true,"position":1}`},
-		{name: "down at end", body: `{"direction":"down"}`, repo: fakeQueueRepo{movePos: 3}, wantCode: http.StatusOK, wantDelta: 1, wantBody: `{"id":"q7","moved":false,"position":3}`},
+		{name: "up", body: `{"direction":"up"}`, mgr: fakeQueueManager{movePos: 1, moved: true}, wantCode: http.StatusOK, wantDelta: -1, wantBody: `{"id":"q7","moved":true,"position":1}`},
+		{name: "down at end", body: `{"direction":"down"}`, mgr: fakeQueueManager{movePos: 3}, wantCode: http.StatusOK, wantDelta: 1, wantBody: `{"id":"q7","moved":false,"position":3}`},
 		{name: "bad direction", body: `{"direction":"left"}`, wantCode: http.StatusBadRequest},
 		{name: "empty body", body: ``, wantCode: http.StatusBadRequest},
 		{name: "oversize body", body: fmt.Sprintf(`{"direction":%q}`, strings.Repeat("a", 5<<10)), wantCode: http.StatusRequestEntityTooLarge},
-		{name: "unknown item", body: `{"direction":"up"}`, repo: fakeQueueRepo{moveErr: sql.ErrNoRows}, wantCode: http.StatusNotFound, wantDelta: -1},
-		{name: "repo error", body: `{"direction":"down"}`, repo: fakeQueueRepo{moveErr: errors.New("boom")}, wantCode: http.StatusInternalServerError, wantDelta: 1},
+		{name: "unknown item", body: `{"direction":"up"}`, mgr: fakeQueueManager{moveErr: sql.ErrNoRows}, wantCode: http.StatusNotFound, wantDelta: -1},
+		{name: "manager error", body: `{"direction":"down"}`, mgr: fakeQueueManager{moveErr: errors.New("boom")}, wantCode: http.StatusInternalServerError, wantDelta: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := tt.repo
+			mgr := tt.mgr
 			b := &fakeBroadcaster{}
-			rec := serve(t, queueRouter(&fakeQueueManager{}, &repo, b), http.MethodPost, "/v1/queue/q7:move", tt.body, nil)
+			rec := serve(t, queueRouter(&mgr, b), http.MethodPost, "/v1/queue/q7:move", tt.body, nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d (body %q)", rec.Code, tt.wantCode, rec.Body.String())
 			}
 			switch {
-			case tt.wantDelta == 0 && len(repo.moveCalls) != 0:
-				t.Fatalf("repo.Move called %v, want no call", repo.moveCalls)
-			case tt.wantDelta != 0 && (len(repo.moveCalls) != 1 || repo.moveCalls[0] != moveCall{id: "q7", delta: tt.wantDelta}):
-				t.Fatalf("repo.Move calls = %v, want [{q7 %d}]", repo.moveCalls, tt.wantDelta)
+			case tt.wantDelta == 0 && len(mgr.moveCalls) != 0:
+				t.Fatalf("MoveEntry called %v, want no call", mgr.moveCalls)
+			case tt.wantDelta != 0 && (len(mgr.moveCalls) != 1 || mgr.moveCalls[0] != moveCall{id: "q7", delta: tt.wantDelta}):
+				t.Fatalf("MoveEntry calls = %v, want [{q7 %d}]", mgr.moveCalls, tt.wantDelta)
 			}
 			if tt.wantBody != "" {
 				if got := strings.TrimSpace(rec.Body.String()); got != tt.wantBody {
 					t.Fatalf("body = %s, want %s", got, tt.wantBody)
 				}
 			}
-			if tt.repo.moved {
+			if tt.mgr.moved {
 				assertQueueUpdated(t, b, "song_moved")
 			} else if len(b.msgs) != 0 {
 				t.Fatalf("unexpected broadcasts %v", b.types())
@@ -267,22 +266,24 @@ func TestQueuePlayNext(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mgr := &fakeQueueManager{playNextErr: tt.err}
 			b := &fakeBroadcaster{}
-			rec := serve(t, queueRouter(mgr, &fakeQueueRepo{}, b), http.MethodPost, "/v1/queue:play-next", tt.body, nil)
+			rec := serve(t, queueRouter(mgr, b), http.MethodPost, "/v1/queue:play-next", tt.body, nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d (body %q)", rec.Code, tt.wantCode, rec.Body.String())
 			}
-			wantMsgs := 0
-			if tt.wantCode == http.StatusOK {
-				wantMsgs = 1
-				if mgr.playNextID != "x" {
-					t.Fatalf("play-next id = %q, want x", mgr.playNextID)
+			if tt.wantCode != http.StatusOK {
+				if len(b.msgs) != 0 {
+					t.Fatalf("unexpected broadcasts %v", b.types())
 				}
+				return
 			}
-			// PlayNext broadcasts only skip_now; the queue_updated that follows
-			// comes from the client's need_song round trip.
-			if len(b.msgs) != wantMsgs || (wantMsgs == 1 && b.msgs[0].Type != websocket.MsgSkipNow) {
-				t.Fatalf("broadcasts = %v, want %d %s", b.types(), wantMsgs, websocket.MsgSkipNow)
+			if mgr.playNextID != "x" {
+				t.Fatalf("play-next id = %q, want x", mgr.playNextID)
 			}
+			if len(b.msgs) != 2 || b.msgs[0].Type != websocket.MsgSkipNow {
+				t.Fatalf("broadcasts = %v, want %s then %s", b.types(), websocket.MsgSkipNow, websocket.MsgQueueUpdated)
+			}
+			b.msgs = b.msgs[1:]
+			assertQueueUpdated(t, b, "play_next")
 		})
 	}
 }
@@ -319,7 +320,7 @@ func TestQueueSkip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mgr := &fakeQueueManager{items: tt.items, listErr: tt.listErr, autoSelects: tt.autoSelects, emptyLibrary: tt.emptyLibrary, libraryErr: tt.libraryErr}
 			b := &fakeBroadcaster{}
-			rec := serve(t, queueRouter(mgr, &fakeQueueRepo{}, b), http.MethodPost, "/v1/queue:skip", "", nil)
+			rec := serve(t, queueRouter(mgr, b), http.MethodPost, "/v1/queue:skip", "", nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
 			}
@@ -374,7 +375,7 @@ func TestQueueClear(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mgr := &fakeQueueManager{clearErr: tt.err}
 			b := &fakeBroadcaster{}
-			rec := serve(t, queueRouter(mgr, &fakeQueueRepo{}, b), http.MethodPost, "/v1/queue:clear", "", nil)
+			rec := serve(t, queueRouter(mgr, b), http.MethodPost, "/v1/queue:clear", "", nil)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)
 			}
@@ -390,7 +391,7 @@ func TestQueueClear(t *testing.T) {
 
 func TestQueueList(t *testing.T) {
 	mgr := &fakeQueueManager{items: []*models.QueueItem{{ID: "q1"}, {ID: "q2"}}}
-	rec := serve(t, queueRouter(mgr, &fakeQueueRepo{}, &fakeBroadcaster{}), http.MethodGet, "/v1/queue", "", nil)
+	rec := serve(t, queueRouter(mgr, &fakeBroadcaster{}), http.MethodGet, "/v1/queue", "", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}

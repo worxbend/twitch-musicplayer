@@ -138,6 +138,7 @@ Known reasons:
 - `song_removed`
 - `song_moved` (an admin moved a queued item up or down)
 - `skipped`
+- `play_next` (an admin queued a song to play immediately; follows `skip_now`)
 - `cleared`
 - `new_file`
 - `file_removed` (a library file or directory was deleted or renamed away)

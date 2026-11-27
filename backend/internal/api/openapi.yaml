@@ -217,6 +217,12 @@ paths:
           description: Removed
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          description: Queue item could not be removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/queue/{id}:move:
     post:
@@ -337,7 +343,7 @@ paths:
       description: >
         Inserts the requested song at the front of the queue and broadcasts `skip_now`
         over WebSocket so connected audio clients interrupt their current track and
-        start playing the requested song.
+        start playing the requested song, then `queue_updated` with reason `play_next`.
       operationId: playNext
       tags: [queue]
       requestBody:

@@ -19,6 +19,8 @@ type queueManager interface {
 	AddToQueue(ctx context.Context, songID string, source models.QueueSource) (*models.QueueItem, error)
 	PlayNext(ctx context.Context, songID string) error
 	ClearQueue(ctx context.Context) error
+	RemoveEntry(ctx context.Context, id string) error
+	MoveEntry(ctx context.Context, id string, delta int) (position int, moved bool, err error)
 	skipSource
 }
 
@@ -27,11 +29,6 @@ type skipSource interface {
 	ListQueue(ctx context.Context) ([]*models.QueueItem, error)
 	AutoSelects() bool
 	TotalSongs(ctx context.Context) (int, error)
-}
-
-type queueRepo interface {
-	Remove(ctx context.Context, id string) error
-	Move(ctx context.Context, id string, delta int) (position int, moved bool, err error)
 }
 
 type queueBroadcaster interface {
@@ -59,12 +56,11 @@ var moveDeltas = map[string]int{"up": -1, "down": 1}
 // QueueHandler handles queue resource endpoints.
 type QueueHandler struct {
 	mgr         queueManager
-	repo        queueRepo
 	broadcaster queueBroadcaster
 }
 
-func NewQueueHandler(mgr queueManager, repo queueRepo, broadcaster queueBroadcaster) *QueueHandler {
-	return &QueueHandler{mgr: mgr, repo: repo, broadcaster: broadcaster}
+func NewQueueHandler(mgr queueManager, broadcaster queueBroadcaster) *QueueHandler {
+	return &QueueHandler{mgr: mgr, broadcaster: broadcaster}
 }
 
 // List handles GET /v1/queue.
@@ -114,8 +110,12 @@ func (h *QueueHandler) Add(w http.ResponseWriter, r *http.Request) {
 // Remove handles DELETE /v1/queue/{id}.
 func (h *QueueHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := h.repo.Remove(r.Context(), id); err != nil {
-		writeError(w, http.StatusNotFound, "queue item not found")
+	if err := h.mgr.RemoveEntry(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "queue item not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to remove queue item")
 		return
 	}
 	h.broadcastQueueUpdated(r.Context(), "song_removed")
@@ -137,7 +137,7 @@ func (h *QueueHandler) Move(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pos, moved, err := h.repo.Move(r.Context(), id, delta)
+	pos, moved, err := h.mgr.MoveEntry(r.Context(), id, delta)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "queue item not found")
@@ -216,8 +216,9 @@ func (h *QueueHandler) Clear(w http.ResponseWriter, r *http.Request) {
 }
 
 // PlayNext handles POST /v1/queue:play-next.
-// It inserts the requested song at the front of the queue and broadcasts
-// skip_now so connected audio clients interrupt their current track.
+// It inserts the requested song at the front of the queue, broadcasts
+// skip_now so connected audio clients interrupt their current track, then
+// queue_updated so every admin view sees the new head of the queue.
 func (h *QueueHandler) PlayNext(w http.ResponseWriter, r *http.Request) {
 	var req playNextRequest
 	if !decodeJSONBody(w, r, &req) {
@@ -242,6 +243,7 @@ func (h *QueueHandler) PlayNext(w http.ResponseWriter, r *http.Request) {
 	if msg, err := websocket.Encode(websocket.MsgSkipNow, nil); err == nil {
 		h.broadcaster.Broadcast(msg)
 	}
+	h.broadcastQueueUpdated(r.Context(), "play_next")
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "song queued for immediate play"})
 }

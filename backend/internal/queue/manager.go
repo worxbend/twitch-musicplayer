@@ -94,6 +94,7 @@ type QueueRepository interface {
 	Dequeue(ctx context.Context) (*models.QueueItem, error)
 	List(ctx context.Context) ([]*models.QueueItem, error)
 	Remove(ctx context.Context, id string) error
+	Move(ctx context.Context, id string, delta int) (position int, moved bool, err error)
 	Clear(ctx context.Context) error
 	Count(ctx context.Context) (int, error)
 	RemoveBySongID(ctx context.Context, songID string) (int, error)
@@ -615,6 +616,24 @@ func (m *Manager) RemoveSong(ctx context.Context, songID string) (int, error) {
 	return m.queue.RemoveBySongID(ctx, songID)
 }
 
+// RemoveEntry drops the queue entry with id. It returns sql.ErrNoRows when no
+// such entry is queued. Holding m.mu keeps it from racing PlayNext's
+// list-then-remove of auto entries.
+func (m *Manager) RemoveEntry(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.queue.Remove(ctx, id)
+}
+
+// MoveEntry shifts the queue entry with id by delta places, clamped to the
+// queue bounds, and reports its new 1-based position and whether it moved. It
+// returns sql.ErrNoRows when no such entry is queued.
+func (m *Manager) MoveEntry(ctx context.Context, id string, delta int) (int, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.queue.Move(ctx, id, delta)
+}
+
 // PlayNext inserts the given song at the front of the queue so it plays
 // immediately after the current track ends (or when a skip_now is broadcast).
 // Auto-queued entries for the same song are dropped so it does not play twice
@@ -647,8 +666,8 @@ func (m *Manager) Requeue(ctx context.Context, songID string) error {
 	return nil
 }
 
-// removeAutoEntries drops every auto-queued entry for songID.
-// Must be called with m.mu held.
+// removeAutoEntries drops every auto-queued entry for songID. An entry that is
+// already gone counts as removed. Must be called with m.mu held.
 func (m *Manager) removeAutoEntries(ctx context.Context, songID string) error {
 	items, err := m.queue.List(ctx)
 	if err != nil {
@@ -658,7 +677,7 @@ func (m *Manager) removeAutoEntries(ctx context.Context, songID string) error {
 		if item.SongID != songID || item.Source != models.QueueSourceAuto {
 			continue
 		}
-		if err := m.queue.Remove(ctx, item.ID); err != nil {
+		if err := m.queue.Remove(ctx, item.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("remove auto entry %s: %w", item.ID, err)
 		}
 	}

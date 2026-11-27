@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -523,6 +524,120 @@ func TestPlayNextKeepsManualDuplicate(t *testing.T) {
 	}
 	if got[1].ID != manual.ID {
 		t.Fatalf("manual entry %s missing after PlayNext, queue = %+v", manual.ID, got)
+	}
+}
+
+// staleListRepo wraps a QueueRepository and runs onList after each List has
+// taken its snapshot, so a test can change the queue behind a caller's back.
+type staleListRepo struct {
+	QueueRepository
+	onList func()
+}
+
+func (r *staleListRepo) List(ctx context.Context) ([]*models.QueueItem, error) {
+	items, err := r.QueueRepository.List(ctx)
+	if r.onList != nil {
+		r.onList()
+	}
+	return items, err
+}
+
+// manualOnlyManager builds a manual_only manager over queue, seeded with lib.
+func manualOnlyManager(t *testing.T, songRepo *repository.MemSongRepo, queue QueueRepository, lib []*models.Song) *Manager {
+	t.Helper()
+	for _, s := range lib {
+		if err := songRepo.Create(context.Background(), s); err != nil {
+			t.Fatalf("seed song %s: %v", s.ID, err)
+		}
+	}
+	return New(songRepo, played.New(1000, 0.01), queue, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}})
+}
+
+// An auto entry removed between PlayNext's List and its Remove is already
+// gone, which is what PlayNext wanted, so it must not fail.
+func TestPlayNextToleratesAutoEntryRemovedMidway(t *testing.T) {
+	ctx := context.Background()
+	songRepo := repository.NewMemSongRepo()
+	inner := repository.NewMemQueueRepo(songRepo)
+	stale := &staleListRepo{QueueRepository: inner}
+	m := manualOnlyManager(t, songRepo, stale, library(1))
+	auto, err := m.AddToQueue(ctx, "s0", models.QueueSourceAuto)
+	if err != nil {
+		t.Fatalf("AddToQueue: %v", err)
+	}
+	stale.onList = func() {
+		stale.onList = nil
+		if err := inner.Remove(ctx, auto.ID); err != nil {
+			t.Errorf("remove behind PlayNext: %v", err)
+		}
+	}
+
+	if err := m.PlayNext(ctx, "s0"); err != nil {
+		t.Fatalf("PlayNext: %v", err)
+	}
+	items := listQueue(t, m)
+	if len(items) != 1 || items[0].SongID != "s0" || items[0].Source != models.QueueSourceManual {
+		t.Fatalf("queue = %+v, want one manual s0 entry", items)
+	}
+}
+
+// TestPlayNextRemoveEntryNoRace runs PlayNext against an admin removal of the
+// same auto entry. Run with -race.
+func TestPlayNextRemoveEntryNoRace(t *testing.T) {
+	ctx := context.Background()
+	m := buildManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, library(1))
+	for i := 0; i < 200; i++ {
+		auto, err := m.AddToQueue(ctx, "s0", models.QueueSourceAuto)
+		if err != nil {
+			t.Fatalf("AddToQueue: %v", err)
+		}
+		var playErr, removeErr error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); playErr = m.PlayNext(ctx, "s0") }()
+		go func() { defer wg.Done(); removeErr = m.RemoveEntry(ctx, auto.ID) }()
+		wg.Wait()
+		if playErr != nil {
+			t.Fatalf("iteration %d: PlayNext: %v", i, playErr)
+		}
+		if removeErr != nil && !errors.Is(removeErr, sql.ErrNoRows) {
+			t.Fatalf("iteration %d: RemoveEntry: %v, want nil or sql.ErrNoRows", i, removeErr)
+		}
+		if err := m.ClearQueue(ctx); err != nil {
+			t.Fatalf("ClearQueue: %v", err)
+		}
+	}
+}
+
+func TestRemoveEntryUnknownID(t *testing.T) {
+	m := buildManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, library(1))
+	if err := m.RemoveEntry(context.Background(), "missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("RemoveEntry = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestMoveEntry(t *testing.T) {
+	ctx := context.Background()
+	lib := library(2)
+	m := buildManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, lib)
+	for _, s := range lib {
+		if _, err := m.AddToQueue(ctx, s.ID, models.QueueSourceManual); err != nil {
+			t.Fatalf("AddToQueue %s: %v", s.ID, err)
+		}
+	}
+	second := listQueue(t, m)[1]
+
+	if pos, moved, err := m.MoveEntry(ctx, second.ID, -1); err != nil || pos != 1 || !moved {
+		t.Fatalf("MoveEntry up = (%d, %v, %v), want (1, true, nil)", pos, moved, err)
+	}
+	if pos, moved, err := m.MoveEntry(ctx, second.ID, -1); err != nil || pos != 1 || moved {
+		t.Fatalf("MoveEntry up at front = (%d, %v, %v), want (1, false, nil)", pos, moved, err)
+	}
+	if _, _, err := m.MoveEntry(ctx, "missing", 1); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("MoveEntry unknown = %v, want sql.ErrNoRows", err)
+	}
+	if items := listQueue(t, m); items[0].ID != second.ID {
+		t.Fatalf("queue head = %s, want %s", items[0].ID, second.ID)
 	}
 }
 
