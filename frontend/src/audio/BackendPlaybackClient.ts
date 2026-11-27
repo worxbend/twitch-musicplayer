@@ -1,6 +1,6 @@
 import type { AudioEngine } from './AudioEngine';
 import { coverURL, getWebSocketURL, resolveStreamURL } from '../config/backend.ts';
-import { HANDSHAKE_TIMEOUT_MS } from '../config/reconnect.ts';
+import { HEARTBEAT_MS, armHandshakeTimeout, isStale, reconnectDelay } from '../config/reconnect.ts';
 
 type MessageType =
   | 'need_song'
@@ -65,10 +65,6 @@ interface BackendPlaybackOptions {
   onSongChange?: (song: SongInfo | null) => void;
 }
 
-const reconnectBaseMs = 900;
-const reconnectMaxMs = 8000;
-const heartbeatMs = 25000;
-const heartbeatTimeoutMs = heartbeatMs * 2.5;
 const streamRetryMs = 5000;
 const maxStreamRetries = 3;
 const awaitSongTimeoutMs = 15000;
@@ -95,7 +91,7 @@ export class BackendPlaybackClient {
   private socket: WebSocket | null = null;
   private reconnectTimer = 0;
   private heartbeatTimer = 0;
-  private handshakeTimer = 0;
+  private cancelHandshake = () => {};
   private reconnectAttempts = 0;
   private shouldRun = false;
   private pendingPlay: PlaySongPayload | null = null;
@@ -160,7 +156,7 @@ export class BackendPlaybackClient {
     window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = 0;
     window.clearInterval(this.heartbeatTimer);
-    this.clearHandshakeTimer();
+    this.cancelHandshake();
     window.clearTimeout(this.streamRetryTimer);
     window.clearTimeout(this.errorRetryTimer);
     window.clearTimeout(this.awaitSongTimer);
@@ -201,17 +197,12 @@ export class BackendPlaybackClient {
     this.connecting = true;
     this.socket = socket;
     this.lastMessageAt = Date.now();
-    // A handshake that never completes fires neither onopen nor onclose, so
-    // without this the radio would wait minutes for the browser's TCP timeout.
-    this.handshakeTimer = window.setTimeout(() => {
-      this.handshakeTimer = 0;
-      if (this.socket === socket && socket.readyState === WebSocket.CONNECTING) {
-        this.reconnectNow('radio connection timed out');
-      }
-    }, HANDSHAKE_TIMEOUT_MS);
+    this.cancelHandshake = armHandshakeTimeout(socket, () => {
+      if (this.socket === socket) this.reconnectNow('radio connection timed out');
+    });
 
     socket.onopen = () => {
-      this.clearHandshakeTimer();
+      this.cancelHandshake();
       this.connecting = false;
       this.reconnectAttempts = 0;
       this.report({ connection: 'connected' }, 'radio connected');
@@ -223,12 +214,12 @@ export class BackendPlaybackClient {
       if (!this.current && !this.pendingPlay && (!this.awaitingSong || requestLost)) this.requestSong();
       window.clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = window.setInterval(() => {
-        if (Date.now() - this.lastMessageAt > heartbeatTimeoutMs) {
+        if (isStale(this.lastMessageAt, Date.now())) {
           this.reconnectNow('radio heartbeat timeout');
           return;
         }
         this.send({ type: 'heartbeat' });
-      }, heartbeatMs);
+      }, HEARTBEAT_MS);
     };
 
     socket.onmessage = event => {
@@ -245,7 +236,7 @@ export class BackendPlaybackClient {
       }
       this.connecting = false;
       window.clearInterval(this.heartbeatTimer);
-      this.clearHandshakeTimer();
+      this.cancelHandshake();
       this.socket = null;
       if (this.shouldRun) {
         this.report({ connection: 'reconnecting' }, 'radio disconnected');
@@ -266,7 +257,7 @@ export class BackendPlaybackClient {
 
   private scheduleReconnect() {
     if (!this.shouldRun) return;
-    const delay = Math.min(reconnectBaseMs * 2 ** this.reconnectAttempts, reconnectMaxMs);
+    const delay = reconnectDelay(this.reconnectAttempts);
     this.reconnectAttempts += 1;
     window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = window.setTimeout(() => {
@@ -319,7 +310,7 @@ export class BackendPlaybackClient {
 
   // Backs off so an empty library does not draw a need_song every second from every player.
   private scheduleErrorRetry() {
-    const delay = Math.min(reconnectBaseMs * 2 ** this.errorRetryAttempts, errorRetryMaxMs);
+    const delay = reconnectDelay(this.errorRetryAttempts, 900, errorRetryMaxMs);
     this.errorRetryAttempts += 1;
     window.clearTimeout(this.errorRetryTimer);
     this.errorRetryTimer = window.setTimeout(() => {
@@ -536,13 +527,8 @@ export class BackendPlaybackClient {
     for (const msg of pending) this.send(msg);
   }
 
-  private clearHandshakeTimer() {
-    window.clearTimeout(this.handshakeTimer);
-    this.handshakeTimer = 0;
-  }
-
   private reconnectNow(reason = 'radio reconnecting') {
-    this.clearHandshakeTimer();
+    this.cancelHandshake();
     if (!this.shouldRun) return;
     this.report({ connection: 'reconnecting' }, reason);
     window.clearInterval(this.heartbeatTimer);

@@ -81,7 +81,8 @@ Plus the two original pages:
 `hold` is seconds from 1 to 600: the title shows for that long after each song change,
 then fades out (default 0, always visible); `art=1` shows the track's embedded cover art
 beside the title when it has one. If the connection drops silently, the overlay
-notices within about a minute and reconnects by itself. It plays no
+notices within about a minute and reconnects by itself; a connection that has not
+opened within 10 seconds is retried. It plays no
 audio, so pair it with the audio source page. It only listens to the backend and never
 advances the queue, so it is safe to add alongside a playing page.
 

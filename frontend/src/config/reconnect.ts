@@ -22,3 +22,21 @@ export function reconnectDelay(attempt: number, baseMs = 900, maxMs = 8000): num
 export function isStale(lastMessageAt: number, now: number, timeoutMs = STALE_AFTER_MS): boolean {
   return now - lastMessageAt > timeoutMs;
 }
+
+const CONNECTING = 0;
+
+/**
+ * Calls onTimeout if the socket is still CONNECTING after ms. A stalled
+ * handshake fires neither onopen nor onclose, so without this a client waits
+ * minutes for the browser's TCP timeout. Returns an idempotent cancel.
+ */
+export function armHandshakeTimeout(
+  socket: { readonly readyState: number },
+  onTimeout: () => void,
+  ms = HANDSHAKE_TIMEOUT_MS,
+): () => void {
+  const timer = globalThis.setTimeout(() => {
+    if (socket.readyState === CONNECTING) onTimeout();
+  }, ms);
+  return () => globalThis.clearTimeout(timer);
+}

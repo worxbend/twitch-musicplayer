@@ -207,8 +207,9 @@ test('admin drops a silent socket and reconnects', async ({ page }) => {
   await expect.poll(() => sockets.length).toBe(1);
   // The route handler runs before the page's onopen, which arms the heartbeat.
   await expect(page.getByText('Backend connected')).toBeVisible();
-  // No heartbeat_ack: stale after STALE_AFTER_MS, checked on the next heartbeat tick, then backoff.
-  await page.clock.runFor(62_500 + 25_000 + 1_000);
+  // No heartbeat_ack: stale at the 75s heartbeat tick, reconnect 900ms later. Running
+  // further would hit the new socket's 10s handshake timeout before it opens in real time.
+  await page.clock.runFor(75_000 + 900 + 100);
   await expect.poll(() => sockets.length).toBe(2);
 });
 
@@ -667,7 +668,9 @@ test('now-playing overlay reconnects a silent socket', async ({ page }) => {
   await expect.poll(() => sockets.length).toBe(1);
   // onmessage follows onopen, so a shown title proves the heartbeat is armed.
   await expect(page.getByText('Midnight compiler')).toBeVisible();
-  await page.clock.runFor(62_500 + 25_000 + 1_000);
+  // Stale at the 75s heartbeat tick, reconnect 900ms later; stop before the new socket's
+  // 10s handshake timeout, which fake time would reach before the real handshake ends.
+  await page.clock.runFor(75_000 + 900 + 100);
   await expect.poll(() => sockets.length).toBe(2);
 });
 

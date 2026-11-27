@@ -1,6 +1,6 @@
 import { createSignal, createEffect, onMount, onCleanup, splitProps, For, Show, type JSX } from 'solid-js';
 import { getBackendURL, getWebSocketURL } from './config/backend';
-import { reconnectDelay, HEARTBEAT_MS, isStale } from './config/reconnect';
+import { reconnectDelay, HEARTBEAT_MS, isStale, armHandshakeTimeout } from './config/reconnect';
 import { createLatest } from './admin/latestRequest';
 import { HttpError, errorText, fetchWithTimeout, REQUEST_TIMEOUT_MS } from './admin/request';
 import { TerminalHeader } from './components/TerminalHeader';
@@ -199,8 +199,10 @@ export function AdminApp() {
   let reconnectTimeout = 0;
   let reconnectAttempts = 0;
   let lastMessageAt = 0;
+  let cancelHandshake = () => {};
   function dropSocket() {
     window.clearInterval(heartbeatInterval);
+    cancelHandshake();
     if (socket) {
       socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null;
       socket.close();
@@ -224,7 +226,9 @@ export function AdminApp() {
       return;
     }
     socket = ws;
+    cancelHandshake = armHandshakeTimeout(ws, () => { dropSocket(); scheduleReconnect(); });
     ws.onopen = () => {
+      cancelHandshake();
       reconnectAttempts = 0;
       lastMessageAt = Date.now();
       setConnected(true);

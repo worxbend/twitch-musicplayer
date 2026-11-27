@@ -1,6 +1,6 @@
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { coverURL, getWebSocketURL } from './config/backend';
-import { HEARTBEAT_MS, isStale, reconnectDelay } from './config/reconnect';
+import { HEARTBEAT_MS, armHandshakeTimeout, isStale, reconnectDelay } from './config/reconnect';
 import { nextShown, reduceNowPlaying, type NowPlayingOptions, type NowPlayingSong, type ShownKey } from './nowPlaying';
 
 type Props = NowPlayingOptions;
@@ -32,9 +32,11 @@ export function NowPlayingOverlay(props: Props) {
   let heartbeatTimer = 0;
   let reconnectAttempts = 0;
   let running = true;
+  let cancelHandshake = () => {};
 
   const closeSocket = () => {
     window.clearInterval(heartbeatTimer);
+    cancelHandshake();
     if (!socket) return;
     socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null;
     socket.close();
@@ -60,7 +62,12 @@ export function NowPlayingOverlay(props: Props) {
       return;
     }
     socket = ws;
+    cancelHandshake = armHandshakeTimeout(ws, () => {
+      closeSocket();
+      scheduleReconnect();
+    });
     ws.onopen = () => {
+      cancelHandshake();
       reconnectAttempts = 0;
       lastMessageAt = Date.now();
       window.clearInterval(heartbeatTimer);
