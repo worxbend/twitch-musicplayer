@@ -192,6 +192,7 @@ func (c *Config) Validate() error {
 		checkNonNegative("queue.min_ahead", c.Queue.MinAhead),
 		checkNonNegative("queue.preload_size", c.Queue.PreloadSize),
 		checkBaseURL("server.base_url", c.Server.BaseURL),
+		checkNotDir("bloom.path", c.Bloom.Path),
 	)
 	for _, origin := range c.Server.AllowedOrigins {
 		errs = append(errs, checkOrigin("server.allowed_origins", origin))
@@ -215,7 +216,19 @@ func checkOBS(obs OBSConfig) []error {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		errs = append(errs, fmt.Errorf("obs.now_playing_file: directory %q does not exist", dir))
 	}
+	if err := checkNotDir("obs.now_playing_file", obs.NowPlayingFile); err != nil {
+		errs = append(errs, err)
+	}
 	return errs
+}
+
+// checkNotDir rejects a file path that names an existing directory: writes to
+// it would fail at runtime with only a log line. A missing file is fine.
+func checkNotDir(key, path string) error {
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return fmt.Errorf("%s: %q is a directory, want a file path", key, path)
+	}
+	return nil
 }
 
 // checkNoUnknownKeys rejects keys the Config struct does not define, so a

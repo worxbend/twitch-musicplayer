@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -147,6 +148,8 @@ func TestValidate(t *testing.T) {
 		{name: "empty music dir", mutate: func(c *Config) { c.Music.Dir = "" }, wantSub: []string{"music.dir"}},
 		{name: "no extensions", mutate: func(c *Config) { c.Music.Extensions = nil }, wantSub: []string{"music.extensions"}},
 		{name: "blank extension", mutate: func(c *Config) { c.Music.Extensions = []string{""} }, wantSub: []string{"music.extensions"}},
+		{name: "bloom path is a directory", mutate: func(c *Config) { c.Bloom.Path = t.TempDir() },
+			wantSub: []string{"bloom.path", "is a directory"}},
 		{name: "multiple problems", mutate: func(c *Config) {
 			c.Server.Port = 0
 			c.Queue.Strategy = "nope"
@@ -203,6 +206,14 @@ func TestLoadFromRejectsBadBaseURL(t *testing.T) {
 				t.Errorf("loadFrom error = %v, want one naming server.base_url", err)
 			}
 		})
+	}
+}
+
+func TestValidateAcceptsMissingBloomFile(t *testing.T) {
+	cfg := defaults()
+	cfg.Bloom.Path = filepath.Join(t.TempDir(), "absent.bloom")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
 	}
 }
 
@@ -277,6 +288,8 @@ func TestValidateOBS(t *testing.T) {
 			wantSub: "obs.now_playing_file"},
 		{name: "format without placeholders", obs: OBSConfig{NowPlayingFile: filepath.Join(dir, "np.txt"), NowPlayingFormat: "{album}"},
 			wantSub: "obs.now_playing_format"},
+		{name: "file is a directory", obs: OBSConfig{NowPlayingFile: dir, NowPlayingFormat: "{title}"},
+			wantSub: "obs.now_playing_file: " + strconv.Quote(dir) + " is a directory"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

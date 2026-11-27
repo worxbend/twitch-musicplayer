@@ -85,7 +85,10 @@ file is fine: defaults are used. These fail startup:
 - A negative `shuffle.recent_window`, `queue.min_ahead` or `queue.preload_size`.
 - An empty `music.dir`, or an empty or blank-entry `music.extensions` list.
 - An `obs.now_playing_format` with neither `{title}` nor `{artist}` (always checked), or an
-  `obs.now_playing_file` whose directory does not exist (checked only when the file is set).
+  `obs.now_playing_file` whose directory does not exist or that is itself a directory
+  (checked only when the file is set).
+- A `bloom.path` (or `BLOOM_PATH`) that names an existing directory. A missing file is fine;
+  it is created on the first save.
 - A `server.base_url` (or `BASE_URL`) that is not an `http://` or `https://` URL with a host,
   or that has a `?query` or `#fragment`. Empty is allowed: stream URLs then stay relative and
   the frontend resolves them against `VITE_BACKEND_URL`.
@@ -119,7 +122,7 @@ now_playing_format = "{artist} - {title}"
 
 | Key | Default | Meaning |
 |:--|:--|:--|
-| `now_playing_file` | `""` (off) | File to rewrite on every song change and when the current song is retagged. `~` expands to your home. The directory must exist. |
+| `now_playing_file` | `""` (off) | File to rewrite on every song change and when the current song is retagged. `~` expands to your home. The directory must exist, and the path must not be a directory itself. |
 | `now_playing_format` | `{artist} - {title}` | Text template. Placeholders: `{title}`, `{artist}`, `{album}`. Also drives [`GET /v1/now-playing.txt`](api.md), so it is validated even when `now_playing_file` is empty. |
 
 - A song with no artist tag writes just its title, so no stray ` - ` appears. Line breaks
