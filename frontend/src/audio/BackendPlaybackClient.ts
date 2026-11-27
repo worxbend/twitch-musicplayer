@@ -118,6 +118,8 @@ export class BackendPlaybackClient {
   // history_id of the song whose title is on screen; it can outlive `current`
   // through the near-end handoff, while the old track is still audible.
   private displayedHistoryId: string | null = null;
+  // Server error held back while a track that finished early is still audible.
+  private deferredError: string | null = null;
 
   constructor(options: BackendPlaybackOptions) {
     this.audio = options.audio;
@@ -152,6 +154,7 @@ export class BackendPlaybackClient {
     this.pendingPlay = null;
     this.current = null;
     this.awaitingSong = false;
+    this.deferredError = null;
     this.resetStreamRetries();
     window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = 0;
@@ -291,6 +294,7 @@ export class BackendPlaybackClient {
         this.playToken += 1;
         this.playInFlight = false;
         this.finishedInFlight = null;
+        this.deferredError = null;
         this.resetStreamRetries();
         window.clearTimeout(this.streamRetryTimer);
         window.clearTimeout(this.errorRetryTimer);
@@ -298,13 +302,17 @@ export class BackendPlaybackClient {
         this.awaitingSong = false;
         this.requestSong();
         break;
-      case 'error':
+      case 'error': {
         if (msg.payload !== undefined && !isErrorPayload(msg.payload)) return;
         this.awaitingSong = false;
         window.clearTimeout(this.awaitSongTimer);
-        this.report({ playback: 'error' }, msg.payload?.message ?? 'radio error');
+        const message = msg.payload?.message ?? 'radio error';
+        // After an early song_finished the old track's tail is still audible; report once it ends.
+        if (this.displayedHistoryId !== null && !this.current && !this.pendingPlay) this.deferredError = message;
+        else this.report({ playback: 'error' }, message);
         this.scheduleErrorRetry();
         break;
+      }
     }
   }
 
@@ -338,6 +346,7 @@ export class BackendPlaybackClient {
         onStarted: () => {
           if (token !== this.playToken) return;
           this.displayedHistoryId = payload.history_id;
+          this.deferredError = null;
           this.onSongChange?.({
             title: songName,
             artist: payload.song.artist,
@@ -405,7 +414,11 @@ export class BackendPlaybackClient {
   // the title still has to go if no newer song has taken the screen.
   private handleEnded(payload: PlaySongPayload) {
     this.finishCurrent(payload);
-    if (this.displayedHistoryId === payload.history_id) this.clearDisplayedSong();
+    if (this.displayedHistoryId !== payload.history_id) return;
+    this.clearDisplayedSong();
+    const deferred = this.deferredError;
+    this.deferredError = null;
+    if (deferred !== null && !this.current && !this.pendingPlay) this.report({ playback: 'error' }, deferred);
   }
 
   // The server answers song_finished with play_song, like need_song, so the

@@ -7,7 +7,7 @@ const songs = [
   { id: 'b', title: 'Buffering dreams', artist: 'Terminal Club', album: 'Night shift', filename: 'b.mp3', duration_secs: 205, size_bytes: 1024 },
 ];
 
-async function mockStation(page: Page, options: { failure?: boolean; empty?: boolean; slow?: boolean; requireGesture?: boolean; hasCover?: boolean } = {}) {
+async function mockStation(page: Page, options: { failure?: boolean; empty?: boolean; slow?: boolean; requireGesture?: boolean; hasCover?: boolean; trackSecs?: number; answerOnce?: boolean } = {}) {
   if (options.requireGesture) {
     // Playwright's WebSocket interception injects messages with synthetic activation.
     // Model the browser policy explicitly, unlocking only on a real input event.
@@ -22,11 +22,17 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
   let queue = options.empty ? [] : [{ id: 'q1', song_id: 'b', song: songs[1], position: 1, source: 'auto' }];
   let sawNeedSong!: () => void;
   const needSong = new Promise<void>(resolve => { sawNeedSong = resolve; });
+  let sawSongFinished!: (ws: WebSocketRoute) => void;
+  const songFinished = new Promise<WebSocketRoute>(resolve => { sawSongFinished = resolve; });
+  let answered = false;
   await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
     ws.onMessage(message => {
-      if (JSON.parse(String(message)).type !== 'need_song') return;
+      const type = JSON.parse(String(message)).type;
+      if (type === 'song_finished') sawSongFinished(ws);
+      if (type !== 'need_song') return;
       sawNeedSong();
-      if (!options.empty) {
+      if (!options.empty && !(options.answerOnce && answered)) {
+        answered = true;
         const song = options.hasCover === undefined ? songs[0] : { ...songs[0], has_cover: options.hasCover };
         ws.send(JSON.stringify({ type: 'play_song', payload: { song, history_id: 'h1', stream_url: '/v1/songs/a/content' } }));
       }
@@ -39,7 +45,7 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
     if (options.slow) await new Promise(resolve => setTimeout(resolve, 500));
     if (url.pathname.endsWith('/content')) {
       // A tiny silent WAV lets the browser exercise the real media/autoplay path.
-      const samples = 22050 * 60;
+      const samples = 22050 * (options.trackSecs ?? 60);
       const wav = Buffer.alloc(44 + samples * 2);
       wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
       wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
@@ -68,7 +74,7 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
       : url.pathname === '/v1/queue' ? { items: queue } : { current_song: options.empty ? null : songs[0] };
     await route.fulfill({ json });
   });
-  return { needSong };
+  return { needSong, songFinished };
 }
 
 async function noOverflow(page: Page) {
@@ -408,6 +414,37 @@ test('player status stays in one live region from blocked to on air', async ({ p
   await expect(status).toContainText('On air', {timeout: 10000});
   await expect(status).toHaveCount(1);
   await expect(deckToggle).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('deck stays on air when an error frame arrives during the audible tail', async ({ page }) => {
+  const { songFinished } = await mockStation(page, { requireGesture: true, trackSecs: 6, answerOnce: true });
+  await startPlayback(page);
+  const ws = await songFinished;
+  ws.send(JSON.stringify({ type: 'error', payload: { message: 'queue is empty' } }));
+  // Give the frame time to land; the old track still has ~3s to play.
+  await page.waitForTimeout(500);
+  const deckToggle = page.getByRole('button', { name: 'Pause', exact: true });
+  await expect(page.locator('.status')).toHaveText('On air');
+  await expect(deckToggle).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(page.locator('.status')).toHaveText('Standby', { timeout: 10000 });
+});
+
+test('K and M ignore key auto-repeat', async ({ page }) => {
+  await mockStation(page, { requireGesture: true });
+  await startPlayback(page);
+  const deckToggle = page.getByRole('button', { name: 'Pause', exact: true });
+  const mute = page.getByRole('button', { name: 'Mute' });
+  const repeat = (key: string) => page.evaluate(k => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: k, repeat: true, bubbles: true })), key);
+  await deckToggle.focus();
+  await page.keyboard.press('k');
+  await expect(deckToggle).toHaveAttribute('aria-pressed', 'true');
+  await repeat('k');
+  await expect(deckToggle).toHaveAttribute('aria-pressed', 'true');
+  await mute.focus();
+  await page.keyboard.press('m');
+  await expect(mute).toHaveAttribute('aria-pressed', 'true');
+  await repeat('m');
+  await expect(mute).toHaveAttribute('aria-pressed', 'true');
 });
 
 type MediaHandlerWindow = Window & { __mediaHandlers: Record<string, () => void> };

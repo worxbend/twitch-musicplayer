@@ -959,6 +959,72 @@ test('the title clears only when a song with no replacement really ends', async 
   assert.deepEqual(songs, [{ title: 'A', artist: undefined, coverUrl: undefined }, null]);
 });
 
+test('an error during the audible tail keeps playing until the track ends', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a', 'A'));
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  audio.plays[0].callbacks.onNearEnd();
+  const before = needSongCount(ws);
+  ws.message({ type: 'error', payload: { message: 'queue is empty' } });
+  assert.equal(lastPlayback(), 'playing', 'the tail is still audible');
+  mock.timers.tick(900);
+  assert.equal(needSongCount(ws), before + 1, 'the error retry is still scheduled');
+
+  audio.plays[0].callbacks.onEnded();
+  assert.equal(lastPlayback(), 'error');
+  assert.equal(statuses.at(-1)?.message, 'queue is empty');
+  assert.equal(songs.at(-1), null);
+});
+
+test('a song that starts after a tail error never reports the error', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a', 'A'));
+  audio.plays[0].settle.resolve();
+  await flush();
+
+  audio.plays[0].callbacks.onNearEnd();
+  ws.message({ type: 'error', payload: { message: 'queue is empty' } });
+  ws.message(playSong('b', 'B'));
+  audio.plays[1].start();
+  audio.plays[1].settle.resolve();
+  await flush();
+  audio.plays[0].callbacks.onEnded();
+
+  assert.ok(statuses.every(s => s.playback !== 'error'), 'error never reported');
+  assert.equal(lastPlayback(), 'playing');
+});
+
+test('an error with no audible track is reported at once', () => {
+  const ws = socket();
+  ws.open();
+  ws.message({ type: 'error', payload: { message: 'queue is empty' } });
+  assert.equal(lastPlayback(), 'error');
+  assert.equal(statuses.at(-1)?.message, 'queue is empty');
+});
+
+for (const [name, cancel] of [
+  ['skip_now', () => socket().message({ type: 'skip_now' })],
+  ['stop', () => client.stop()],
+] as const) {
+  test(`${name} during the tail drops the deferred error`, async () => {
+    const ws = socket();
+    ws.open();
+    ws.message(playSong('a', 'A'));
+    audio.plays[0].settle.resolve();
+    await flush();
+
+    audio.plays[0].callbacks.onNearEnd();
+    ws.message({ type: 'error', payload: { message: 'queue is empty' } });
+    cancel();
+    audio.plays[0].callbacks.onEnded();
+    assert.ok(statuses.every(s => s.message !== 'queue is empty'), 'no stale error');
+  });
+}
+
 test('stop during an in-flight play suppresses its late title and status', async () => {
   const ws = socket();
   ws.open();

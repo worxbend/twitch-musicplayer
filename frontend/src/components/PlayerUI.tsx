@@ -77,8 +77,9 @@ export function PlayerUI(props: Props) {
       if (shouldIgnoreVolumeKey(e)) return;
       // WCAG 2.1.4: bare-key shortcuts act only while focus is in the deck.
       if (!(e.target instanceof Element) || !e.target.closest('.player-deck')) return;
-      if (e.key === 'm' || e.key === 'M') setMuted(m => !m);
-      else if (e.key === 'k' || e.key === 'K') onPlayToggle();
+      // Toggles act once per press; a held key's auto-repeat would flip them back and forth.
+      if (e.key === 'm' || e.key === 'M') { if (!e.repeat) setMuted(m => !m); }
+      else if (e.key === 'k' || e.key === 'K') { if (!e.repeat) onPlayToggle(); }
       else if (e.key === '-') storeVolume(stepVolume(volume(), -VOLUME_STEP));
       else if (e.key === '=' || e.key === '+') unmuteAt(stepVolume(volume(), VOLUME_STEP));
       else return;
