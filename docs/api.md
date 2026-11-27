@@ -52,7 +52,11 @@ GET /v1/songs/{id}/content
 GET /v1/songs/{id}:stream
 ```
 
-Streams MP3 content. The backend uses `http.ServeFile`, so range requests are supported by the standard library.
+Streams MP3 content. The backend uses `http.ServeContent`, so range requests are supported by the standard library.
+
+Returns `403` when the song path resolves outside the music directory, `404` when the file is
+missing or is not a regular file, `416` for a range past the end of the file, and `500` when the
+file cannot be read (for example, a permission error).
 
 ## 📋 Queue
 

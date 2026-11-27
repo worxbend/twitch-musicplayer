@@ -194,6 +194,8 @@ func TestSongsStreamContent(t *testing.T) {
 		{name: "relative path", path: "a.mp3", target: "/v1/songs/s/content", wantCode: http.StatusOK, wantBody: content},
 		{name: "stream alias", path: "a.mp3", target: "/v1/songs/s:stream", wantCode: http.StatusOK, wantBody: content},
 		{name: "range request", path: "a.mp3", target: "/v1/songs/s/content", rangeHdr: "bytes=0-3", wantCode: http.StatusPartialContent, wantBody: "0123"},
+		{name: "two-byte range", path: "a.mp3", target: "/v1/songs/s/content", rangeHdr: "bytes=0-1", wantCode: http.StatusPartialContent, wantBody: "01"},
+		{name: "range past end", path: "a.mp3", target: "/v1/songs/s/content", rangeHdr: "bytes=999999-", wantCode: http.StatusRequestedRangeNotSatisfiable},
 		{name: "traversal outside music dir", path: musicDir + "/../secret.mp3", target: "/v1/songs/s/content", wantCode: http.StatusForbidden},
 		{name: "missing file", path: filepath.Join(musicDir, "missing.mp3"), target: "/v1/songs/s/content", wantCode: http.StatusNotFound},
 	}
@@ -293,6 +295,74 @@ func TestSongsStreamContentRejectsSymlinkEscape(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
+}
+
+// Only a path that escapes the music directory is 403. A missing or
+// non-file target is 404, and an I/O or permission fault is 500.
+func TestSongsStreamContentFileErrors(t *testing.T) {
+	musicDir := t.TempDir()
+	writeFile(t, filepath.Join(musicDir, "file.mp3"), "x")
+	if err := os.Mkdir(filepath.Join(musicDir, "album"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(musicDir, "album", "inner.mp3"), "x")
+	writeFile(t, filepath.Join(musicDir, "locked.mp3"), "x")
+	lockedDir := filepath.Join(musicDir, "locked")
+	if err := os.Mkdir(lockedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(lockedDir, "song.mp3"), "x")
+
+	tests := []struct {
+		name     string
+		path     string
+		chmod    string
+		wantCode int
+	}{
+		{name: "file as parent component", path: "file.mp3/child.mp3", wantCode: http.StatusNotFound},
+		{name: "directory", path: "album", wantCode: http.StatusNotFound},
+		{name: "unreadable file", path: "locked.mp3", chmod: "locked.mp3", wantCode: http.StatusInternalServerError},
+		{name: "unsearchable parent dir", path: "locked/song.mp3", chmod: "locked", wantCode: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.chmod != "" {
+				lockForTest(t, filepath.Join(musicDir, tt.chmod))
+			}
+			repo := &fakeSongRepo{songs: []*models.Song{{ID: "s", Path: tt.path}}}
+			rec := serve(t, songsRouter(repo, musicDir), http.MethodGet, "/v1/songs/s/content", "", nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d (body %q)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			var body struct {
+				Error string `json:"error"`
+			}
+			decodeBody(t, rec, &body)
+			if body.Error == "" {
+				t.Fatalf("body %q has no JSON error", rec.Body.String())
+			}
+		})
+	}
+}
+
+// lockForTest removes every permission bit from path until the test ends.
+func lockForTest(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("permission bits do not block this user")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(path, info.Mode().Perm()); err != nil {
+			t.Errorf("restore %s: %v", path, err)
+		}
+	})
 }
 
 func TestSongsStreamContentLookupErrors(t *testing.T) {

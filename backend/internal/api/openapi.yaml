@@ -118,8 +118,14 @@ paths:
               schema:
                 type: string
                 format: binary
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "416":
+          description: Range not satisfiable for the file size
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /v1/songs/{id}:stream:
     get:
@@ -149,8 +155,14 @@ paths:
               schema:
                 type: string
                 format: binary
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "416":
+          description: Range not satisfiable for the file size
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /v1/queue:
     get:
@@ -540,6 +552,18 @@ components:
             $ref: "#/components/schemas/Error"
     PayloadTooLarge:
       description: Request body exceeds 4 KiB
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Song path resolves outside the music directory
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Server-side failure, such as a song file that cannot be read
       content:
         application/json:
           schema:

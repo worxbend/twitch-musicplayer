@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -71,7 +73,7 @@ func (h *SongsHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // StreamContent handles GET /v1/songs/{id}/content and GET /v1/songs/{id}:stream.
-// http.ServeFile handles Range headers automatically, enabling streaming/seeking.
+// http.ServeContent handles Range headers, enabling streaming/seeking.
 func (h *SongsHandler) StreamContent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	song, err := h.repo.GetByID(r.Context(), id)
@@ -90,11 +92,22 @@ func (h *SongsHandler) StreamContent(w http.ResponseWriter, r *http.Request) {
 	}
 	path, err = streamPathUnderMusicDir(h.musicDir, path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			writeError(w, http.StatusNotFound, "song file not found")
-			return
-		}
-		writeError(w, http.StatusForbidden, "song path is outside music directory")
+		writeStreamOpenError(w, id, err)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		writeStreamOpenError(w, id, err)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		writeStreamOpenError(w, id, err)
+		return
+	}
+	if info.IsDir() {
+		writeError(w, http.StatusNotFound, "song file not found")
 		return
 	}
 
@@ -102,7 +115,21 @@ func (h *SongsHandler) StreamContent(w http.ResponseWriter, r *http.Request) {
 	// WriteTimeout but a client that stops reading is dropped.
 	sw := &stallWriter{ResponseWriter: w, rc: http.NewResponseController(w), songID: id}
 	sw.extendDeadline()
-	http.ServeFile(sw, r, path)
+	http.ServeContent(sw, r, filepath.Base(path), info.ModTime(), f)
+}
+
+// writeStreamOpenError maps a failure to resolve or open a song file to a
+// status: only the containment check is 403; I/O and permission faults are 500.
+func writeStreamOpenError(w http.ResponseWriter, id string, err error) {
+	switch {
+	case errors.Is(err, errOutsideMusicDir):
+		writeError(w, http.StatusForbidden, "song path is outside music directory")
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+		writeError(w, http.StatusNotFound, "song file not found")
+	default:
+		log.Printf("stream %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "failed to open song file")
+	}
 }
 
 // streamStallTimeout bounds how long one write to a song stream may block.
@@ -132,6 +159,8 @@ func (sw *stallWriter) extendDeadline() {
 	log.Printf("stream %s: set write deadline: %v", sw.songID, err)
 }
 
+var errOutsideMusicDir = errors.New("song path outside music directory")
+
 func streamPathUnderMusicDir(musicDir, songPath string) (string, error) {
 	root, err := filepath.Abs(musicDir)
 	if err != nil {
@@ -156,7 +185,7 @@ func streamPathUnderMusicDir(musicDir, songPath string) (string, error) {
 		return "", err
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", errors.New("song path outside music directory")
+		return "", errOutsideMusicDir
 	}
 	return path, nil
 }
