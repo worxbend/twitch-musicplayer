@@ -104,3 +104,67 @@ test('a busy action button keeps keyboard focus and ignores repeat presses', asy
   await expect(add).toBeFocused();
   expect(posts).toBe(1);
 });
+
+test('a repeated status message is inserted again so screen readers re-announce it', async ({ page }) => {
+  const second = { ...song, id: 'b', title: 'Buffering dreams', filename: 'b.mp3' };
+  const items = [song, second].map((s, i) => ({ id: `q${s.id}`, song_id: s.id, song: s, position: i + 1, source: 'manual' }));
+  await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
+  await page.route('**/v1/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith(':move')) return route.fulfill({ json: { moved: true } });
+    return route.fulfill({ json: path === '/v1/songs' ? {songs: [song]} : path === '/v1/queue' ? {items} : {current_song: song} });
+  });
+  await page.goto('/admin');
+  await expect(page.locator('.queue-item')).toHaveCount(2);
+  await page.evaluate(() => {
+    const status = document.querySelector<HTMLElement>('[role="status"]')!;
+    status.dataset.notices = '0';
+    new MutationObserver(records => {
+      const added = records.flatMap(r => Array.from(r.addedNodes)).filter(n => n instanceof Element && n.matches('.notification')).length;
+      status.dataset.notices = String(Number(status.dataset.notices) + added);
+    }).observe(status, { childList: true, subtree: true });
+  });
+  const moveUp = page.getByRole('button', {name: 'Move Buffering dreams up'});
+  for (let press = 0; press < 2; press++) {
+    await moveUp.click();
+    await expect(page.getByRole('status')).toContainText('Queue order updated.');
+    await expect(moveUp).not.toHaveAttribute('aria-disabled');
+  }
+  await expect.poll(() => page.getByRole('status').evaluate(el => Number(el.dataset.notices))).toBeGreaterThanOrEqual(2);
+});
+
+test('Reset clears the search and keeps focus in the search box', async ({ page }) => {
+  await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
+  await page.route('**/v1/**', route => route.fulfill({ json: { songs: [song], items: [], current_song: null } }));
+  await page.goto('/admin');
+  const search = page.getByLabel('Search music library');
+  await search.fill('Midnight');
+  await page.getByRole('button', {name: 'Reset', exact: true}).click();
+  await expect(search).toHaveValue('');
+  await expect(search).toBeFocused();
+});
+
+test('each Retry moves focus to its panel heading, not to the page body', async ({ page }) => {
+  let fail = true;
+  await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
+  await page.route('**/v1/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (fail && ['/v1/songs', '/v1/queue', '/v1/history'].includes(path)) return route.fulfill({ status: 503, json: {} });
+    return route.fulfill({ json: path === '/v1/songs' ? {songs: [song]} : path === '/v1/player' ? {current_song: song} : {items: []} });
+  });
+  await page.goto('/admin');
+  await expect(page.getByText('Library unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('Queue unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('History unavailable', { exact: true })).toBeVisible();
+  fail = false;
+  await page.getByRole('button', {name: 'Retry connection'}).click();
+  await expect(page.locator('#library-heading')).toBeFocused();
+  await expect(page.locator('.song-item')).toHaveCount(1);
+  await page.getByRole('region', {name: 'Up next'}).getByRole('button', {name: 'Retry'}).click();
+  await expect(page.locator('#queue-heading')).toBeFocused();
+  await expect(page.getByText('Make the next move')).toBeVisible();
+  await page.getByRole('region', {name: 'Recently played'}).getByRole('button', {name: 'Retry'}).click();
+  await expect(page.locator('#history-heading')).toBeFocused();
+  await expect(page.getByText('No songs played yet.')).toBeVisible();
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+});

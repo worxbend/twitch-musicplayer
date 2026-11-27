@@ -60,8 +60,8 @@ export function AdminApp() {
   const [history, setHistory] = createSignal<HistoryItem[]>([]);
   const [currentSong, setCurrentSong] = createSignal<Song | null>(null);
   const [connected, setConnected] = createSignal(false);
-  const [notification, setNotification] = createSignal('');
-  const [notificationError, setNotificationError] = createSignal(false);
+  // A fresh id per call makes Solid insert a new node, so a repeated message is re-announced.
+  const [notice, setNotice] = createSignal<{ id: number; text: string; error: boolean } | null>(null);
   const [searchQuery, setSearchQuery] = createSignal('');
   const [loading, setLoading] = createSignal(true);
   const [libraryError, setLibraryError] = createSignal(false);
@@ -70,6 +70,7 @@ export function AdminApp() {
   const [playerError, setPlayerError] = createSignal(false);
   const [busy, setBusy] = createSignal('');
   let notifTimer = 0;
+  let noticeSeq = 0;
   let searchTimer = 0;
   let searchRequest = 0;
   const queueGate = createLatest();
@@ -77,6 +78,7 @@ export function AdminApp() {
   const playerGate = createLatest();
   let disposed = false;
   let clearDialog!: HTMLDialogElement;
+  let searchInput!: HTMLInputElement;
 
   // The deadline covers the body too: read and the error text run inside it.
   function request<T>(path: string, read: (res: Response) => Promise<T>, init?: RequestInit) {
@@ -129,9 +131,8 @@ export function AdminApp() {
   }
   function showNotification(message: string, error = false) {
     window.clearTimeout(notifTimer);
-    setNotificationError(error);
-    setNotification(message);
-    notifTimer = window.setTimeout(() => setNotification(''), 4500);
+    setNotice({ id: ++noticeSeq, text: message, error });
+    notifTimer = window.setTimeout(() => setNotice(null), 4500);
   }
   async function action(path: string, message: string, method = 'POST', body?: Record<string, unknown>) {
     if (busy()) return;
@@ -156,6 +157,13 @@ export function AdminApp() {
       );
     }
     finally { setBusy(''); }
+  }
+
+  // A retry swaps its button out on success or on the next loading state; the
+  // stable panel heading keeps keyboard focus off <body> either way.
+  function retry(headingId: string, refetch: () => Promise<void>) {
+    document.getElementById(headingId)?.focus();
+    void refetch();
   }
 
   function MoveButton(props: { item: QueueItem; direction: 'up' | 'down'; blocked: boolean }) {
@@ -252,12 +260,12 @@ export function AdminApp() {
         </section>
         <div class="admin-main">
           <section class="song-panel" aria-labelledby="library-heading">
-            <div class="panel-header"><h2 id="library-heading" class="panel-title">Music library</h2><span class="panel-meta">{songs().length} {searchQuery() ? 'matches' : 'tracks'}</span></div>
-            <div class="search-row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="6" stroke="currentColor" stroke-width="1.5" /><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg><input class="search-box" aria-label="Search music library" type="search" placeholder="Search title, artist, album…" value={searchQuery()} onInput={e => setSearchQuery(e.currentTarget.value)} /><Show when={searchQuery()}><button class="btn" onClick={() => setSearchQuery('')}>Reset</button></Show></div>
+            <div class="panel-header"><h2 id="library-heading" class="panel-title" tabIndex={-1}>Music library</h2><span class="panel-meta">{songs().length} {searchQuery() ? 'matches' : 'tracks'}</span></div>
+            <div class="search-row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="6" stroke="currentColor" stroke-width="1.5" /><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg><input ref={searchInput} class="search-box" aria-label="Search music library" type="search" placeholder="Search title, artist, album…" value={searchQuery()} onInput={e => setSearchQuery(e.currentTarget.value)} /><Show when={searchQuery()}><button class="btn" onClick={() => { setSearchQuery(''); searchInput.focus(); }}>Reset</button></Show></div>
             <div class="list-column-labels" aria-hidden="true"><span>Track / artist / album</span><span>Time</span><span>Actions</span></div>
             <div class="song-list" aria-busy={loading()}>
               <Show when={!loading()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--loading" aria-hidden="true">◌</span><h3>Reading your library</h3><p>Fetching tracks from the backend.</p></div>}>
-                <Show when={!libraryError()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--error" aria-hidden="true">!</span><h3>Library unavailable</h3><p>Check the backend connection, then try again.</p><button class="btn" onClick={() => void fetchSongs()}>Retry connection</button></div>}>
+                <Show when={!libraryError()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--error" aria-hidden="true">!</span><h3>Library unavailable</h3><p>Check the backend connection, then try again.</p><button class="btn" onClick={() => retry('library-heading', () => fetchSongs())}>Retry connection</button></div>}>
                   <For each={songs()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">♫</span><h3>{searchQuery() ? 'No matching tracks' : 'Your library is quiet'}</h3><p>{searchQuery() ? 'Try a different title, artist, or album.' : 'Add MP3 files to your configured music folder.'}</p></div>}>
                     {(song, idx) => <div class="song-item" classList={{'song-item--playing': currentSong()?.id === song.id}}>
                       <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
@@ -275,7 +283,7 @@ export function AdminApp() {
             <div class="panel-header"><h2 id="queue-heading" class="panel-title" tabIndex={-1}>Up next <span class="queue-count">{queue().length}</span></h2><ActionButton class="btn btn-danger" inactive={() => !!busy() || !queue().length} onClick={() => clearDialog.showModal()}>Clear queue</ActionButton></div>
             <div class="queue-legend"><span><i class="queue-source manual" />manual</span><span><i class="queue-source auto" />auto rotation</span></div>
             <div class="queue-list">
-              <Show when={!queueError()} fallback={<div class="empty-state"><h3>Queue unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => void fetchQueue()}>Retry</button></div>}>
+              <Show when={!queueError()} fallback={<div class="empty-state"><h3>Queue unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => retry('queue-heading', fetchQueue)}>Retry</button></div>}>
                 <For each={queue()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">+</span><h3>Make the next move</h3><p>Add a track from the library. Automatic rotation keeps things moving when the player is listening.</p></div>}>
                   {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{queueItemLabel(item)}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><MoveButton item={item} direction="up" blocked={idx() === 0} /><MoveButton item={item} direction="down" blocked={idx() === queue().length - 1} /><ActionButton class="btn btn-danger btn-icon" aria-label={`Remove ${queueItemLabel(item)} from queue`} title="Remove from queue" inactive={() => !!busy()} data-queue-id={item.id} data-queue-action="remove" onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</ActionButton></div>}
                 </For>
@@ -285,8 +293,8 @@ export function AdminApp() {
           </section>
         </div>
         <section class="history-panel" aria-labelledby="history-heading">
-          <div class="panel-header"><h2 id="history-heading" class="panel-title">Recently played</h2></div>
-          <Show when={!historyError()} fallback={<div class="empty-state"><h3>History unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => void fetchHistory()}>Retry</button></div>}>
+          <div class="panel-header"><h2 id="history-heading" class="panel-title" tabIndex={-1}>Recently played</h2></div>
+          <Show when={!historyError()} fallback={<div class="empty-state"><h3>History unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => retry('history-heading', fetchHistory)}>Retry</button></div>}>
             <Show when={pastHistory().length} fallback={<div class="empty-state"><p>No songs played yet.</p></div>}>
               <ol class="history-list">
                 <For each={pastHistory()}>
@@ -301,7 +309,7 @@ export function AdminApp() {
       <dialog ref={clearDialog!} class="terminal-dialog" aria-labelledby="clear-title" aria-describedby="clear-description">
         <form method="dialog"><h2 id="clear-title">Clear the queue?</h2><p id="clear-description">Remove all upcoming tracks. The current track keeps playing. Automatic rotation may refill the queue.</p><div class="dialog-actions"><button class="btn" autofocus>Keep queue</button><button class="btn btn-danger" onClick={() => void action('/v1/queue:clear', 'Queue cleared.')}>Clear queue</button></div></form>
       </dialog>
-      <div role="status" aria-live="polite"><Show when={notification()}><div class="notification" classList={{'notification--error': notificationError()}}>{notification()}</div></Show></div>
+      <div role="status" aria-live="polite"><Show when={notice()} keyed>{n => <div class="notification" classList={{'notification--error': n.error}}>{n.text}</div>}</Show></div>
     </div>
   );
 }
