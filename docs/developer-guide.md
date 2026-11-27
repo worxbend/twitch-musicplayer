@@ -29,6 +29,7 @@ editing code — the containers do not hot-reload.
 - Go 1.26 (`backend/go.mod` pins `toolchain go1.26.11`).
 - Node.js 22.18+ (`engines` in `frontend/package.json`; `frontend/.nvmrc` selects 22).
 - npm.
+- The Docker build images follow `backend/go.mod`'s toolchain (Go major.minor) and `frontend/.nvmrc` (Node major); `scripts/check-toolchains.sh` enforces this in CI.
 - No CGO toolchain required: the service uses no database driver.
 - MP3 files for local playback.
 
