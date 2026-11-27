@@ -70,6 +70,12 @@ const maxStreamRetries = 3;
 const awaitSongTimeoutMs = 15000;
 const errorRetryMaxMs = 30000;
 const maxOutboxMessages = 20;
+// Slack past a tail's expected end before its deferred error is reported anyway.
+const tailGraceMs = 2000;
+// Tail assumed when the duration is unknown: AudioEngine's near-end threshold.
+const unknownTailMs = 3000;
+// Longest a resumed-after-pause tail can push the report past its first deadline.
+const tailCeilingMs = 30000;
 const messageTypes = new Set<MessageType>([
   'need_song',
   'song_finished',
@@ -120,6 +126,8 @@ export class BackendPlaybackClient {
   private displayedHistoryId: string | null = null;
   // Server error held back while a track that finished early is still audible.
   private deferredError: string | null = null;
+  // Reports the deferred error if the tail never fires onEnded (stalled or silent element).
+  private tailFallbackTimer = 0;
 
   constructor(options: BackendPlaybackOptions) {
     this.audio = options.audio;
@@ -155,6 +163,7 @@ export class BackendPlaybackClient {
     this.current = null;
     this.awaitingSong = false;
     this.deferredError = null;
+    this.cancelTailFallback();
     this.resetStreamRetries();
     window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = 0;
@@ -295,6 +304,7 @@ export class BackendPlaybackClient {
         this.playInFlight = false;
         this.finishedInFlight = null;
         this.deferredError = null;
+        this.cancelTailFallback();
         this.resetStreamRetries();
         window.clearTimeout(this.streamRetryTimer);
         window.clearTimeout(this.errorRetryTimer);
@@ -308,7 +318,7 @@ export class BackendPlaybackClient {
         window.clearTimeout(this.awaitSongTimer);
         const message = msg.payload?.message ?? 'radio error';
         // After an early song_finished the old track's tail is still audible; report once it ends.
-        if (this.displayedHistoryId !== null && !this.current && !this.pendingPlay) this.deferredError = message;
+        if (this.displayedHistoryId !== null && !this.current && !this.pendingPlay) this.deferError(this.displayedHistoryId, message);
         else this.report({ playback: 'error' }, message);
         this.scheduleErrorRetry();
         break;
@@ -347,6 +357,7 @@ export class BackendPlaybackClient {
           if (token !== this.playToken) return;
           this.displayedHistoryId = payload.history_id;
           this.deferredError = null;
+          this.cancelTailFallback();
           this.onSongChange?.({
             title: songName,
             artist: payload.song.artist,
@@ -415,10 +426,55 @@ export class BackendPlaybackClient {
   private handleEnded(payload: PlaySongPayload) {
     this.finishCurrent(payload);
     if (this.displayedHistoryId !== payload.history_id) return;
+    this.finishTail();
+  }
+
+  // The audible tail is over: drop its title and report an error held back for it.
+  private finishTail() {
+    this.cancelTailFallback();
     this.clearDisplayedSong();
     const deferred = this.deferredError;
     this.deferredError = null;
     if (deferred !== null && !this.current && !this.pendingPlay) this.report({ playback: 'error' }, deferred);
+  }
+
+  // A stalled or broken tail never fires onEnded, so the error is also reported
+  // shortly after the tail's expected end. An armed timer already belongs to this
+  // tail (onStarted cancels it), so it is kept and its ceiling still holds.
+  private deferError(historyId: string, message: string) {
+    this.deferredError = message;
+    if (this.tailFallbackTimer) return;
+    const delay = this.tailRemainingMs() + tailGraceMs;
+    this.scheduleTailCheck(historyId, Date.now() + delay + tailCeilingMs, delay);
+  }
+
+  private scheduleTailCheck(historyId: string, ceiling: number, delay: number) {
+    window.clearTimeout(this.tailFallbackTimer);
+    this.tailFallbackTimer = window.setTimeout(() => this.checkTail(historyId, ceiling), delay);
+  }
+
+  // Still audible with time left means the user paused and resumed: wait for the
+  // new end, but never past the ceiling.
+  private checkTail(historyId: string, ceiling: number) {
+    this.tailFallbackTimer = 0;
+    const remainingMs = this.tailRemainingMs();
+    const untilCeiling = ceiling - Date.now();
+    if (this.audio.audible && remainingMs > 250 && untilCeiling > 0) {
+      this.scheduleTailCheck(historyId, ceiling, Math.min(remainingMs + tailGraceMs, untilCeiling));
+      return;
+    }
+    if (this.displayedHistoryId === historyId) this.finishTail();
+  }
+
+  private tailRemainingMs(): number {
+    const progress = this.audio.getPlaybackProgress();
+    if (!progress || !Number.isFinite(progress.duration) || progress.duration <= 0) return unknownTailMs;
+    return Math.max(0, progress.duration - progress.currentTime) * 1000;
+  }
+
+  private cancelTailFallback() {
+    window.clearTimeout(this.tailFallbackTimer);
+    this.tailFallbackTimer = 0;
   }
 
   // The server answers song_finished with play_song, like need_song, so the
@@ -467,7 +523,11 @@ export class BackendPlaybackClient {
   }
 
   private retryStream(payload: PlaySongPayload) {
-    if (this.current?.history_id !== payload.history_id && this.pendingPlay?.history_id !== payload.history_id) return;
+    if (this.current?.history_id !== payload.history_id && this.pendingPlay?.history_id !== payload.history_id) {
+      // The tail of a song already handed off stalled or broke: it is over, not retried.
+      if (payload.history_id === this.displayedHistoryId && !this.current && !this.pendingPlay) this.finishTail();
+      return;
+    }
     window.clearTimeout(this.streamRetryTimer);
     // An error during the fade-in arrives before play() settles; void that play
     // so its late settle cannot cancel this retry and make the dead track current.

@@ -98,6 +98,13 @@ class FakeAudio {
   preloadNext(url: string) {
     this.preloads.push(url);
   }
+
+  audible = true;
+  progress: { currentTime: number; duration: number } | null = null;
+
+  getPlaybackProgress() {
+    return this.progress;
+  }
 }
 
 const windowListeners = new Map<string, Set<() => void>>();
@@ -1020,8 +1027,89 @@ for (const [name, cancel] of [
     audio.plays[0].callbacks.onNearEnd();
     ws.message({ type: 'error', payload: { message: 'queue is empty' } });
     cancel();
+    const songsAfterCancel = songs.length;
+    mock.timers.tick(60_000);
+    assert.equal(songs.length, songsAfterCancel, 'the tail fallback was cancelled');
     audio.plays[0].callbacks.onEnded();
     assert.ok(statuses.every(s => s.message !== 'queue is empty'), 'no stale error');
+  });
+}
+
+// Plays A, hands it off early at near-end, and gets an error during its tail.
+async function errorDuringTail(progress: FakeAudio['progress']) {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a', 'A'));
+  audio.plays[0].settle.resolve();
+  await flush();
+  audio.progress = progress;
+  audio.plays[0].callbacks.onNearEnd();
+  ws.message({ type: 'error', payload: { message: 'queue is empty' } });
+  return ws;
+}
+
+function tailErrorReports() {
+  return statuses.filter(s => s.playback === 'error' && s.message === 'queue is empty').length;
+}
+
+test('a tail that never fires onEnded reports its error after the remaining time plus grace', async () => {
+  await errorDuringTail({ currentTime: 178, duration: 180 });
+  mock.timers.tick(3999);
+  assert.equal(tailErrorReports(), 0, 'not before remaining + grace');
+  assert.equal(songs.at(-1)?.title, 'A');
+
+  audio.progress = { currentTime: 180, duration: 180 };
+  mock.timers.tick(1);
+  assert.equal(tailErrorReports(), 1);
+  assert.equal(songs.at(-1), null, 'the title is cleared');
+
+  audio.plays[0].callbacks.onEnded();
+  assert.equal(tailErrorReports(), 1, 'a late onEnded is a no-op');
+  assert.equal(songs.filter(song => song === null).length, 1);
+});
+
+test('a tail of unknown length falls back to the near-end threshold plus grace', async () => {
+  await errorDuringTail(null);
+  audio.audible = false;
+  mock.timers.tick(4999);
+  assert.equal(tailErrorReports(), 0);
+  mock.timers.tick(1);
+  assert.equal(tailErrorReports(), 1);
+});
+
+test('a song that starts before the tail deadline cancels the fallback', async () => {
+  const ws = await errorDuringTail({ currentTime: 178, duration: 180 });
+  ws.message(playSong('b', 'B'));
+  audio.plays[1].start();
+  audio.plays[1].settle.resolve();
+  await flush();
+  audio.audible = false;
+  mock.timers.tick(60_000);
+  assert.equal(tailErrorReports(), 0);
+  assert.equal(songs.at(-1)?.title, 'B');
+});
+
+test('a resumed tail re-arms the fallback but the ceiling still reports', async () => {
+  // 10 s left and never moving: first deadline at 12 s, ceiling at 42 s.
+  await errorDuringTail({ currentTime: 170, duration: 180 });
+  mock.timers.tick(41_999);
+  assert.equal(tailErrorReports(), 0, 'held while audible with time left');
+  assert.equal(songs.at(-1)?.title, 'A');
+  mock.timers.tick(1);
+  assert.equal(tailErrorReports(), 1);
+  assert.equal(songs.at(-1), null);
+});
+
+for (const event of ['onStall', 'onError'] as const) {
+  test(`a tail ${event} after the handoff clears the title and reports the deferred error`, async () => {
+    await errorDuringTail({ currentTime: 178, duration: 180 });
+    audio.plays[0].callbacks[event]();
+    assert.equal(songs.at(-1), null);
+    assert.equal(tailErrorReports(), 1);
+
+    mock.timers.tick(60_000);
+    assert.equal(tailErrorReports(), 1, 'the fallback does not report again');
+    assert.equal(audio.plays.length, 1, 'the finished tail is not retried');
   });
 }
 

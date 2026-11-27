@@ -227,6 +227,7 @@ The supported frontend is a single active WebSocket playback client. It is desig
 - requests a song again after reconnect when no song is active, or when a `need_song`/`song_finished` went out on a socket that closed before the reply;
 - re-sends `need_song` if no `play_song` arrives within 15 seconds;
 - retries after an `error` reply with exponential backoff from 900 ms up to 30 seconds, reset by the next successful play;
+- holds back an `error` that arrives while a handed-off track's tail is still audible, and reports it when the tail ends, stalls or errors, or at the latest about 2 seconds after its expected end (a tail resumed after a pause can push this back by up to 30 seconds);
 - retries a pending stream if browser autoplay blocked playback;
 - retries stream playback after media element errors, a stream that has not started within 20 seconds, or a started stream whose position has not moved for 30 seconds while playing, every 5 seconds, and after 3 failed retries of the same song sends `need_song` to skip it. A pause before the stream starts is not a failure: the song stays loaded and paused.
 
