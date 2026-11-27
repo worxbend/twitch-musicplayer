@@ -106,6 +106,34 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: install shellcheck
+        env:
+          SHELLCHECK_VERSION: v0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          tarball="shellcheck-$SHELLCHECK_VERSION.linux.x86_64.tar.xz"
+          curl -fsSLO "https://github.com/koalaman/shellcheck/releases/download/$SHELLCHECK_VERSION/$tarball"
+          echo "$SHELLCHECK_SHA256  $tarball" | sha256sum -c -
+          mkdir -p bin
+          tar -xJf "$tarball" --strip-components=1 -C bin "shellcheck-$SHELLCHECK_VERSION/shellcheck"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Local equivalent: bash scripts/lint.sh
+      - name: actionlint and shellcheck
+        run: bash scripts/lint.sh
+
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -127,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name be -p 8080:8080 -e BASE_URL=http://127.0.0.1:8080 --tmpfs /music lofi-backend:ci
-          for i in $(seq 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
+          for _ in $(seq 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8080/health
           test "$(docker exec be id -u)" = 10001
           # The Bloom autosave target must be writable by the non-root user.
@@ -137,7 +165,7 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP"
           docker run -d --name fe -p 3000:80 -e BACKEND_URL=https://radio.example lofi-frontend:ci
-          for i in $(seq 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/ && break; sleep 1; done
+          for _ in $(seq 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/ && break; sleep 1; done
           curl -fsS http://127.0.0.1:3000/ > index.html
           curl -fsS -D headers.txt http://127.0.0.1:3000/config.js > config.js
           grep -F 'backendUrl: "https://radio.example"' config.js

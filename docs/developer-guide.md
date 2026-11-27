@@ -210,8 +210,13 @@ npx playwright install chromium
 npm run test:ui         # Chromium artwork, accessibility, playback and interaction checks
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same gates in four jobs: `backend`, `frontend`,
-`ui` (Playwright) and `docker` (compose validation, image builds and smoke tests).
+```bash
+bash scripts/lint.sh    # actionlint over workflows, shellcheck over scripts/ and
+                        # frontend/docker-entrypoint.d (needs go + shellcheck 0.11.0)
+```
+
+CI (`.github/workflows/ci.yml`) runs the same gates in five jobs: `backend`, `frontend`,
+`ui` (Playwright), `lint` (`scripts/lint.sh`) and `docker` (compose validation, image builds and smoke tests).
 
 Frontend unit tests run in plain Node, which executes the TypeScript directly.
 Browser tests use Playwright and a separate Vite server on port 3100.
