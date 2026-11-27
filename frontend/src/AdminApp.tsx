@@ -74,6 +74,9 @@ export function AdminApp() {
   const [blockedError, setBlockedError] = createSignal(false);
   const [playerError, setPlayerError] = createSignal(false);
   const [busy, setBusy] = createSignal('');
+  // Separate from busy(): copying reads only, so it must not lock the mutating controls.
+  const [copyingSetlist, setCopyingSetlist] = createSignal(false);
+  const [setlistFallback, setSetlistFallback] = createSignal<string | null>(null);
   let notifTimer = 0;
   let noticeSeq = 0;
   let searchTimer = 0;
@@ -170,6 +173,30 @@ export function AdminApp() {
       );
     }
     finally { setBusy(''); }
+  }
+
+  async function copySetlist() {
+    setCopyingSetlist(true);
+    try {
+      // The server clamps limit to its 50-entry history.
+      const text = await request('/v1/history?format=text&limit=50', res => res.text());
+      if (disposed) return;
+      const count = text.split('\n').filter(Boolean).length;
+      try {
+        if (!navigator.clipboard) throw new Error('Clipboard unavailable');
+        await navigator.clipboard.writeText(text);
+        if (disposed) return;
+        setSetlistFallback(null);
+        showNotification(`✓ Setlist copied: ${count} tracks`);
+      } catch {
+        if (disposed) return;
+        setSetlistFallback(text);
+        showNotification('Clipboard unavailable. Select the setlist below and copy it.', true);
+      }
+    } catch {
+      if (!disposed) showNotification('Could not load the setlist.', true);
+    }
+    finally { if (!disposed) setCopyingSetlist(false); }
   }
 
   // A retry swaps its button out on success or on the next loading state; the
@@ -329,7 +356,8 @@ export function AdminApp() {
           </section>
         </div>
         <section class="history-panel" aria-labelledby="history-heading">
-          <div class="panel-header"><h2 id="history-heading" class="panel-title" tabIndex={-1}>Recently played</h2></div>
+          <div class="panel-header"><h2 id="history-heading" class="panel-title" tabIndex={-1}>Recently played</h2><ActionButton class="btn" inactive={() => copyingSetlist() || !pastHistory().length} onClick={() => void copySetlist()}>Copy setlist</ActionButton></div>
+          <Show when={setlistFallback() !== null}><label class="setlist-copy">Setlist<textarea aria-label="Setlist" readonly rows={6} value={setlistFallback() ?? ''} onFocus={e => e.currentTarget.select()} /></label></Show>
           <Show when={!historyError()} fallback={<div class="empty-state"><h3>History unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => retry('history-heading', fetchHistory)}>Retry</button></div>}>
             <Show when={pastHistory().length} fallback={<div class="empty-state"><p>No songs played yet.</p></div>}>
               <ol class="history-list">

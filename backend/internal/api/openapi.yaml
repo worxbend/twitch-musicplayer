@@ -653,6 +653,9 @@ paths:
       description: >
         Returns the most recent song starts, newest first. History is kept in
         memory (last 50 starts) and resets when the server restarts.
+        `format=text` returns a plain-text setlist instead, oldest first, one
+        `YYYY-MM-DD HH:MM UTC  Artist - Title` line per start, for music
+        attribution in a VOD description. It is sent with `Cache-Control: no-store`.
       operationId: listHistory
       tags: [player]
       parameters:
@@ -664,9 +667,17 @@ paths:
             type: integer
             minimum: 1
             default: 20
+        - name: format
+          in: query
+          required: false
+          description: Response format. `json` lists entries newest first; `text` is a plain-text setlist, oldest first.
+          schema:
+            type: string
+            enum: [json, text]
+            default: json
       responses:
         "200":
-          description: Recent song starts, newest first
+          description: Recent song starts (JSON newest first, text oldest first)
           content:
             application/json:
               schema:
@@ -678,8 +689,14 @@ paths:
                       $ref: "#/components/schemas/PlayEntry"
                   total:
                     type: integer
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  2026-01-01 20:12 UTC  Terminal Club - Buffering dreams
+                  2026-01-01 20:15 UTC  Nujabes - Aruarian Dance
         "400":
-          description: limit is not a positive integer
+          description: limit is not a positive integer, or format is not json or text
           content:
             application/json:
               schema:

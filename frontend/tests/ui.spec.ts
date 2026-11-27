@@ -6,6 +6,7 @@ const songs = [
   { id: 'a', title: 'Midnight compiler', artist: 'Soft Circuit', album: 'After hours', filename: 'a.mp3', duration_secs: 180, size_bytes: 1024 },
   { id: 'b', title: 'Buffering dreams', artist: 'Terminal Club', album: 'Night shift', filename: 'b.mp3', duration_secs: 205, size_bytes: 1024 },
 ];
+const setlistText = '2026-01-01 19:57 UTC  Soft Circuit - Midnight compiler\n2026-01-01 20:01 UTC  Terminal Club - Buffering dreams\n';
 
 async function mockStation(page: Page, options: { failure?: boolean; empty?: boolean; slow?: boolean; requireGesture?: boolean; hasCover?: boolean; trackSecs?: number; answerOnce?: boolean } = {}) {
   if (options.requireGesture) {
@@ -64,6 +65,9 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
     if (request.method() === 'DELETE') {
       queue = queue.filter(item => item.id !== url.pathname.split('/').pop());
       await route.fulfill({ status: 204 }); return;
+    }
+    if (url.pathname === '/v1/history' && url.searchParams.get('format') === 'text') {
+      await route.fulfill({ body: setlistText, contentType: 'text/plain; charset=utf-8' }); return;
     }
     if (url.pathname === '/v1/history') {
       const items = options.empty ? [] : [{ song: songs[0], started_at: '2026-01-01T20:05:00Z' }, { song: songs[1], started_at: '2026-01-01T20:01:00Z' }, { song: songs[0], started_at: '2026-01-01T19:57:00Z' }];
@@ -184,6 +188,29 @@ test('admin recently played lists history newest first', async ({ page }) => {
   await expect(history.nth(0).locator('time')).toHaveAttribute('datetime', '2026-01-01T20:01:00Z');
   await expect(history.nth(1)).toContainText('Midnight compiler');
   await expect(history.nth(1).locator('time')).toHaveAttribute('datetime', '2026-01-01T19:57:00Z');
+});
+
+test('admin copies the setlist by keyboard and announces it', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await mockStation(page);
+  await page.goto('/admin');
+  const panel = page.getByRole('region', { name: 'Recently played' });
+  await expect(panel.getByRole('listitem')).toHaveCount(2);
+  await panel.getByRole('button', { name: 'Copy setlist' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('status')).toContainText('Setlist copied: 2 tracks');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(setlistText);
+  await expect(panel.getByRole('button', { name: 'Copy setlist' })).toBeFocused();
+  expect((await new AxeBuilder({ page }).include('.history-panel').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+});
+
+test('admin setlist falls back to a selectable text box without a clipboard', async ({ page }) => {
+  await page.addInitScript(() => { Object.defineProperty(navigator, 'clipboard', { value: undefined }); });
+  await mockStation(page);
+  await page.goto('/admin');
+  await page.getByRole('button', { name: 'Copy setlist' }).click();
+  await expect(page.getByRole('status')).toContainText('Clipboard unavailable');
+  await expect(page.getByRole('textbox', { name: 'Setlist' })).toHaveValue(setlistText);
 });
 
 test('admin refetches the library when the socket reconnects', async ({ page }) => {

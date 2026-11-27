@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -131,11 +132,19 @@ func (h *PlayerHandler) State(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
-// History handles GET /v1/history?limit=N. It returns the most recent song
-// starts, newest first. limit defaults to 20 and is clamped to player.MaxHistory.
+// History handles GET /v1/history?limit=N&format=json|text. It returns the
+// most recent song starts. limit defaults to 20 and is clamped to
+// player.MaxHistory. format=json (the default) is {items,total}, newest first;
+// format=text is a plain-text setlist, oldest first, for VOD music credits.
 func (h *PlayerHandler) History(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	format := q.Get("format")
+	if format != "" && format != "json" && format != "text" {
+		writeError(w, http.StatusBadRequest, "format must be json or text")
+		return
+	}
 	limit := defaultHistoryLimit
-	if raw := r.URL.Query().Get("limit"); raw != "" {
+	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
 			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
@@ -145,8 +154,41 @@ func (h *PlayerHandler) History(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := h.stateTracker.History(limit)
+	if format == "text" {
+		writeSetlist(w, items)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items": items,
 		"total": len(items),
 	})
+}
+
+// writeSetlist writes newest-first entries as a plain-text setlist, oldest
+// first. no-store keeps proxies from serving a stale list.
+func writeSetlist(w http.ResponseWriter, newestFirst []player.PlayEntry) {
+	var b strings.Builder
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		b.WriteString(setlistLine(newestFirst[i]))
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, b.String())
+}
+
+// setlistLine renders one entry as "2006-01-02 15:04 UTC  Artist - Title\n".
+// An empty title falls back to the filename without its extension; a song
+// without an artist renders the title alone. Control characters become spaces
+// so a tag cannot split the line.
+func setlistLine(e player.PlayEntry) string {
+	label := e.Song.Title
+	if label == "" {
+		label = strings.TrimSuffix(e.Song.Filename, filepath.Ext(e.Song.Filename))
+	}
+	text := label
+	if e.Song.Artist != "" {
+		text = e.Song.Artist + " - " + label
+	}
+	return e.StartedAt.UTC().Format("2006-01-02 15:04 UTC") + "  " + player.OneLine(text) + "\n"
 }

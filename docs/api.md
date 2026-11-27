@@ -273,6 +273,18 @@ non-integer or value below `1` returns `400 {"error":"limit must be a positive i
 }
 ```
 
+Add `format=text` for a plain-text setlist, meant for music attribution in a VOD
+description. It lists the same entries oldest first, one UTC line each, as
+`text/plain` with `Cache-Control: no-store`. A song without an artist shows the title
+alone, and an untitled song shows its filename. Any other `format` returns
+`400 {"error":"format must be json or text"}`. The admin **Copy setlist** button uses it.
+
+```bash
+curl 'http://localhost:8080/v1/history?format=text&limit=50'
+2026-01-01 20:12 UTC  Terminal Club - Buffering dreams
+2026-01-01 20:15 UTC  Nujabes - Aruarian Dance
+```
+
 History is kept in memory: it holds the last 50 starts and resets when the server
 restarts. A song is recorded when a player starts it, so a skipped track still appears.
 

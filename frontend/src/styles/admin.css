@@ -22,6 +22,8 @@ html, body { min-height: 100%; background: var(--bg); }
 .queue-panel, .history-panel { background: #101a2a; }
 .history-panel { margin-bottom: 28px; }
 .history-list { list-style: none; margin: 0; padding: 0; }
+.setlist-copy { display: block; margin: 16px 24px 0; color: var(--amber); font-size: 12px; }
+.setlist-copy textarea { display: block; width: 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--ink); font-family: var(--mono); font-size: 12px; resize: vertical; }
 .history-time { color: var(--muted); font-family: var(--mono); font-size: 11px; flex-shrink: 0; }
 .panel-header .btn { min-height: 36px; font-size: 11px; padding: 6px 11px; background: transparent; }
 .search-row { display: flex; align-items: center; gap: 12px; margin: 22px 24px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); padding: 0 14px; }

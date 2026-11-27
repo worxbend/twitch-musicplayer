@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -262,5 +263,100 @@ func TestPlayerHistory(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPlayerHistoryText(t *testing.T) {
+	manySongs := make([]models.Song, player.MaxHistory+5)
+	manyTexts := make([]string, player.MaxHistory)
+	for i := range manySongs {
+		manySongs[i] = models.Song{Title: "t" + strconv.Itoa(i)}
+	}
+	for i := range manyTexts {
+		manyTexts[i] = "t" + strconv.Itoa(i+5)
+	}
+	tests := []struct {
+		name      string
+		target    string
+		songs     []models.Song
+		wantCode  int
+		wantError string
+		wantTexts []string
+	}{
+		{name: "empty history", target: "/v1/history?format=text", wantCode: http.StatusOK},
+		{
+			name:   "oldest first",
+			target: "/v1/history?format=text",
+			songs: []models.Song{
+				{Artist: "A", Title: "one"},
+				{Artist: "B", Title: "two"},
+				{Artist: "C", Title: "three"},
+			},
+			wantCode:  http.StatusOK,
+			wantTexts: []string{"A - one", "B - two", "C - three"},
+		},
+		{name: "limit keeps the newest", target: "/v1/history?format=text&limit=2", songs: []models.Song{{Title: "a"}, {Title: "b"}, {Title: "c"}}, wantCode: http.StatusOK, wantTexts: []string{"b", "c"}},
+		{name: "limit clamped", target: "/v1/history?format=text&limit=999", songs: manySongs, wantCode: http.StatusOK, wantTexts: manyTexts},
+		{name: "no artist", target: "/v1/history?format=text", songs: []models.Song{{Title: "solo"}}, wantCode: http.StatusOK, wantTexts: []string{"solo"}},
+		{name: "empty title uses filename", target: "/v1/history?format=text", songs: []models.Song{{Artist: "A", Filename: "rainy.day.mp3"}}, wantCode: http.StatusOK, wantTexts: []string{"A - rainy.day"}},
+		{name: "control chars stay on one line", target: "/v1/history?format=text", songs: []models.Song{{Artist: "A\r", Title: "x\ny\u2028z"}, {Title: "next"}}, wantCode: http.StatusOK, wantTexts: []string{"A  - x y z", "next"}},
+		{name: "zero limit", target: "/v1/history?format=text&limit=0", wantCode: http.StatusBadRequest, wantError: "limit must be a positive integer"},
+		{name: "unknown format", target: "/v1/history?format=xml", wantCode: http.StatusBadRequest, wantError: "format must be json or text"},
+	}
+	linePattern := regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC  (.*)$`)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := player.NewStateTracker()
+			for i := range tt.songs {
+				st.SetCurrentSong(&tt.songs[i])
+			}
+			rec := serve(t, playerRouter(&fakeQueueManager{}, fakeCounter{}, &fakeBroadcaster{}, st), http.MethodGet, tt.target, "", nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if tt.wantError != "" {
+				var body map[string]string
+				decodeBody(t, rec, &body)
+				if body["error"] != tt.wantError {
+					t.Fatalf("error body = %v, want %q", body, tt.wantError)
+				}
+				return
+			}
+			if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+				t.Fatalf("Content-Type = %q", got)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q", got)
+			}
+			body := rec.Body.String()
+			if len(tt.wantTexts) == 0 {
+				if body != "" {
+					t.Fatalf("body = %q, want empty", body)
+				}
+				return
+			}
+			lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
+			if len(lines) != len(tt.wantTexts) {
+				t.Fatalf("got %d lines, want %d:\n%s", len(lines), len(tt.wantTexts), body)
+			}
+			for i, line := range lines {
+				m := linePattern.FindStringSubmatch(line)
+				if m == nil || m[1] != tt.wantTexts[i] {
+					t.Fatalf("line %d = %q, want timestamp + %q", i, line, tt.wantTexts[i])
+				}
+			}
+		})
+	}
+}
+
+func TestPlayerHistoryFormatJSONMatchesDefault(t *testing.T) {
+	st := player.NewStateTracker()
+	st.SetCurrentSong(&models.Song{ID: "1", Title: "one"})
+	st.SetCurrentSong(&models.Song{ID: "2", Title: "two"})
+	h := playerRouter(&fakeQueueManager{}, fakeCounter{}, &fakeBroadcaster{}, st)
+	def := serve(t, h, http.MethodGet, "/v1/history", "", nil)
+	explicit := serve(t, h, http.MethodGet, "/v1/history?format=json", "", nil)
+	if explicit.Code != http.StatusOK || explicit.Body.String() != def.Body.String() {
+		t.Fatalf("format=json = %d %s, want %s", explicit.Code, explicit.Body.String(), def.Body.String())
 	}
 }
