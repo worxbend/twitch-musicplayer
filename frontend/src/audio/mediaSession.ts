@@ -16,14 +16,29 @@ export function getMediaSession(): MediaSessionLike | null {
   return navigator.mediaSession;
 }
 
+// Sets the OS track info. The cover goes in without type or sizes: covers can be JPEG or PNG at any size.
 export function updateMediaMetadata(
   session: MediaSessionLike | null,
-  song: { title: string; artist?: string } | null,
+  song: { title: string; artist?: string; coverUrl?: string } | null,
 ): void {
   if (!session || typeof MediaMetadata === 'undefined') return;
-  session.metadata = song
-    ? new MediaMetadata({ title: song.title, artist: song.artist || RADIO_NAME, album: RADIO_NAME })
-    : null;
+  if (!song) {
+    session.metadata = null;
+    return;
+  }
+  const init: MediaMetadataInit = {
+    title: song.title,
+    artist: song.artist || RADIO_NAME,
+    album: RADIO_NAME,
+    artwork: song.coverUrl ? [{ src: song.coverUrl }] : [],
+  };
+  try {
+    session.metadata = new MediaMetadata(init);
+  } catch (error) {
+    // The constructor rejects an artwork src it cannot parse; keep the title without the cover.
+    if (!(error instanceof TypeError)) throw error;
+    session.metadata = new MediaMetadata({ ...init, artwork: [] });
+  }
 }
 
 // The OS state for one <audio> element. An ended track reads as 'none', not 'paused',

@@ -19,10 +19,20 @@ class FakeMediaMetadata {
   title: string;
   artist: string;
   album: string;
-  constructor(init: { title: string; artist: string; album: string }) {
+  artwork: MediaImage[];
+  constructor(init: { title: string; artist: string; album: string; artwork: MediaImage[] }) {
     this.title = init.title;
     this.artist = init.artist;
     this.album = init.album;
+    this.artwork = init.artwork;
+  }
+}
+
+// Throws like a browser that cannot parse an artwork src.
+class BadArtworkMediaMetadata extends FakeMediaMetadata {
+  constructor(init: { title: string; artist: string; album: string; artwork: MediaImage[] }) {
+    if (init.artwork.length > 0) throw new TypeError('invalid artwork src');
+    super(init);
   }
 }
 
@@ -62,7 +72,23 @@ function fire(action: MediaSessionAction) {
 
 test('updateMediaMetadata sets title, artist and album', () => {
   updateMediaMetadata(session, { title: 'Rain', artist: 'Kai' });
-  assert.deepEqual({ ...session.metadata }, { title: 'Rain', artist: 'Kai', album: 'lofi radio' });
+  assert.deepEqual({ ...session.metadata }, { title: 'Rain', artist: 'Kai', album: 'lofi radio', artwork: [] });
+});
+
+test('updateMediaMetadata puts the cover URL in the artwork', () => {
+  updateMediaMetadata(session, { title: 'Rain', coverUrl: 'http://radio.test/v1/songs/1/cover' });
+  assert.deepEqual(session.metadata?.artwork, [{ src: 'http://radio.test/v1/songs/1/cover' }]);
+});
+
+test('updateMediaMetadata keeps the title when the artwork src is rejected', () => {
+  g.MediaMetadata = BadArtworkMediaMetadata;
+  updateMediaMetadata(session, { title: 'Rain', artist: 'Kai', coverUrl: 'http://[bad' });
+  assert.deepEqual({ ...session.metadata }, { title: 'Rain', artist: 'Kai', album: 'lofi radio', artwork: [] });
+});
+
+test('updateMediaMetadata rethrows a non-TypeError from MediaMetadata', () => {
+  g.MediaMetadata = class { constructor() { throw new RangeError('boom'); } };
+  assert.throws(() => updateMediaMetadata(session, { title: 'Rain' }), RangeError);
 });
 
 test('updateMediaMetadata falls back to the radio name for a missing artist', () => {

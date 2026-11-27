@@ -12,10 +12,20 @@ class FakeMediaMetadata {
   title: string;
   artist: string;
   album: string;
-  constructor(init: { title: string; artist: string; album: string }) {
+  artwork: MediaImage[];
+  constructor(init: { title: string; artist: string; album: string; artwork: MediaImage[] }) {
     this.title = init.title;
     this.artist = init.artist;
     this.album = init.album;
+    this.artwork = init.artwork;
+  }
+}
+
+// Throws like a browser that cannot parse an artwork src.
+class BadArtworkMediaMetadata extends FakeMediaMetadata {
+  constructor(init: { title: string; artist: string; album: string; artwork: MediaImage[] }) {
+    if (init.artwork.length > 0) throw new TypeError('invalid artwork src');
+    super(init);
   }
 }
 
@@ -109,7 +119,26 @@ test('a song change reports title, artist and cover and sets the session metadat
   start();
   client.song({ title: 'Rain', artist: 'Kai', coverUrl: '/cover.jpg' });
   assert.deepEqual(tracks, [['Rain', 'Kai', '/cover.jpg']]);
-  assert.deepEqual({ ...session.metadata }, { title: 'Rain', artist: 'Kai', album: 'lofi radio' });
+  assert.deepEqual(
+    { ...session.metadata },
+    { title: 'Rain', artist: 'Kai', album: 'lofi radio', artwork: [{ src: '/cover.jpg' }] },
+  );
+});
+
+test('a next song without a cover clears the artwork', () => {
+  start();
+  client.song({ title: 'Rain', coverUrl: '/cover.jpg' });
+  client.song({ title: 'Snow' });
+  assert.equal(session.metadata?.title, 'Snow');
+  assert.deepEqual(session.metadata?.artwork, []);
+});
+
+test('a cover the browser rejects still shows the title', () => {
+  g.MediaMetadata = BadArtworkMediaMetadata;
+  start();
+  client.song({ title: 'Rain', coverUrl: 'http://[bad' });
+  assert.equal(session.metadata?.title, 'Rain');
+  assert.deepEqual(session.metadata?.artwork, []);
 });
 
 test('a null song reports the placeholder and the artist fallback and clears the metadata', () => {
@@ -182,12 +211,13 @@ test('dispose clears the hooks, releases the session and disposes the client onc
 
 test('a null session leaves the OS media session alone and never throws', () => {
   const radio = start({ session: null });
-  client.song({ title: 'Rain' });
+  client.song({ title: 'Rain', coverUrl: '/cover.jpg' });
   audio.onPlayStateChange?.('playing');
   audio.onPositionChange?.(null);
   radio.dispose();
-  assert.deepEqual(tracks, [['Rain', 'radio', undefined]]);
+  assert.deepEqual(tracks, [['Rain', 'radio', '/cover.jpg']]);
   assert.deepEqual(mediaStates, ['playing', 'none']);
+  assert.equal(session.metadata, null);
   assert.equal(session.handlers.size, 0);
   assert.equal(client.disposals, 1);
 });
