@@ -101,7 +101,7 @@ Add `?ramp=` to any scene to change its palette:
 
 For example `/bars?ramp=EMBER` or `/mirror-overlay?ramp=NEON`.
 
-Two more query parameters work everywhere:
+Two more query parameters:
 
 | Parameter | Effect |
 |:--|:--|
