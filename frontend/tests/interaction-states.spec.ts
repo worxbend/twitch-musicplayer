@@ -24,14 +24,23 @@ test('keyboard skip link, shared navigation, and visible focus', async ({ page }
 
 test('failed actions report an error, then recover without losing the library', async ({ page }) => {
   let fail = false;
+  let served = 0;
+  let songLoads = 0;
   await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
   await page.route('**/v1/**', route => {
     if (fail) return route.fulfill({ status: 503, json: {} });
     const path = new URL(route.request().url()).pathname;
+    served++;
+    if (path === '/v1/songs') songLoads++;
     return route.fulfill({ json: path === '/v1/songs' ? {songs: [song]} : path === '/v1/queue' ? {items: []} : {current_song: song} });
   });
   await page.goto('/admin');
   await expect(page.locator('.song-item')).toHaveCount(1);
+  await expect(page.getByText('Backend connected')).toBeVisible();
+  // Startup sends 10 requests: 4 from onMount, 1 from the search debounce, 5 from the socket open.
+  // A late one answered with 503 would wipe the library, so let all of them land first.
+  await expect.poll(() => songLoads).toBe(2);
+  await expect.poll(() => served).toBe(10);
   fail = true;
   await page.getByRole('button', {name: 'Add Midnight compiler to queue'}).click();
   await expect(page.getByRole('status')).toContainText('Action failed. Check the backend connection');
@@ -146,8 +155,10 @@ test('Reset clears the search and keeps focus in the search box', async ({ page 
 
 test('each Retry moves focus to its panel heading, not to the page body', async ({ page }) => {
   let fail = true;
+  let served = 0;
   await page.routeWebSocket(/\/ws(\?.*)?$/, () => {});
   await page.route('**/v1/**', route => {
+    served++;
     const path = new URL(route.request().url()).pathname;
     if (fail && ['/v1/songs', '/v1/queue', '/v1/history'].includes(path)) return route.fulfill({ status: 503, json: {} });
     return route.fulfill({ json: path === '/v1/songs' ? {songs: [song]} : path === '/v1/player' ? {current_song: song} : {items: []} });
@@ -156,6 +167,9 @@ test('each Retry moves focus to its panel heading, not to the page body', async 
   await expect(page.getByText('Library unavailable', { exact: true })).toBeVisible();
   await expect(page.getByText('Queue unavailable', { exact: true })).toBeVisible();
   await expect(page.getByText('History unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('Backend connected')).toBeVisible();
+  // Same 10 startup requests as above; a late one served after the flip would hide a Retry button.
+  await expect.poll(() => served).toBe(10);
   fail = false;
   await page.getByRole('button', {name: 'Retry connection'}).click();
   await expect(page.locator('#library-heading')).toBeFocused();
