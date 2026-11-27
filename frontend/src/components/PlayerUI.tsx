@@ -40,6 +40,7 @@ export function PlayerUI(props: Props) {
   const [fraction, setFraction] = createSignal(0);
   const [elapsed, setElapsed] = createSignal('0:00');
   const [remaining, setRemaining] = createSignal('0:00');
+  const [valueText, setValueText] = createSignal('No track loaded');
   const [volume, setVolume] = createSignal(loadVolume(browserStorage()));
   const [muted, setMuted] = createSignal(false);
   const storeVolume = (next: number) => {
@@ -78,7 +79,8 @@ export function PlayerUI(props: Props) {
         setFraction(Math.min(1, Math.max(0, progress.currentTime / progress.duration)));
         setElapsed(fmtTime(progress.currentTime));
         setRemaining('-' + fmtTime(progress.duration - progress.currentTime));
-      } else { setFraction(0); setElapsed('0:00'); setRemaining('0:00'); }
+        setValueText(`${fmtTime(progress.currentTime)} of ${fmtTime(progress.duration)}`);
+      } else { setFraction(0); setElapsed('0:00'); setRemaining('0:00'); setValueText('No track loaded'); }
     };
     tick();
     const interval = window.setInterval(tick, 250);
@@ -106,7 +108,7 @@ export function PlayerUI(props: Props) {
         <section class="player-deck" aria-label="Current track">
           <div class="deck-art" aria-hidden="true"><span /></div>
           <div class="np-info"><span class="np-label">{status().live ? 'Now playing' : 'Current track'}</span><span id="np-title" title={props.trackName()}>{props.trackName()}</span><span id="np-artist">{props.trackArtist()}</span></div>
-          <div class="np-progress"><div class="np-times"><span>{elapsed()}</span><span>{remaining()}</span></div><div class="np-bar" role="progressbar" aria-label="Track progress" aria-valuenow={Math.round(fraction() * 100)} aria-valuemin={0} aria-valuemax={100}><div class="np-bar-fill" style={{width: `${fraction() * 100}%`}} /></div><span class="progress-caption">Continuous playback</span></div>
+          <div class="np-progress"><div class="np-times"><span>{elapsed()}</span><span>{remaining()}</span></div><div class="np-bar" role="progressbar" aria-label="Track progress" aria-valuenow={Math.round(fraction() * 100)} aria-valuetext={valueText()} aria-valuemin={0} aria-valuemax={100}><div class="np-bar-fill" style={{width: `${fraction() * 100}%`}} /></div><span class="progress-caption">Continuous playback</span></div>
           <div class="np-volume"><button type="button" class="btn btn-icon" aria-pressed={muted()} aria-label="Mute" title="Mute (M)" onClick={() => setMuted(m => !m)}>{muted() ? '×' : '♪'}</button><input type="range" min="0" max="100" step="1" aria-label="Volume" title="Volume (- / +)" value={Math.round(volume() * 100)} onInput={e => unmuteAt(Number(e.currentTarget.value) / 100)} /></div>
           <a class="btn deck-link" href="/scenes">Change scene ↗</a>
         </section>

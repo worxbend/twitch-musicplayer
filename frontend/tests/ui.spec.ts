@@ -302,12 +302,14 @@ test('audio unlock works by keyboard and reports actual playback', async ({ page
   await page.goto('/');
   const enable = page.getByRole('button', { name: 'Enable audio' });
   await expect(enable).toBeVisible();
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuetext', 'No track loaded');
   await enable.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Starting audio' })).toHaveAttribute('aria-disabled', 'true');
   await expect(page.locator('.status')).toHaveText('On air', {timeout: 10000});
   await expect(page.locator('#np-title')).toHaveText('Midnight compiler');
   await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /[1-9]/);
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuetext', /^\d+:\d{2} of \d+:\d{2}$/);
 });
 
 test('player status stays in one live region from blocked to on air', async ({ page }) => {
