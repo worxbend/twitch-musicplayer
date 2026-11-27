@@ -432,7 +432,7 @@ func (w *Watcher) registerWhenSettled(ctx context.Context, path string) {
 
 // awaitSettled waits for a free settle slot, then for path to settle. The slot
 // is released as soon as the wait ends: the cap bounds stat polling, and
-// registerFile is short and runs once per file anyway.
+// registerFile is short.
 func (w *Watcher) awaitSettled(ctx context.Context, path string) error {
 	select {
 	case w.settleSem <- struct{}{}:
