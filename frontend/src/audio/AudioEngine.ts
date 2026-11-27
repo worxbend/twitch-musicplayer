@@ -139,14 +139,20 @@ export class AudioEngine {
 
   async resume() {
     if (this._disposed) return;
-    if (this.ctx && this.ctx.state === 'suspended') {
+    if (this._contextNeedsResume()) {
       this._assertCanStartAudio();
-      await this.ctx.resume();
+      await this.ctx!.resume();
     }
   }
 
+  // Safari/iOS reports 'interrupted' after a call, Siri or a lock; AudioContextState lacks it.
+  private _contextNeedsResume(): boolean {
+    const state = this.ctx?.state as string | undefined;
+    return state === 'suspended' || state === 'interrupted';
+  }
+
   private _assertCanStartAudio() {
-    if (this.ctx && this.ctx.state !== 'suspended') return;
+    if (this.ctx && !this._contextNeedsResume()) return;
     if (this._allowAutoplay) return;
     if (this._hasUserActivation()) return;
     // Same name as the browser's own autoplay rejection, so callers can tell
@@ -527,6 +533,9 @@ export class AudioEngine {
   play(): boolean {
     const active = this._activeAudioElement();
     if (this.mode === 'backend' && active?.paused && !active.ended && active.src) {
+      // The element routes through the context, so a suspended context plays silence.
+      // Called from a user gesture: resume directly, skipping the autoplay assertion.
+      if (this._contextNeedsResume()) void this.ctx!.resume().catch(() => {});
       void active.play().catch(() => { this.playing = false; });
       this.playing = true;
     }

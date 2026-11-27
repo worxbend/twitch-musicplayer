@@ -99,7 +99,15 @@ class FakeAudioContext {
     return new FakeNode();
   }
 
-  async resume() {}
+  resumeCalls = 0;
+  resumeError: Error | null = null;
+  resume() {
+    this.resumeCalls++;
+    if (this.resumeError) return Promise.reject(this.resumeError);
+    this.state = 'running';
+    return Promise.resolve();
+  }
+
   async close() {
     this.state = 'closed';
   }
@@ -524,6 +532,80 @@ function inactiveElement() {
   assert.ok(el, 'no inactive channel');
   return el;
 }
+
+// Leaves the first track loaded and paused under a context in `state`.
+async function pauseUnderContext(state: string) {
+  const el = await playFirstTrack();
+  engine.pause();
+  ctx().state = state;
+  ctx().resumeCalls = 0;
+  return el;
+}
+
+for (const state of ['suspended', 'interrupted']) {
+  test(`play() resumes the element and a context in state ${state}`, async () => {
+    const el = await pauseUnderContext(state);
+    const play = mock.method(el, 'play');
+
+    assert.equal(engine.play(), true);
+    assert.equal(ctx().resumeCalls, 1);
+    assert.equal(play.mock.callCount(), 1);
+    assert.equal(ctx().state, 'running');
+  });
+}
+
+test('play() leaves a running context alone', async () => {
+  await pauseUnderContext('running');
+
+  assert.equal(engine.play(), true);
+  assert.equal(ctx().resumeCalls, 0);
+});
+
+test('play() survives a rejected context resume without an unhandled rejection', async () => {
+  const el = await pauseUnderContext('interrupted');
+  ctx().resumeError = new DOMException('denied', 'NotAllowedError');
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    assert.equal(engine.play(), true);
+    await flush();
+    await flush();
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+
+  assert.equal(ctx().resumeCalls, 1);
+  assert.equal(el.paused, false);
+  assert.deepEqual(unhandled, []);
+});
+
+test('playStream resumes an interrupted context before the element plays', async () => {
+  await playFirstTrack();
+  ctx().state = 'interrupted';
+  ctx().resumeCalls = 0;
+  const order: string[] = [];
+  const resume = ctx().resume.bind(ctx());
+  mock.method(ctx(), 'resume', () => {
+    order.push('resume');
+    return resume();
+  });
+  const next = inactiveElement();
+  const elementPlay = next.play.bind(next);
+  mock.method(next, 'play', () => {
+    order.push('play');
+    return elementPlay();
+  });
+
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+  ctx().currentTime = 20;
+  mock.timers.tick(FADE_MS);
+  await second;
+
+  assert.deepEqual(order, ['resume', 'play']);
+  assert.equal(ctx().state, 'running');
+});
 
 test('preloadNext loads straight into the inactive channel when no fade runs', async () => {
   const first = await playFirstTrack();
