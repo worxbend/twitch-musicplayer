@@ -187,7 +187,7 @@ export function AdminApp() {
         await navigator.clipboard.writeText(text);
         if (disposed) return;
         setSetlistFallback(null);
-        showNotification(`✓ Setlist copied: ${count} tracks`);
+        showNotification(`✓ Setlist copied: ${count} ${count === 1 ? 'track' : 'tracks'}`);
       } catch {
         if (disposed) return;
         setSetlistFallback(text);
