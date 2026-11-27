@@ -36,6 +36,15 @@ services:
       # Comma-separated frontend addresses, as the browser sees them, whose
       # pages may control the station. Pages from anywhere else are refused.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-3000},http://127.0.0.1:${FRONTEND_PORT:-3000}}
+    # Writes go only to the /data volume. A custom obs.now_playing_file must
+    # sit on a writable mounted path too.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 15s

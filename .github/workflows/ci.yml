@@ -157,7 +157,10 @@ jobs:
       - name: smoke backend
         run: |
           set -euo pipefail
-          docker run -d --name be -p 8080:8080 -e BASE_URL=http://127.0.0.1:8080 --tmpfs /music lofi-backend:ci
+          # Same hardening as the compose files: read-only root, no capabilities.
+          docker run -d --name be -p 8080:8080 -e BASE_URL=http://127.0.0.1:8080 \
+            --read-only --tmpfs /tmp --tmpfs /music -v lofi-ci-data:/data \
+            --cap-drop ALL --security-opt no-new-privileges:true lofi-backend:ci
           for _ in $(seq 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8080/health
           test "$(docker exec be id -u)" = 10001
@@ -168,12 +171,23 @@ jobs:
             curl -sS -D h.txt -o /dev/null "http://127.0.0.1:8080$p"
             grep -i '^x-content-type-options: nosniff' h.txt
           done
+          # The first health probe runs only after the 15s interval.
+          for _ in $(seq 60); do
+            test "$(docker inspect -f '{{.State.Health.Status}}' be)" = healthy && break
+            sleep 1
+          done
+          test "$(docker inspect -f '{{.State.Health.Status}}' be)" = healthy
       - name: smoke frontend
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
-          docker run -d --name fe -p 3000:80 -e BACKEND_URL=https://radio.example lofi-frontend:ci
+          # No capabilities: nginx must bind port 80 as uid 101 without them.
+          docker run -d --name fe -p 3000:80 -e BACKEND_URL=https://radio.example \
+            --cap-drop ALL --security-opt no-new-privileges:true lofi-frontend:ci
           for _ in $(seq 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/ && break; sleep 1; done
+          test "$(docker exec fe id -u)" = 101
+          # The nginx master (pid 1) must not run as root either.
+          test "$(docker exec fe awk '/^Uid:/{print $2}' /proc/1/status)" = 101
           curl -fsS http://127.0.0.1:3000/ > index.html
           curl -fsS -D headers.txt http://127.0.0.1:3000/config.js > config.js
           grep -F 'backendUrl: "https://radio.example"' config.js
@@ -207,8 +221,31 @@ jobs:
             curl -sS -D nosniff-headers.txt -o /dev/null "http://127.0.0.1:3000$path"
             grep -i '^x-content-type-options: nosniff' nosniff-headers.txt
           done
+          for _ in $(seq 60); do
+            test "$(docker inspect -f '{{.State.Health.Status}}' fe)" = healthy && break
+            sleep 1
+          done
+          test "$(docker inspect -f '{{.State.Health.Status}}' fe)" = healthy
+      - name: smoke compose hardening
+        run: |
+          set -euo pipefail
+          docker tag lofi-backend:ci lofi-radio-backend:local
+          docker tag lofi-frontend:ci lofi-radio-frontend:local
+          mkdir -p "$RUNNER_TEMP/music"
+          MUSIC_DIR="$RUNNER_TEMP/music" BACKEND_PORT=18080 FRONTEND_PORT=13000 \
+            docker compose -f docker-compose.yml up -d --no-build --pull never --wait --wait-timeout 120
+          be="$(docker compose -f docker-compose.yml ps -q backend)"
+          fe="$(docker compose -f docker-compose.yml ps -q frontend)"
+          test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$be")" = true
+          docker inspect -f '{{.HostConfig.CapDrop}}' "$be" | grep -w ALL
+          test "$(docker inspect -f '{{.State.Health.Status}}' "$be")" = healthy
+          test "$(docker inspect -f '{{.State.Health.Status}}' "$fe")" = healthy
       - name: container logs
         if: failure()
         run: |
           docker logs be || true
           docker logs fe || true
+          docker compose -f docker-compose.yml logs || true
+      - name: tear down compose
+        if: always()
+        run: docker compose -f docker-compose.yml down -v || true

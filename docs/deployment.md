@@ -146,6 +146,16 @@ in backups.
 Your music is mounted read-only and is never written to. Delete the volume with
 `docker compose down -v` to start the rotation fresh.
 
+### 🔒 Container hardening
+
+- The frontend image runs nginx as the unprivileged `nginx` user (uid 101) on container
+  port 80. Binding port 80 without root relies on Docker's default
+  `net.ipv4.ip_unprivileged_port_start=0` sysctl in the container. Under host networking
+  or a stricter runtime, publish another port or grant `NET_BIND_SERVICE`.
+- The backend service in the compose files runs with a read-only root filesystem, a
+  `/tmp` tmpfs, no capabilities and `no-new-privileges`. It writes only to the `/data`
+  volume, so a custom `obs.now_playing_file` must point into a writable mounted directory.
+
 ---
 
 ## 🎛️ Backend Build
