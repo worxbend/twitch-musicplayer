@@ -14,6 +14,7 @@ export class Ramp {
   private readonly stops: Stop[];
 
   constructor(stops: Stop[]) {
+    if (stops.length === 0) throw new Error('Ramp needs at least one stop');
     // Sorted once so sampling can assume ascending order.
     this.stops = [...stops].sort((a, b) => a.at - b.at);
   }
@@ -21,7 +22,8 @@ export class Ramp {
   /** Colour at position t (0..1), linearly interpolated between stops. */
   sample(t: number): RGB {
     const s = this.stops;
-    const x = t < 0 ? 0 : t > 1 ? 1 : t;
+    // NaN fails every comparison, so without its own case it would sample the last stop.
+    const x = Number.isNaN(t) ? 0 : t < 0 ? 0 : t > 1 ? 1 : t;
 
     if (x <= s[0].at) return s[0].rgb;
     if (x >= s[s.length - 1].at) return s[s.length - 1].rgb;
