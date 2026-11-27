@@ -3,9 +3,14 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 // fakeEnv returns a getenv backed by a map, so tests never touch process env.
@@ -265,6 +270,73 @@ func TestShippedConfigsValidate(t *testing.T) {
 				t.Fatalf("loadFrom %s: %v", name, err)
 			}
 		})
+	}
+}
+
+// acceptedKeys lists every "section.key" the loader decodes, read from the
+// toml tags on Config and its section structs.
+func acceptedKeys(typ reflect.Type) []string {
+	var keys []string
+	for section := range typ.Fields() {
+		name := section.Tag.Get("toml")
+		if name == "" || name == "-" || section.Type.Kind() != reflect.Struct {
+			continue
+		}
+		for field := range section.Type.Fields() {
+			if key := field.Tag.Get("toml"); key != "" && key != "-" {
+				keys = append(keys, name+"."+key)
+			}
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// commentedSetting matches a commented-out table header or key assignment,
+// so an optional section such as [obs] still counts as documented.
+var commentedSetting = regexp.MustCompile(`^#\s*(\[[a-z_]+\]|[a-z_]+\s*=)`)
+
+// documentedKeys lists every "section.key" the file at path shows, set or
+// commented out.
+func documentedKeys(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	for i, line := range lines {
+		if commentedSetting.MatchString(line) {
+			lines[i] = strings.TrimLeft(line, "# \t")
+		}
+	}
+	var decoded map[string]any
+	md, err := toml.Decode(strings.Join(lines, "\n"), &decoded)
+	if err != nil {
+		t.Fatalf("decode %s with comments stripped: %v", path, err)
+	}
+	var keys []string
+	for _, key := range md.Keys() {
+		if len(key) == 2 {
+			keys = append(keys, key.String())
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func TestExampleConfigDocumentsEveryKey(t *testing.T) {
+	accepted := acceptedKeys(reflect.TypeFor[Config]())
+	documented := documentedKeys(t, filepath.Join("..", "..", "config.example.toml"))
+	for _, key := range accepted {
+		if !slices.Contains(documented, key) {
+			t.Errorf("config.example.toml does not document accepted key %s", key)
+		}
+	}
+	for _, key := range documented {
+		if !slices.Contains(accepted, key) {
+			t.Errorf("config.example.toml documents %s, which the loader rejects", key)
+		}
 	}
 }
 
