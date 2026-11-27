@@ -192,7 +192,7 @@ Controls **which** song is chosen. Set with `shuffle.strategy`.
 |:--|:--|:--|
 | `round_robin` | Plays every song once before repeating any | **Default.** Fair rotation |
 | `weighted_history` | Same cycle, but weights recently played songs down using `recent_window` | Large libraries |
-| `least_played` | Prefers songs not yet played this cycle, falling back to the full pool | Fresh imports |
+| `least_played` | Picks among the songs with the fewest plays since startup; ties prefer songs not yet played this cycle. Counts reset on restart | New imports get airtime first |
 | `random` | Pure random; may repeat immediately | Chaos 😈 |
 
 Every strategy except `random` also refuses to play two songs by the same artist

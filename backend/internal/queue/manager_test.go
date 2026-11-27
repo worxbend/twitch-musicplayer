@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1014,4 +1015,129 @@ func TestCycleResetSizesTrackerForLibrary(t *testing.T) {
 	if got := strings.Join(tracker.calls, ","); got != "ensure(3),reset" {
 		t.Fatalf("tracker calls = %q, want %q", got, "ensure(3),reset")
 	}
+}
+
+// leastPlayedRuns repeats the least_played checks on fresh managers, so a
+// pass is not random luck.
+const leastPlayedRuns = 50
+
+// playN calls NextSong n times and returns the picked IDs in order.
+func playN(t *testing.T, m *Manager, n int) []string {
+	t.Helper()
+	ids := make([]string, n)
+	for i := range ids {
+		s, err := m.NextSong(context.Background())
+		if err != nil {
+			t.Fatalf("NextSong[%d]: %v", i, err)
+		}
+		ids[i] = s.ID
+	}
+	return ids
+}
+
+// TestLeastPlayedPicksNewImportFirst: after one full cycle and one more play,
+// the Bloom cycle has restarted, so only the play count tells the fresh import
+// apart from the songs not yet replayed. least_played must pick it next.
+func TestLeastPlayedPicksNewImportFirst(t *testing.T) {
+	for run := 0; run < leastPlayedRuns; run++ {
+		m, songRepo := buildManagerWithSongs(t, autoRefillCfg(ShuffleLeastPlayed), library(3))
+		playN(t, m, 4)
+		if err := songRepo.Create(context.Background(), song("new", "New", "Artist new")); err != nil {
+			t.Fatalf("add song: %v", err)
+		}
+		if got := playN(t, m, 1)[0]; got != "new" {
+			t.Fatalf("run %d: picked %s, want the new import", run, got)
+		}
+	}
+}
+
+// TestLeastPlayedSkipsMostPlayedSong: a song played twice waits until every
+// song played once has caught up, even though the Bloom cycle just restarted.
+func TestLeastPlayedSkipsMostPlayedSong(t *testing.T) {
+	ctx := context.Background()
+	for run := 0; run < leastPlayedRuns; run++ {
+		m := buildManager(t, autoRefillCfg(ShuffleLeastPlayed), sameArtistLibrary(4))
+		playN(t, m, 4)
+		if _, err := m.AddToQueue(ctx, "s0", models.QueueSourceManual); err != nil {
+			t.Fatalf("AddToQueue: %v", err)
+		}
+		if got := playN(t, m, 1)[0]; got != "s0" {
+			t.Fatalf("run %d: manual entry played %s, want s0", run, got)
+		}
+		if got := playN(t, m, 3); slices.Contains(got, "s0") {
+			t.Fatalf("run %d: picks %v include s0 (2 plays) while others had 1", run, got)
+		}
+	}
+}
+
+// TestLeastPlayedZeroCountsFollowBloomCycle: with no plays counted (as after a
+// restart), the persisted Bloom marks still decide, as in round_robin.
+func TestLeastPlayedZeroCountsFollowBloomCycle(t *testing.T) {
+	for run := 0; run < leastPlayedRuns; run++ {
+		m := buildManager(t, autoRefillCfg(ShuffleLeastPlayed), sameArtistLibrary(5))
+		for _, id := range []string{"s0", "s1", "s2"} {
+			m.tracker.MarkPlayed(id)
+		}
+		got := playN(t, m, 2)
+		slices.Sort(got)
+		if !slices.Equal(got, []string{"s3", "s4"}) {
+			t.Fatalf("run %d: picks %v, want the Bloom-unplayed s3 and s4", run, got)
+		}
+	}
+}
+
+// TestLeastPlayedAvoidsLastArtist: artist adjacency still applies inside the
+// lowest-count pool.
+func TestLeastPlayedAvoidsLastArtist(t *testing.T) {
+	for run := 0; run < leastPlayedRuns; run++ {
+		m := buildManager(t, autoRefillCfg(ShuffleLeastPlayed), []*models.Song{
+			song("x", "X", "Artist X"), song("y", "Y", "Artist Y"), song("z", "Z", "Artist Z"),
+		})
+		m.playCounts["z"] = 1
+		m.lastArtist = "Artist X"
+		if got := playN(t, m, 1)[0]; got != "y" {
+			t.Fatalf("run %d: picked %s, want y (x repeats the artist, z has more plays)", run, got)
+		}
+	}
+}
+
+func TestLeastPlayedCountsStayBounded(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("RemoveSong drops the count", func(t *testing.T) {
+		m := buildManager(t, autoRefillCfg(ShuffleLeastPlayed), library(2))
+		id := playN(t, m, 1)[0]
+		if m.playCounts[id] != 1 {
+			t.Fatalf("count for %s = %d, want 1", id, m.playCounts[id])
+		}
+		if _, err := m.RemoveSong(ctx, id); err != nil {
+			t.Fatalf("RemoveSong: %v", err)
+		}
+		if _, ok := m.playCounts[id]; ok {
+			t.Fatalf("count for %s survived RemoveSong", id)
+		}
+	})
+
+	t.Run("pick prunes songs gone from the library but keeps blocked ones", func(t *testing.T) {
+		m, _, _ := buildBlockingManager(t, autoRefillCfg(ShuffleLeastPlayed),
+			append(library(2), song("blk", "Blocked", "Artist blk")), "blk")
+		m.playCounts["gone"] = 1
+		m.playCounts["blk"] = 1
+		m.playCounts["s0"] = 1
+		playN(t, m, 1)
+		if _, ok := m.playCounts["gone"]; ok {
+			t.Fatal("count for a song gone from the library was kept")
+		}
+		if m.playCounts["blk"] != 1 {
+			t.Fatalf("count for blocked song = %d, want 1", m.playCounts["blk"])
+		}
+	})
+
+	t.Run("other strategies count nothing", func(t *testing.T) {
+		m := buildManager(t, autoRefillCfg(ShuffleRoundRobin), library(2))
+		playN(t, m, 3)
+		if len(m.playCounts) != 0 {
+			t.Fatalf("round_robin kept counts %v", m.playCounts)
+		}
+	})
 }

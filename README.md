@@ -355,7 +355,7 @@ preload_size = 3
 |:--|:--|:--|
 | `round_robin` | Plays every track once before repeating any | **Default.** Fair rotation |
 | `weighted_history` | Same, but biases away from recently played tracks | Large libraries |
-| `least_played` | Always prefers never-played tracks | Fresh imports |
+| `least_played` | Picks among the tracks with the fewest plays since startup; ties prefer tracks not yet played this cycle. Counts reset on restart | New imports get airtime first |
 | `random` | Pure random, no diversity shaping | Chaos 😈 |
 
 All strategies except `random` also refuse to play two songs by the same artist

@@ -143,6 +143,9 @@ type Manager struct {
 	// previous rotation cycle completed. They belong to that cycle, so playing
 	// them must not mark them played in the new one.
 	carryover map[string]struct{}
+	// playCounts counts plays per song ID since startup, for least_played
+	// only. Bounded by pruneCounts and RemoveSong.
+	playCounts map[string]uint32
 }
 
 // maxRecentHistory bounds the recent-play ring buffer regardless of window size.
@@ -164,7 +167,7 @@ func New(songs SongRepository, tracker PlayedTracker, queue QueueRepository, cfg
 			cfg.Fill.PreloadSize = def.Fill.PreloadSize
 		}
 	}
-	return &Manager{songs: songs, tracker: tracker, queue: queue, blocklist: cfg.Blocklist, cfg: cfg, carryover: map[string]struct{}{}}
+	return &Manager{songs: songs, tracker: tracker, queue: queue, blocklist: cfg.Blocklist, cfg: cfg, carryover: map[string]struct{}{}, playCounts: map[string]uint32{}}
 }
 
 // InitialQueueTarget returns the configured queue depth to prepare before playback starts.
@@ -305,13 +308,17 @@ func (m *Manager) dequeueLive(ctx context.Context) (*models.Song, error) {
 	}
 }
 
-// recordPlay updates the recency history and last-artist tracking.
+// recordPlay updates the recency history, last-artist tracking and, for
+// least_played, the play count.
 // Must be called with m.mu held.
 func (m *Manager) recordPlay(song *models.Song) {
 	if song == nil {
 		return
 	}
 	m.lastArtist = strings.TrimSpace(song.Artist)
+	if m.cfg.Shuffle.Strategy == ShuffleLeastPlayed {
+		m.playCounts[song.ID]++
+	}
 	m.recent = append(m.recent, song.ID)
 	if len(m.recent) > maxRecentHistory {
 		m.recent = m.recent[len(m.recent)-maxRecentHistory:]
@@ -418,6 +425,7 @@ func (m *Manager) autoSelect(ctx context.Context) (*models.Song, error) {
 		return nil, ErrLibraryEmpty
 	}
 
+	m.pruneCounts(allSongs)
 	m.resetCycleIfComplete(allSongs, nil)
 	return m.pickByStrategy(allSongs, m.lastArtist, len(allSongs))
 }
@@ -482,15 +490,53 @@ func (m *Manager) pickByStrategy(songs []*models.Song, avoidArtist string, total
 		return m.pick(unplayed, avoidArtist, total), nil
 
 	case ShuffleLeastPlayed:
-		// Prefer unplayed songs; fall back to the full pool when all played.
-		unplayed := filterUnplayed(songs, m.tracker)
-		if len(unplayed) > 0 {
-			return m.pick(unplayed, avoidArtist, total), nil
+		// Fewest plays since startup first; ties prefer songs not yet played
+		// this cycle. Counts live in memory and reset on restart, so after a
+		// restart this behaves like round_robin over the persisted Bloom cycle.
+		// New imports start at zero and jump ahead until they catch up.
+		pool := m.leastPlayed(songs)
+		if unplayed := filterUnplayed(pool, m.tracker); len(unplayed) > 0 {
+			pool = unplayed
 		}
-		return m.pick(songs, avoidArtist, total), nil
+		return m.pick(pool, avoidArtist, total), nil
 
 	default:
 		return songs[rand.Intn(len(songs))], nil //nolint:gosec
+	}
+}
+
+// leastPlayed returns the songs with the lowest play count (missing = 0).
+// Must be called with m.mu held.
+func (m *Manager) leastPlayed(songs []*models.Song) []*models.Song {
+	lowest := m.playCounts[songs[0].ID]
+	for _, s := range songs[1:] {
+		lowest = min(lowest, m.playCounts[s.ID])
+	}
+	out := make([]*models.Song, 0, len(songs))
+	for _, s := range songs {
+		if m.playCounts[s.ID] == lowest {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// pruneCounts drops play counts for songs that left the rotation, keeping
+// blocked songs' counts so an unblocked song does not jump the line. Counts
+// exist only for played songs, so the pass runs only once the map outgrows the
+// rotation. Must be called with m.mu held.
+func (m *Manager) pruneCounts(rotation []*models.Song) {
+	if len(m.playCounts) <= len(rotation) {
+		return
+	}
+	live := make(map[string]struct{}, len(rotation))
+	for _, s := range rotation {
+		live[s.ID] = struct{}{}
+	}
+	for id := range m.playCounts {
+		if _, ok := live[id]; !ok && !m.isBlocked(id) {
+			delete(m.playCounts, id)
+		}
 	}
 }
 
@@ -578,6 +624,7 @@ func (m *Manager) autoSelectExcluding(ctx context.Context, queued map[string]str
 	if len(allSongs) == 0 {
 		return nil, ErrLibraryEmpty
 	}
+	m.pruneCounts(allSongs)
 	m.resetCycleIfComplete(allSongs, queued)
 
 	filtered := make([]*models.Song, 0, len(allSongs))
@@ -742,11 +789,13 @@ func (m *Manager) ClearQueue(ctx context.Context) error {
 	return nil
 }
 
-// RemoveSong purges every queued entry for songID, e.g. after its file was
-// deleted from disk, and reports how many entries were removed.
+// RemoveSong purges every queued entry and the play count for songID, e.g.
+// after its file was deleted from disk, and reports how many entries were
+// removed.
 func (m *Manager) RemoveSong(ctx context.Context, songID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	delete(m.playCounts, songID)
 	return m.queue.RemoveBySongID(ctx, songID)
 }
 
