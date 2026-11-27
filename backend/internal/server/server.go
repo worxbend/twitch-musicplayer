@@ -63,9 +63,22 @@ func logExcept(paths ...string) func(http.Handler) http.Handler {
 	}
 }
 
+// noSniff stops browsers from guessing a content type, so a response such as
+// a JSON error or the plain-text now-playing feed is never run as script or
+// rendered as HTML.
+func noSniff(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func buildRoutes(opts Options) http.Handler {
 	allowOrigin := newOriginPolicy(opts.AllowedOrigins, opts.BaseURL)
 	r := chi.NewRouter()
+	// First, so 404/405, CORS preflights, foreign-write 403s and recovered
+	// panics carry the header too.
+	r.Use(noSniff)
 	r.Use(logExcept("/health"))
 	r.Use(middleware.Recoverer)
 	// No credentials: no endpoint uses cookies or HTTP auth.

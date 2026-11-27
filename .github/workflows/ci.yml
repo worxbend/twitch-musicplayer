@@ -163,6 +163,11 @@ jobs:
           test "$(docker exec be id -u)" = 10001
           # The Bloom autosave target must be writable by the non-root user.
           docker exec be touch /data/probe
+          # Every response, errors included, must forbid content sniffing.
+          for p in /health /openapi.yaml /no-such-path; do
+            curl -sS -D h.txt -o /dev/null "http://127.0.0.1:8080$p"
+            grep -i '^x-content-type-options: nosniff' h.txt
+          done
       - name: smoke frontend
         run: |
           set -euo pipefail
@@ -196,6 +201,12 @@ jobs:
           test -n "$asset"
           curl -fsS -D asset-headers.txt -o /dev/null "http://127.0.0.1:3000$asset"
           grep -i '^cache-control:.*immutable' asset-headers.txt
+          # Every location must forbid content sniffing, including the /admin/
+          # redirect itself (no -L).
+          for path in / /config.js /admin /admin.html "$asset" /admin/; do
+            curl -sS -D nosniff-headers.txt -o /dev/null "http://127.0.0.1:3000$path"
+            grep -i '^x-content-type-options: nosniff' nosniff-headers.txt
+          done
       - name: container logs
         if: failure()
         run: |

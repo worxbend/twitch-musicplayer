@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5/middleware"
+
+	"lofi-radio-backend/internal/api"
+	"lofi-radio-backend/internal/repository"
 )
 
 func serveHealth(t *testing.T, method string) *httptest.ResponseRecorder {
@@ -85,5 +88,52 @@ func TestOtherRoutesAreLogged(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "/openapi.yaml") {
 		t.Fatalf("request log = %q, want an /openapi.yaml entry", buf.String())
+	}
+}
+
+// Every response, including errors raised before routing, must stop browsers
+// from sniffing a content type.
+func TestEveryResponseSendsNoSniff(t *testing.T) {
+	routes := buildRoutes(Options{
+		Songs:          api.NewSongsHandler(repository.NewMemSongRepo(), t.TempDir()),
+		BaseURL:        "http://localhost:8080",
+		AllowedOrigins: []string{frontendOrigin},
+	})
+	preflight := func(r *http.Request) {
+		r.Header.Set("Origin", frontendOrigin)
+		r.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	}
+	foreign := func(r *http.Request) { r.Header.Set("Origin", foreignOrigin) }
+
+	tests := []struct {
+		name, method, path string
+		prepare            func(*http.Request)
+		wantStatus         int
+	}{
+		{name: "health get", method: http.MethodGet, path: "/health", wantStatus: http.StatusOK},
+		{name: "health head", method: http.MethodHead, path: "/health", wantStatus: http.StatusOK},
+		{name: "openapi spec", method: http.MethodGet, path: "/openapi.yaml", wantStatus: http.StatusOK},
+		{name: "swagger page", method: http.MethodGet, path: "/swagger", wantStatus: http.StatusOK},
+		{name: "json api", method: http.MethodGet, path: "/v1/songs", wantStatus: http.StatusOK},
+		{name: "not found", method: http.MethodGet, path: "/no-such-path", wantStatus: http.StatusNotFound},
+		{name: "cors preflight", method: http.MethodOptions, path: "/v1/songs", prepare: preflight, wantStatus: http.StatusOK},
+		{name: "foreign write", method: http.MethodPost, path: "/v1/queue", prepare: foreign, wantStatus: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			if tt.prepare != nil {
+				tt.prepare(req)
+			}
+			rec := httptest.NewRecorder()
+			routes.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+		})
 	}
 }
