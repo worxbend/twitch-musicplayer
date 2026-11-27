@@ -16,6 +16,11 @@ const shutdownReason = "server shutting down"
 // a player that reconnects mid-track keeps it.
 const lastPlayerClearGrace = 5 * time.Second
 
+// dryQueueClearGrace is how long now-playing survives a song_finished that
+// found no next song. The player sends song_finished at the crossfade lead,
+// about 3 s before the audio ends; the extra second is margin.
+const dryQueueClearGrace = 4 * time.Second
+
 // Hub manages all active WebSocket connections.
 type Hub struct {
 	clients   map[*Client]struct{}
@@ -34,14 +39,21 @@ type Hub struct {
 	// pending (guarded by mu).
 	clearGrace   time.Duration
 	pendingClear *time.Timer
+
+	// dryClearGrace is the delay before a song_finished on a dry queue
+	// clears now-playing. pendingDryClear is that scheduled clear, nil when
+	// none is pending (guarded by mu).
+	dryClearGrace   time.Duration
+	pendingDryClear *time.Timer
 }
 
 // NewHub creates a new Hub ready to Run.
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[*Client]struct{}),
-		broadcast:  make(chan Message, 256),
-		clearGrace: lastPlayerClearGrace,
+		clients:       make(map[*Client]struct{}),
+		broadcast:     make(chan Message, 256),
+		clearGrace:    lastPlayerClearGrace,
+		dryClearGrace: dryQueueClearGrace,
 	}
 }
 
@@ -120,6 +132,45 @@ func (h *Hub) cancelClearLocked() {
 	if h.pendingClear != nil {
 		h.pendingClear.Stop()
 		h.pendingClear = nil
+	}
+}
+
+// scheduleDryClear replaces any pending dry-queue clear with one that clears
+// now-playing after dryClearGrace, unless the hub is closing, the clear was
+// cancelled or replaced, or a song newer than start seq has started.
+func (h *Hub) scheduleDryClear(c *Client, seq uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cancelDryClearLocked()
+	var timer *time.Timer
+	timer = time.AfterFunc(h.dryClearGrace, func() {
+		h.mu.Lock()
+		run := !h.closing && h.pendingDryClear == timer
+		if run {
+			h.pendingDryClear = nil
+		}
+		h.mu.Unlock()
+
+		// Outside h.mu, like the last-player clear.
+		if run {
+			c.clearNowPlayingIfStart(context.Background(), seq)
+		}
+	})
+	h.pendingDryClear = timer
+}
+
+// cancelDryClear stops the pending dry-queue clear, if any.
+func (h *Hub) cancelDryClear() {
+	h.mu.Lock()
+	h.cancelDryClearLocked()
+	h.mu.Unlock()
+}
+
+// cancelDryClearLocked is cancelDryClear for a caller that holds h.mu.
+func (h *Hub) cancelDryClearLocked() {
+	if h.pendingDryClear != nil {
+		h.pendingDryClear.Stop()
+		h.pendingDryClear = nil
 	}
 }
 
@@ -215,6 +266,7 @@ func (h *Hub) Shutdown(ctx context.Context) error {
 	h.mu.Lock()
 	h.closing = true
 	h.cancelClearLocked()
+	h.cancelDryClearLocked()
 	clients := make([]*Client, 0, len(h.clients))
 	for c := range h.clients {
 		clients = append(clients, c)

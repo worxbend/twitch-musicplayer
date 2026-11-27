@@ -325,6 +325,67 @@ func TestClearAndOnEmptyTrackerDoesNotAnnounce(t *testing.T) {
 	}
 }
 
+func TestClearIfStartAndClearsMatchingStart(t *testing.T) {
+	tr := NewStateTracker()
+	tr.StartSong(&models.Song{ID: "a"}, nil)
+	var hooked []*models.Song
+	tr.OnSongChange(func(s *models.Song) { hooked = append(hooked, s) })
+	_, seq := tr.CurrentStart()
+
+	called := false
+	if !tr.ClearIfStartAnd(seq, func() { called = true }) || !called {
+		t.Fatal("ClearIfStartAnd with the current start did not clear and announce")
+	}
+	if cur := tr.GetCurrentSong(); cur != nil {
+		t.Fatalf("current song = %s, want nil", cur.ID)
+	}
+	if len(hooked) != 1 || hooked[0] != nil {
+		t.Fatalf("change hook calls = %v, want one with nil", hooked)
+	}
+}
+
+func TestClearIfStartAndKeepsNewerStart(t *testing.T) {
+	tr := NewStateTracker()
+	tr.StartSong(&models.Song{ID: "a"}, nil)
+	_, seq := tr.CurrentStart()
+	// Same song again: only the start number tells the starts apart.
+	tr.StartSong(&models.Song{ID: "a"}, nil)
+
+	called := false
+	if tr.ClearIfStartAnd(seq, func() { called = true }) || called {
+		t.Fatal("ClearIfStartAnd cleared or announced after a newer start")
+	}
+	if cur := tr.GetCurrentSong(); cur == nil || cur.ID != "a" {
+		t.Fatalf("current song = %v, want a", cur)
+	}
+}
+
+func TestClearIfStartAndClearsAfterRetag(t *testing.T) {
+	tr := NewStateTracker()
+	tr.StartSong(&models.Song{ID: "a", Title: "old"}, nil)
+	_, seq := tr.CurrentStart()
+	if !tr.RetagSong(&models.Song{ID: "a", Title: "new"}, nil) {
+		t.Fatal("RetagSong of the current song returned false")
+	}
+
+	if !tr.ClearIfStartAnd(seq, nil) {
+		t.Fatal("ClearIfStartAnd did not clear a retagged song of the same start")
+	}
+	if cur := tr.GetCurrentSong(); cur != nil {
+		t.Fatalf("current song = %s, want nil", cur.ID)
+	}
+}
+
+func TestClearIfStartAndOnEmptyTrackerDoesNotAnnounce(t *testing.T) {
+	tr := NewStateTracker()
+	_, seq := tr.CurrentStart()
+
+	called := false
+	if tr.ClearIfStartAnd(seq, func() { called = true }) || called {
+		t.Fatal("ClearIfStartAnd on empty tracker returned true or announced")
+	}
+}
+
 func TestStartAndRetagAnnouncesStayOrdered(t *testing.T) {
 	type announcement struct {
 		retag bool

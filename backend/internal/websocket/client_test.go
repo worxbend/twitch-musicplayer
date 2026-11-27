@@ -281,12 +281,50 @@ func (emptyLibraryQueueManager) NextSong(context.Context) (*models.Song, error) 
 	return nil, fmt.Errorf("auto-select: %w", queue.ErrLibraryEmpty)
 }
 
+// testDryClearGrace replaces the hub's 4s dry-queue clear grace in tests.
+const testDryClearGrace = 50 * time.Millisecond
+
 // newDryTestClient builds an unconnected client, like newSendTestClient, whose
-// tracker is already playing song-1 and whose queue manager is mgr.
+// tracker is already playing song-1 and whose queue manager is mgr. Its hub
+// clears now-playing testDryClearGrace after a song_finished on a dry queue.
 func newDryTestClient(mgr QueueManager) *Client {
 	st := player.NewStateTracker()
 	st.SetCurrentSong(&models.Song{ID: "song-1", Title: "Rain"})
-	return NewClient(NewHub(), nil, mgr, "", st)
+	h := NewHub()
+	h.dryClearGrace = testDryClearGrace
+	return NewClient(h, nil, mgr, "", st)
+}
+
+// hasPendingDryClear reports whether h has a dry-queue clear scheduled.
+func hasPendingDryClear(h *Hub) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.pendingDryClear != nil
+}
+
+// finishOnDryQueue sends song_finished on c's dry queue and checks that the
+// finished song stays on air for now, with a clear pending.
+func finishOnDryQueue(t *testing.T, c *Client) {
+	t.Helper()
+	c.handleMessage(Message{Type: MsgSongFinished})
+	drainSent(t, c, MsgError)
+	assertSongKept(t, c)
+	if !hasPendingDryClear(c.hub) {
+		t.Fatal("song_finished on a dry queue scheduled no clear")
+	}
+}
+
+// assertNoDryClearPastGrace waits past the dry grace, then checks no clear
+// is pending and nothing was broadcast.
+func assertNoDryClearPastGrace(t *testing.T, c *Client) {
+	t.Helper()
+	time.Sleep(2 * c.hub.dryClearGrace)
+	if hasPendingDryClear(c.hub) {
+		t.Fatal("dry-queue clear still pending")
+	}
+	if n := len(c.hub.broadcast); n != 0 {
+		t.Fatalf("hub.broadcast holds %d messages, want 0", n)
+	}
 }
 
 // drainSent asserts c.send holds exactly one message of type want and removes it.
@@ -333,19 +371,99 @@ func assertNowPlayingCleared(t *testing.T, c *Client) {
 func TestSongFinishedOnEmptyQueueClearsNowPlaying(t *testing.T) {
 	c := newDryTestClient(emptyQueueManager{})
 
-	c.handleMessage(Message{Type: MsgSongFinished})
-
-	drainSent(t, c, MsgError)
-	assertNowPlayingCleared(t, c)
+	finishOnDryQueue(t, c)
+	waitNowPlayingCleared(t, c)
 
 	// A second song_finished on the still-empty queue errors again but
-	// broadcasts nothing: the clear is idempotent.
+	// schedules and broadcasts nothing: nothing is playing any more.
 	c.handleMessage(Message{Type: MsgSongFinished})
 
 	drainSent(t, c, MsgError)
+	if hasPendingDryClear(c.hub) {
+		t.Fatal("second finish scheduled a clear, want none")
+	}
 	if n := len(c.hub.broadcast); n != 0 {
 		t.Fatalf("hub.broadcast holds %d messages after second finish, want 0", n)
 	}
+}
+
+// refillableQueueManager is dry until refill, then yields one fixed song.
+type refillableQueueManager struct {
+	emptyQueueManager
+	mu   sync.Mutex
+	song *models.Song
+}
+
+func (m *refillableQueueManager) NextSong(context.Context) (*models.Song, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.song == nil {
+		return nil, queue.ErrQueueEmpty
+	}
+	return m.song, nil
+}
+
+func (m *refillableQueueManager) refill(song *models.Song) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.song = song
+}
+
+func TestNeedSongInsideDryGraceCancelsClear(t *testing.T) {
+	mgr := &refillableQueueManager{}
+	c := newDryTestClient(mgr)
+	finishOnDryQueue(t, c)
+
+	mgr.refill(&models.Song{ID: "song-2", Title: "Snow"})
+	c.handleMessage(Message{Type: MsgNeedSong})
+
+	drainSent(t, c, MsgPlaySong)
+	if hasPendingDryClear(c.hub) {
+		t.Fatal("a new song started, want the dry clear cancelled")
+	}
+	for len(c.hub.broadcast) > 0 {
+		<-c.hub.broadcast // now_playing and queue_updated of song-2
+	}
+	assertNoDryClearPastGrace(t, c)
+	if cur := c.stateTracker.GetCurrentSong(); cur == nil || cur.ID != "song-2" {
+		t.Fatalf("current song = %v, want song-2", cur)
+	}
+}
+
+func TestDryClearAfterNewerStartKeepsSong(t *testing.T) {
+	c := newDryTestClient(emptyQueueManager{})
+	finishOnDryQueue(t, c)
+
+	// A start that bypasses sendNextSong leaves the timer armed; the start
+	// number must still stop it from clearing the new song.
+	c.stateTracker.StartSong(&models.Song{ID: "song-2", Title: "Snow"}, nil)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for hasPendingDryClear(c.hub) {
+		if time.Now().After(deadline) {
+			t.Fatal("dry clear did not fire within 5s")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	assertNoDryClearPastGrace(t, c)
+	if cur := c.stateTracker.GetCurrentSong(); cur == nil || cur.ID != "song-2" {
+		t.Fatalf("current song = %v, want song-2", cur)
+	}
+}
+
+func TestShutdownCancelsPendingDryClear(t *testing.T) {
+	c := newDryTestClient(emptyQueueManager{})
+	finishOnDryQueue(t, c)
+
+	if err := c.hub.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown = %v, want nil", err)
+	}
+
+	if hasPendingDryClear(c.hub) {
+		t.Fatal("dry clear still pending after Shutdown")
+	}
+	assertNoDryClearPastGrace(t, c)
+	assertSongKept(t, c)
 }
 
 func TestNeedSongOnEmptyQueueKeepsNowPlaying(t *testing.T) {
@@ -369,10 +487,8 @@ func TestSongFinishedOnOtherErrorKeepsNowPlaying(t *testing.T) {
 func TestSongFinishedOnEmptyLibraryClearsNowPlaying(t *testing.T) {
 	c := newDryTestClient(emptyLibraryQueueManager{})
 
-	c.handleMessage(Message{Type: MsgSongFinished})
-
-	drainSent(t, c, MsgError)
-	assertNowPlayingCleared(t, c)
+	finishOnDryQueue(t, c)
+	waitNowPlayingCleared(t, c)
 }
 
 func TestNeedSongOnEmptyLibraryKeepsNowPlaying(t *testing.T) {

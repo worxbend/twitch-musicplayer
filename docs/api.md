@@ -205,7 +205,8 @@ websocket `state` frame.
 
 `current_song` is omitted while nothing is playing. It is also cleared once a song finishes
 with nothing queued under `manual_only`, or with an empty library under an auto strategy
-(up to ~3s before the audio ends, at the crossfade lead); `/v1/now-playing.txt` then
+(about 4s after the player reports it finished, once its crossfade tail has played out,
+unless a new song starts first); `/v1/now-playing.txt` then
 returns an empty body and the OBS now-playing file is emptied. The same happens about 5s
 after the last WebSocket player connection closes, unless a player reconnects inside that
 window (see [WebSocket protocol](websocket-protocol.md#state)); a silent network drop counts

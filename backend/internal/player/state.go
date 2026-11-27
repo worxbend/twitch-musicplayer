@@ -24,10 +24,14 @@ type PlayEntry struct {
 // announceMu orders a state change together with its broadcast (see
 // StartSong, RetagSong and ClearAnd). It is separate from mu because the
 // change hook runs outside mu and may call back in.
+//
+// startSeq counts song starts. A retag replaces currentSong but keeps
+// startSeq, so it tells a new start from a metadata update.
 type StateTracker struct {
 	announceMu  sync.Mutex
 	mu          sync.RWMutex
 	currentSong *models.Song
+	startSeq    uint64
 	history     []PlayEntry // oldest first, at most MaxHistory entries
 	now         func() time.Time
 	onChange    func(*models.Song)
@@ -112,8 +116,22 @@ func (t *StateTracker) RetagSong(song *models.Song, announce func(models.Song)) 
 // ClearAnd is ClearCurrentSong followed, when it cleared a song, by announce,
 // ordered and constrained like StartSong.
 func (t *StateTracker) ClearAnd(announce func()) bool {
+	return t.clearAnd(t.clear, announce)
+}
+
+// ClearIfStartAnd is ClearAnd limited to the song start numbered seq, as
+// returned by CurrentStart. It clears nothing and returns false once a newer
+// song started; a retag of the same start still clears. A delayed clear uses
+// it so it cannot blank a song that started after it was scheduled.
+func (t *StateTracker) ClearIfStartAnd(seq uint64, announce func()) bool {
+	return t.clearAnd(func() (func(*models.Song), bool) { return t.clearStart(seq) }, announce)
+}
+
+// clearAnd runs clear and, when it cleared a song, announce under announceMu,
+// then the change hook outside both locks.
+func (t *StateTracker) clearAnd(clear func() (func(*models.Song), bool), announce func()) bool {
 	t.announceMu.Lock()
-	hook, ok := t.clear()
+	hook, ok := clear()
 	if ok && announce != nil {
 		announce()
 	}
@@ -136,6 +154,7 @@ func (t *StateTracker) setCurrent(song *models.Song) func(*models.Song) {
 	defer t.mu.Unlock()
 	t.currentSong = song
 	if song != nil {
+		t.startSeq++
 		t.history = append(t.history, PlayEntry{Song: *song, StartedAt: t.now()})
 		if excess := len(t.history) - MaxHistory; excess > 0 {
 			t.history = t.history[excess:]
@@ -149,6 +168,21 @@ func (t *StateTracker) setCurrent(song *models.Song) func(*models.Song) {
 func (t *StateTracker) clear() (func(*models.Song), bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	return t.clearLocked()
+}
+
+// clearStart is clear limited to the song start numbered seq.
+func (t *StateTracker) clearStart(seq uint64) (func(*models.Song), bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.startSeq != seq {
+		return nil, false
+	}
+	return t.clearLocked()
+}
+
+// clearLocked clears the current song. The caller must hold mu.
+func (t *StateTracker) clearLocked() (func(*models.Song), bool) {
 	if t.currentSong == nil {
 		return nil, false
 	}
@@ -176,6 +210,14 @@ func (t *StateTracker) GetCurrentSong() *models.Song {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.currentSong
+}
+
+// CurrentStart returns the current song, nil when none, and the number of
+// its start for ClearIfStartAnd.
+func (t *StateTracker) CurrentStart() (*models.Song, uint64) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.currentSong, t.startSeq
 }
 
 // History returns up to limit recorded starts, newest first, in a new slice.

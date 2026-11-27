@@ -237,11 +237,14 @@ func (c *Client) handleMessage(msg Message) {
 	case MsgSongFinished:
 		// Song is already marked played when it starts; just request the next
 		// one. A dry queue (manual_only) or an empty library (auto strategies)
-		// clears now-playing. Only a finished song may clear it: need_song also
-		// comes from a second player tab while the first is still playing.
+		// clears now-playing after the hub's dry grace, because the finished
+		// song is still audible for its crossfade tail; a newer start keeps
+		// it. Only a finished song may clear it: need_song also comes from a
+		// second player tab while the first is still playing.
+		finished, seq := c.currentStart()
 		err := c.sendNextSong(ctx)
-		if errors.Is(err, queue.ErrQueueEmpty) || errors.Is(err, queue.ErrLibraryEmpty) {
-			c.clearNowPlaying(ctx)
+		if finished != nil && (errors.Is(err, queue.ErrQueueEmpty) || errors.Is(err, queue.ErrLibraryEmpty)) {
+			c.hub.scheduleDryClear(c, seq)
 		}
 
 	case MsgPeekNext:
@@ -318,6 +321,8 @@ func (c *Client) sendNextSong(ctx context.Context) error {
 		}
 		return nil
 	}
+	// A new song is on its way, so the finished one must not be cleared.
+	c.hub.cancelDryClear()
 
 	// Broadcast to all peers so management UIs get live updates.
 	announce := func() {
@@ -353,13 +358,35 @@ func (c *Client) clearNowPlaying(ctx context.Context) {
 	if c.stateTracker == nil {
 		return
 	}
-	c.stateTracker.ClearAnd(func() {
-		if msg, err := Encode(MsgState, c.snapshotState(ctx)); err == nil {
-			c.hub.Broadcast(msg)
-		} else {
-			log.Printf("encode state: %v", err)
-		}
-	})
+	c.stateTracker.ClearAnd(func() { c.broadcastClearedState(ctx) })
+}
+
+// clearNowPlayingIfStart is clearNowPlaying limited to the song start
+// numbered seq, so a delayed clear leaves a newer song alone.
+func (c *Client) clearNowPlayingIfStart(ctx context.Context, seq uint64) {
+	if c.stateTracker == nil {
+		return
+	}
+	c.stateTracker.ClearIfStartAnd(seq, func() { c.broadcastClearedState(ctx) })
+}
+
+// currentStart returns the tracked song and its start number, or nil and 0
+// when the client has no tracker.
+func (c *Client) currentStart() (*models.Song, uint64) {
+	if c.stateTracker == nil {
+		return nil, 0
+	}
+	return c.stateTracker.CurrentStart()
+}
+
+// broadcastClearedState broadcasts a state snapshot, which carries no
+// current_song once the tracker is cleared. It runs as an announce callback.
+func (c *Client) broadcastClearedState(ctx context.Context) {
+	if msg, err := Encode(MsgState, c.snapshotState(ctx)); err == nil {
+		c.hub.Broadcast(msg)
+	} else {
+		log.Printf("encode state: %v", err)
+	}
 }
 
 // sendPrebuffer peeks at the first playable queue entry and sends the next song's URL to this
