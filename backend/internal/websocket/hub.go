@@ -75,7 +75,8 @@ func (h *Hub) deliver(msg Message) {
 // drop removes a client from the hub and signals its write pump to finish.
 // When c was the last client acting as a player, it schedules a clear of
 // now-playing after clearGrace; a player joining inside that window cancels
-// it. Shutdown does not come through here, so it keeps now-playing.
+// it. Shutdown does not come through here and schedules no clear; main
+// clears now-playing itself right after Shutdown returns.
 func (h *Hub) drop(c *Client) {
 	h.mu.Lock()
 	_, known := h.clients[c]

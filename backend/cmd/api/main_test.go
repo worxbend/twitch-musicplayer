@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -9,7 +12,9 @@ import (
 
 	"lofi-radio-backend/internal/config"
 	"lofi-radio-backend/internal/models"
+	"lofi-radio-backend/internal/played"
 	"lofi-radio-backend/internal/player"
+	"lofi-radio-backend/internal/websocket"
 )
 
 func TestFormatDuration(t *testing.T) {
@@ -219,4 +224,89 @@ func TestNowPlayingFileSerializesConcurrentWrites(t *testing.T) {
 	<-second
 
 	assertFileContent(t, path, "B - New")
+}
+
+// blockingHub is a hub whose Shutdown never finishes before ctx ends.
+type blockingHub struct{}
+
+func (blockingHub) Shutdown(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func runShutdown(t *testing.T, ctx context.Context, hub interface{ Shutdown(context.Context) error }, srv *http.Server, tracker *player.StateTracker) string {
+	t.Helper()
+	bloomPath := filepath.Join(t.TempDir(), "played.bloom")
+	shutdownSequence{
+		hub:        hub,
+		server:     srv,
+		nowPlaying: tracker,
+		bloom:      played.New(100, 0.01),
+		bloomPath:  bloomPath,
+	}.run(ctx)
+	return bloomPath
+}
+
+func assertShutdownCleared(t *testing.T, tracker *player.StateTracker, npPath, bloomPath string) {
+	t.Helper()
+	assertFileContent(t, npPath, "")
+	if song := tracker.GetCurrentSong(); song != nil {
+		t.Errorf("current song after shutdown = %+v, want nil", song)
+	}
+	if _, err := os.Stat(bloomPath); err != nil {
+		t.Errorf("bloom filter not saved: %v", err)
+	}
+}
+
+func TestShutdownClearsNowPlayingFile(t *testing.T) {
+	tracker, npPath := newNowPlayingSetup(t)
+	tracker.SetCurrentSong(&models.Song{ID: "a", Artist: "Artist", Title: "Title"})
+	assertFileContent(t, npPath, "Artist - Title")
+
+	bloomPath := runShutdown(t, context.Background(), websocket.NewHub(), &http.Server{}, tracker)
+	assertShutdownCleared(t, tracker, npPath, bloomPath)
+}
+
+func TestShutdownStillClearsWhenHubTimesOut(t *testing.T) {
+	tracker, npPath := newNowPlayingSetup(t)
+	tracker.SetCurrentSong(&models.Song{ID: "a", Artist: "Artist", Title: "Title"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	bloomPath := runShutdown(t, ctx, blockingHub{}, &http.Server{}, tracker)
+	assertShutdownCleared(t, tracker, npPath, bloomPath)
+}
+
+// A song stream stalled past the shutdown budget must not keep its
+// connection open: Close drops it and cancels the request context.
+func TestShutdownClosesStalledRequests(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	cancelled := make(chan struct{})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+		close(cancelled)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	go func() {
+		resp, err := http.Get("http://" + ln.Addr().String())
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+	<-entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	runShutdown(t, ctx, websocket.NewHub(), srv, player.NewStateTracker())
+
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stalled request still open after shutdown")
+	}
 }

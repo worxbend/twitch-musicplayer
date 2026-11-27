@@ -138,19 +138,13 @@ func main() {
 		stop()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		// Hijacked /ws connections are not closed by httpServer.Shutdown, so
-		// the hub sends peers 1001 Going Away first.
-		if err := hub.Shutdown(shutCtx); err != nil {
-			log.Printf("websocket shutdown: %v", err)
-		}
-		if err := httpServer.Shutdown(shutCtx); err != nil {
-			log.Printf("server forced shutdown: %v", err)
-		}
-		if err := playedTracker.Save(cfg.BloomPath); err != nil {
-			log.Printf("warning: bloom filter save failed: %v", err)
-		} else {
-			log.Printf("bloom filter saved to %s (~%d songs played)", cfg.BloomPath, playedTracker.ApproxCount())
-		}
+		shutdownSequence{
+			hub:        hub,
+			server:     httpServer,
+			nowPlaying: stateTracker,
+			bloom:      playedTracker,
+			bloomPath:  cfg.BloomPath,
+		}.run(shutCtx)
 		done <- true
 	}()
 
@@ -163,6 +157,46 @@ func main() {
 	}
 	<-done
 	fmt.Println("shutdown complete.")
+}
+
+// bloomSaver is the part of played.Tracker that shutdown persists.
+type bloomSaver interface {
+	Save(path string) error
+	ApproxCount() uint32
+}
+
+// shutdownSequence holds what a graceful shutdown stops, clears and saves.
+type shutdownSequence struct {
+	hub        interface{ Shutdown(context.Context) error }
+	server     *http.Server
+	nowPlaying interface{ ClearCurrentSong() bool }
+	bloom      bloomSaver
+	bloomPath  string
+}
+
+// run stops the hub and the HTTP server, clears now-playing and saves the
+// Bloom filter. Every step runs even when an earlier one fails or ctx ends.
+func (s shutdownSequence) run(ctx context.Context) {
+	// Hijacked /ws connections are not closed by server.Shutdown, so the hub
+	// sends peers 1001 Going Away first.
+	if err := s.hub.Shutdown(ctx); err != nil {
+		log.Printf("websocket shutdown: %v", err)
+	}
+	// The tracker's change hook empties the OBS file; otherwise OBS keeps
+	// showing the last title after the server is gone.
+	s.nowPlaying.ClearCurrentSong()
+	// Song streams can stall far past ctx; Close drops what Shutdown left.
+	if err := s.server.Shutdown(ctx); err != nil {
+		log.Printf("server forced shutdown: %v", err)
+		if err := s.server.Close(); err != nil {
+			log.Printf("server close: %v", err)
+		}
+	}
+	if err := s.bloom.Save(s.bloomPath); err != nil {
+		log.Printf("warning: bloom filter save failed: %v", err)
+	} else {
+		log.Printf("bloom filter saved to %s (~%d songs played)", s.bloomPath, s.bloom.ApproxCount())
+	}
 }
 
 // songSource is the part of player.StateTracker the now-playing file follows.

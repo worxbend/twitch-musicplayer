@@ -146,7 +146,8 @@ with nothing queued under `manual_only`, or with an empty library under an auto 
 returns an empty body and the OBS now-playing file is emptied. The same happens about 5s
 after the last WebSocket player connection closes, unless a player reconnects inside that
 window (see [WebSocket protocol](websocket-protocol.md#state)); a silent network drop counts
-only after the 60s pong timeout, and server shutdown does not clear it.
+only after the 60s pong timeout. A graceful server shutdown clears it and empties the OBS
+file; a crash or `SIGKILL` leaves the file as is until the next start, which empties it.
 
 ```http
 POST /v1/player:skip

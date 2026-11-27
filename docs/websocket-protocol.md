@@ -174,7 +174,9 @@ connection is a player once it connects with `?role=player` or sends `need_song`
 `song_finished` or `peek_next`. A player reconnecting inside that window, or a legacy client
 that reconnects without the parameter and sends `need_song`, keeps `current_song`. A reconnect
 after the window leaves `current_song` absent until the next `play_song`. A silent network drop
-is noticed only after the pong timeout (60s). Server shutdown does not clear `current_song`.
+is noticed only after the pong timeout (60s). A graceful server shutdown clears `current_song`
+and empties the OBS now-playing file; a crash or `SIGKILL` leaves the file until the next start,
+which empties it.
 
 ```json
 {
