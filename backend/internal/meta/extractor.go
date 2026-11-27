@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -73,10 +74,11 @@ func Extract(path string) Info {
 	info.Artist = cleanTag(tag.Artist())
 	info.Album = cleanTag(tag.Album())
 
-	// TLEN frame encodes duration in milliseconds.
+	// TLEN frame encodes duration in milliseconds. ParseFloat accepts "Inf",
+	// which JSON cannot encode; NaN already fails ms > 0.
 	if frames := tag.GetFrames(tag.CommonID("Length")); len(frames) > 0 {
 		if tf, ok := frames[0].(id3.TextFrame); ok {
-			if ms, err := strconv.ParseFloat(strings.TrimSpace(tf.Text), 64); err == nil && ms > 0 {
+			if ms, err := strconv.ParseFloat(strings.TrimSpace(tf.Text), 64); err == nil && ms > 0 && !math.IsInf(ms, 0) {
 				info.DurationSecs = ms / 1000.0
 				return info
 			}

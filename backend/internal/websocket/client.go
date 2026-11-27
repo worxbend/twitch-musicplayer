@@ -282,7 +282,8 @@ func errorPayloadFor(err error) ErrorPayload {
 // sendNextSong dequeues the next song and pushes a play_song message to this
 // client. A closed client dequeues nothing. When the message cannot be queued
 // (client closed meanwhile or send buffer full) the song goes back to the
-// front of the queue and shared state is left untouched. Only after a
+// front of the queue and shared state is left untouched. A song that cannot
+// be encoded is dropped and the client gets an internal error. Only after a
 // successful send does it update the state tracker and broadcast now_playing
 // and queue_updated so management UIs stay in sync. It returns the NextSong
 // error, after sending it to this client as an error message, and nil on
@@ -321,6 +322,10 @@ func (c *Client) sendNextSong(ctx context.Context) error {
 	playMsg, err := Encode(MsgPlaySong, payload)
 	if err != nil {
 		log.Printf("encode play_song: %v", err)
+		// No requeue: an unencodable song would sit at the front and fail forever.
+		if errMsg, encErr := Encode(MsgError, errorPayloadFor(err)); encErr == nil {
+			c.trySend(errMsg)
+		}
 		return nil
 	}
 

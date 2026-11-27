@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -259,6 +260,31 @@ func TestSendNextSongDeliversAndPublishes(t *testing.T) {
 			t.Fatalf("broadcast missing %s", want)
 		}
 	}
+}
+
+// An unencodable song (a non-finite duration breaks JSON) gets an internal
+// error frame so the player asks again, and is not requeued to fail forever.
+func TestSendNextSongUnencodableSongSendsErrorWithoutRequeue(t *testing.T) {
+	c, mgr := newSendTestClient()
+	mgr.song.DurationSecs = math.Inf(1)
+
+	c.sendNextSong(context.Background())
+
+	if n := len(c.send); n != 1 {
+		t.Fatalf("send buffer holds %d messages, want 1", n)
+	}
+	frame := <-c.send
+	var got ErrorPayload
+	if frame.Type != MsgError || DecodePayload(frame, &got) != nil {
+		t.Fatalf("sent = %s, want %s with ErrorPayload", frame.Type, MsgError)
+	}
+	if got.Code != ErrCodeInternal {
+		t.Fatalf("error code = %q, want %q", got.Code, ErrCodeInternal)
+	}
+	if _, requeued := mgr.calls(); len(requeued) != 0 {
+		t.Fatalf("requeued = %v, want none", requeued)
+	}
+	assertNothingPublished(t, c)
 }
 
 // The song_started queue_updated frame names the next playable song, skipping

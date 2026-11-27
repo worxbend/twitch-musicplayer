@@ -101,6 +101,42 @@ func TestExtract(t *testing.T) {
 			wantDuration: 2,
 		},
 		{
+			name:         "non-finite TLEN Inf falls back to estimate",
+			fillerBytes:  32_000,
+			tagger:       withLength("Inf"),
+			wantTitle:    "Rain Walk",
+			wantArtist:   "Lofi Cat",
+			wantAlbum:    "Night Tapes",
+			wantDuration: 2,
+		},
+		{
+			name:         "non-finite TLEN infinity falls back to estimate",
+			fillerBytes:  32_000,
+			tagger:       withLength("infinity"),
+			wantTitle:    "Rain Walk",
+			wantArtist:   "Lofi Cat",
+			wantAlbum:    "Night Tapes",
+			wantDuration: 2,
+		},
+		{
+			name:         "non-finite TLEN +INF falls back to estimate",
+			fillerBytes:  32_000,
+			tagger:       withLength("+INF"),
+			wantTitle:    "Rain Walk",
+			wantArtist:   "Lofi Cat",
+			wantAlbum:    "Night Tapes",
+			wantDuration: 2,
+		},
+		{
+			name:         "non-finite TLEN NaN falls back to estimate",
+			fillerBytes:  32_000,
+			tagger:       withLength("NaN"),
+			wantTitle:    "Rain Walk",
+			wantArtist:   "Lofi Cat",
+			wantAlbum:    "Night Tapes",
+			wantDuration: 2,
+		},
+		{
 			name:        "blank title falls back to filename and fields are trimmed",
 			fillerBytes: 16_000,
 			tagger: func(tag *id3.Tag) {
@@ -160,7 +196,9 @@ func TestExtract(t *testing.T) {
 				t.Errorf("Extract() = %q/%q/%q, want %q/%q/%q",
 					got.Title, got.Artist, got.Album, tt.wantTitle, tt.wantArtist, tt.wantAlbum)
 			}
-			if math.Abs(got.DurationSecs-tt.wantDuration) > 1e-9 {
+			// NaN compares false against the tolerance, so check finiteness first.
+			if math.IsInf(got.DurationSecs, 0) || math.IsNaN(got.DurationSecs) ||
+				math.Abs(got.DurationSecs-tt.wantDuration) > 1e-9 {
 				t.Errorf("DurationSecs = %v, want %v", got.DurationSecs, tt.wantDuration)
 			}
 		})
