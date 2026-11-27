@@ -45,7 +45,7 @@ jobs:
           mkdir -p _site/shots
           cp site/index.html site/styles.css site/tuner.js _site/
           cwebp -quiet -lossless -resize 80 80 frontend/src/assets/worxbend-logo.png -o _site/logo.webp
-          dwebp -quiet _site/logo.webp -png -o _site/logo.png
+          dwebp -quiet _site/logo.webp -o _site/logo.png
           for n in player spectrum bars mirror dots ribbon line lens console; do
             cp "docs/signal-observatory/$n-desktop.png" _site/shots/
             cwebp -quiet -q 80 -m 6 "_site/shots/$n-desktop.png" -o "_site/shots/$n-desktop.webp"
