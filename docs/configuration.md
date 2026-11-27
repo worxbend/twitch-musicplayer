@@ -102,12 +102,13 @@ and prints every problem it found, each one naming its TOML key. A missing
 - An unknown `shuffle.strategy`. Allowed: `random`, `weighted_history`, `round_robin`, `least_played`.
 - An unknown `queue.strategy`. Allowed: `manual_only`, `auto_refill`, `preload`.
 - A negative `shuffle.recent_window`, `queue.min_ahead` or `queue.preload_size`.
-- An empty `music.dir`, or an empty or blank-entry `music.extensions` list.
+- An empty `music.dir`, a `music.dir` that names an existing file, or an empty or blank-entry
+  `music.extensions` list.
 - An `obs.now_playing_format` with neither `{title}` nor `{artist}` (always checked), or an
   `obs.now_playing_file` whose directory does not exist or that is itself a directory
   (checked only when the file is set).
-- A `bloom.path` (or `BLOOM_PATH`) whose directory does not exist, or that names an existing
-  directory. A missing file is fine; it is created on the first save.
+- A blank `bloom.path`, or a `bloom.path` (or `BLOOM_PATH`) whose directory does not exist, or
+  that names an existing directory. A missing file is fine; it is created on the first save.
 - A `server.base_url` (or `BASE_URL`) that is not an `http://` or `https://` URL with a host,
   or that has a `?query` or `#fragment`. Empty is allowed: stream URLs then stay relative and
   the frontend resolves them against `VITE_BACKEND_URL`.

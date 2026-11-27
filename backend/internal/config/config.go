@@ -112,6 +112,11 @@ func Load() (*Config, error) {
 	if err := os.MkdirAll(cfg.Music.Dir, 0o755); err != nil {
 		log.Printf("warning: could not create music dir %s: %v", cfg.Music.Dir, err)
 	}
+	// MkdirAll fails on a regular file too; that is a typo, not a permission
+	// problem the watcher can survive, so it must stop startup.
+	if info, err := os.Stat(cfg.Music.Dir); err == nil && !info.IsDir() {
+		return nil, fmt.Errorf("music.dir: %q is not a directory", cfg.Music.Dir)
+	}
 	return cfg, nil
 }
 
@@ -161,8 +166,8 @@ func loadFrom(path string, explicit bool, getenv func(string) string) (*Config, 
 	}
 
 	cfg.Music.Dir = expandHomePath(cfg.Music.Dir)
-	cfg.Bloom.Path = expandHomePath(cfg.Bloom.Path)
-	cfg.OBS.NowPlayingFile = expandHomePath(cfg.OBS.NowPlayingFile)
+	cfg.Bloom.Path = expandHomePath(strings.TrimSpace(cfg.Bloom.Path))
+	cfg.OBS.NowPlayingFile = expandHomePath(strings.TrimSpace(cfg.OBS.NowPlayingFile))
 	cfg.Music.Extensions = normalizeExtensions(cfg.Music.Extensions)
 	cfg.Server.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.Server.BaseURL), "/")
 	cfg.Server.AllowedOrigins = normalizeOrigins(cfg.Server.AllowedOrigins)
@@ -188,6 +193,9 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Music.Dir) == "" {
 		errs = append(errs, errors.New("music.dir: must not be empty"))
+	}
+	if strings.TrimSpace(c.Bloom.Path) == "" {
+		errs = append(errs, errors.New("bloom.path: must not be empty"))
 	}
 	if len(c.Music.Extensions) == 0 {
 		errs = append(errs, errors.New("music.extensions: must list at least one extension"))

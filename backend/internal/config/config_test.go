@@ -186,6 +186,10 @@ func TestValidate(t *testing.T) {
 		{name: "empty music dir", mutate: func(c *Config) { c.Music.Dir = "" }, wantSub: []string{"music.dir"}},
 		{name: "no extensions", mutate: func(c *Config) { c.Music.Extensions = nil }, wantSub: []string{"music.extensions"}},
 		{name: "blank extension", mutate: func(c *Config) { c.Music.Extensions = []string{""} }, wantSub: []string{"music.extensions"}},
+		{name: "empty bloom path", mutate: func(c *Config) { c.Bloom.Path = "" },
+			wantSub: []string{"bloom.path: must not be empty"}},
+		{name: "blank bloom path", mutate: func(c *Config) { c.Bloom.Path = "   " },
+			wantSub: []string{"bloom.path: must not be empty"}},
 		{name: "bloom path is a directory", mutate: func(c *Config) { c.Bloom.Path = t.TempDir() },
 			wantSub: []string{"bloom.path", "is a directory"}},
 		{name: "bloom path directory missing", mutate: func(c *Config) { c.Bloom.Path = filepath.Join(t.TempDir(), "absent", "x.bloom") },
@@ -377,6 +381,30 @@ func TestLoadUsesLOFIConfig(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsMusicDirFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "music")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	t.Setenv("LOFI_CONFIG", writeConfig(t, "[music]\ndir = \""+file+"\"\n"))
+	for _, key := range []string{"PORT", "MUSIC_DIR", "BASE_URL", "BLOOM_PATH"} {
+		t.Setenv(key, "")
+	}
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("Load error = %v, want one saying music.dir is not a directory", err)
+	}
+}
+
+func TestLoadFromRejectsBlankBloomPath(t *testing.T) {
+	for _, body := range []string{"[bloom]\npath = \"\"\n", "[bloom]\npath = \"   \"\n"} {
+		_, err := loadFrom(writeConfig(t, body), true, fakeEnv(nil))
+		if err == nil || !strings.Contains(err.Error(), "bloom.path: must not be empty") {
+			t.Errorf("loadFrom(%q) error = %v, want bloom.path: must not be empty", body, err)
+		}
+	}
+}
+
 func TestValidateOBS(t *testing.T) {
 	dir := t.TempDir()
 	tests := []struct {
@@ -426,6 +454,16 @@ func TestLoadFromExpandsOBSFile(t *testing.T) {
 	}
 	if cfg.OBS.NowPlayingFormat != "{artist} - {title}" {
 		t.Errorf("now_playing_format = %q, want default", cfg.OBS.NowPlayingFormat)
+	}
+}
+
+func TestLoadFromBlankOBSFileStaysDisabled(t *testing.T) {
+	cfg, err := loadFrom(writeConfig(t, "[obs]\nnow_playing_file = \"  \"\n"), true, fakeEnv(nil))
+	if err != nil {
+		t.Fatalf("loadFrom: %v", err)
+	}
+	if cfg.OBS.NowPlayingFile != "" {
+		t.Errorf("now_playing_file = %q, want empty", cfg.OBS.NowPlayingFile)
 	}
 }
 
