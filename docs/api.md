@@ -72,6 +72,43 @@ Returns `404` for an unknown song, a missing file, or a file without a usable pi
 8 MiB are not parsed and count as no picture), `403` when the song path resolves outside the
 music directory, and `500` when the file cannot be read.
 
+### 🚫 Don't play this
+
+```http
+POST /v1/songs/{id}:block
+POST /v1/songs/{id}:unblock
+GET  /v1/blocked
+```
+
+`:block` pulls a song out of rotation: auto-select never picks it, its queued entries are
+removed, and `POST /v1/queue` or `POST /v1/queue:play-next` for it returns
+`409 {"error":"song is blocked"}`. The song playing now keeps playing. Blocking a blocked song
+returns `200` again; an unknown song returns `404`.
+
+`:unblock` puts the song back in rotation. It also clears a blocked ID whose file has left the
+library, and returns `404` only when the ID is neither blocked nor in the library.
+
+Both broadcast `queue_updated` with reason `song_blocked` or `song_unblocked`, and both return
+`500` when the blocklist file cannot be saved (the change is rolled back).
+
+`GET /v1/blocked` lists blocked songs sorted by ID. A song whose file has left the library is
+listed by ID:
+
+```json
+{
+  "songs": [
+    { "id": "...", "title": "...", "artist": "..." },
+    { "id": "...", "missing": true }
+  ]
+}
+```
+
+Blocked IDs are saved next to the Bloom file, with its extension replaced by `.blocked.json`
+(`./lofi-radio.bloom` gives `./lofi-radio.blocked.json`), as
+`{"version":1,"song_ids":[...]}`. Every change is written atomically, so the list survives a
+restart. A corrupt file is logged at startup and replaced on the next change. Song IDs are
+derived from the file path, so moving or renaming a file unblocks it.
+
 ## 📋 Queue
 
 ```http
@@ -89,7 +126,8 @@ Content-Type: application/json
 
 Adds a song manually. Manual additions may repeat the same song.
 
-Returns `400` for malformed JSON or a missing `song_id`, and `404` for an unknown song.
+Returns `400` for malformed JSON or a missing `song_id`, `404` for an unknown song, and
+`409 {"error":"song is blocked"}` for a [blocked](#-dont-play-this) song.
 JSON bodies for this endpoint and `POST /v1/queue:play-next` are capped at 4 KiB; a larger
 body gets `413 {"error":"request body too large"}`.
 
@@ -140,6 +178,7 @@ Content-Type: application/json
 Inserts a song at the front of the queue and broadcasts `skip_now`, so connected audio
 clients abandon the current track and pull this one immediately. Auto-queued entries for
 the same song are removed so it does not play twice; manually queued entries stay.
+Like `POST /v1/queue`, it returns `404` for an unknown song and `409` for a blocked one.
 
 Queue mutations broadcast `queue_updated` to connected WebSocket clients.
 

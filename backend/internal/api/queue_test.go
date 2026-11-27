@@ -7,11 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"lofi-radio-backend/internal/blocklist"
 	"lofi-radio-backend/internal/models"
+	"lofi-radio-backend/internal/played"
 	queuemgr "lofi-radio-backend/internal/queue"
+	"lofi-radio-backend/internal/repository"
 	"lofi-radio-backend/internal/websocket"
 )
 
@@ -87,6 +91,12 @@ func (f *fakeQueueManager) MoveEntry(_ context.Context, id string, delta int) (i
 	return f.movePos, f.moved, f.moveErr
 }
 
+func (f *fakeQueueManager) BlockSong(context.Context, string) error   { return nil }
+func (f *fakeQueueManager) UnblockSong(context.Context, string) error { return nil }
+func (f *fakeQueueManager) BlockedSongs(context.Context) ([]queuemgr.BlockedSong, error) {
+	return nil, nil
+}
+
 func (f *fakeQueueManager) RemoveEntry(_ context.Context, id string) error {
 	f.removedID = id
 	return f.removeErr
@@ -146,6 +156,7 @@ func TestQueueAdd(t *testing.T) {
 		{name: "empty song_id", body: `{"song_id":""}`, wantCode: http.StatusBadRequest},
 		{name: "oversize body", body: oversizeBody, wantCode: http.StatusRequestEntityTooLarge},
 		{name: "unknown song", body: `{"song_id":"x"}`, addErr: fmt.Errorf("add: %w", queuemgr.ErrSongNotFound), wantCode: http.StatusNotFound},
+		{name: "blocked song", body: `{"song_id":"x"}`, addErr: fmt.Errorf("add: %w", queuemgr.ErrSongBlocked), wantCode: http.StatusConflict},
 		{name: "manager error", body: `{"song_id":"x"}`, addErr: errors.New("boom"), wantCode: http.StatusInternalServerError},
 		{name: "success", body: `{"song_id":"x"}`, wantCode: http.StatusCreated},
 	}
@@ -259,6 +270,7 @@ func TestQueuePlayNext(t *testing.T) {
 		{name: "empty song_id", body: `{}`, wantCode: http.StatusBadRequest},
 		{name: "oversize body", body: oversizeBody, wantCode: http.StatusRequestEntityTooLarge},
 		{name: "unknown song", body: `{"song_id":"x"}`, err: queuemgr.ErrSongNotFound, wantCode: http.StatusNotFound},
+		{name: "blocked song", body: `{"song_id":"x"}`, err: fmt.Errorf("x: %w", queuemgr.ErrSongBlocked), wantCode: http.StatusConflict},
 		{name: "manager error", body: `{"song_id":"x"}`, err: errors.New("boom"), wantCode: http.StatusInternalServerError},
 		{name: "success", body: `{"song_id":"x"}`, wantCode: http.StatusOK},
 	}
@@ -403,4 +415,79 @@ func TestQueueList(t *testing.T) {
 	if got.Total != 2 || len(got.Items) != 2 {
 		t.Fatalf("got %+v", got)
 	}
+}
+
+// blockingRouter serves the queue routes over a real Manager with one song,
+// "s1", and a blocklist saved under a temp dir.
+func blockingRouter(t *testing.T, b *fakeBroadcaster) http.Handler {
+	t.Helper()
+	songs := repository.NewMemSongRepo()
+	if err := songs.Create(context.Background(), &models.Song{ID: "s1", Filename: "s1.mp3", Title: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	store := blocklist.Empty(filepath.Join(t.TempDir(), "radio.blocked.json"))
+	mgr := queuemgr.New(songs, played.New(100, 0.01), repository.NewMemQueueRepo(songs), queuemgr.ManagerConfig{
+		Fill:      queuemgr.FillConfig{Strategy: queuemgr.FillManualOnly},
+		Blocklist: store,
+	})
+	return RegisterRoutesHTTP(nil, NewQueueHandler(mgr, b), nil)
+}
+
+// blockedIDs fetches GET /v1/blocked and returns each entry's id and missing flag.
+func blockedIDs(t *testing.T, h http.Handler) []string {
+	t.Helper()
+	rec := serve(t, h, http.MethodGet, "/v1/blocked", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /v1/blocked status = %d", rec.Code)
+	}
+	var body struct {
+		Songs []struct {
+			ID      string `json:"id"`
+			Title   string `json:"title"`
+			Missing bool   `json:"missing"`
+		} `json:"songs"`
+	}
+	decodeBody(t, rec, &body)
+	ids := make([]string, len(body.Songs))
+	for i, s := range body.Songs {
+		ids[i] = fmt.Sprintf("%s:%s:%v", s.ID, s.Title, s.Missing)
+	}
+	return ids
+}
+
+func TestBlockFlow(t *testing.T) {
+	b := &fakeBroadcaster{}
+	h := blockingRouter(t, b)
+	expect := func(method, target, body string, want int) {
+		t.Helper()
+		if rec := serve(t, h, method, target, body, nil); rec.Code != want {
+			t.Fatalf("%s %s status = %d, want %d (body %q)", method, target, rec.Code, want, rec.Body.String())
+		}
+	}
+
+	expect(http.MethodPost, "/v1/songs/nope:block", "", http.StatusNotFound)
+	expect(http.MethodPost, "/v1/songs/nope:unblock", "", http.StatusNotFound)
+	if len(b.msgs) != 0 {
+		t.Fatalf("unexpected broadcasts %v", b.types())
+	}
+	if got := blockedIDs(t, h); len(got) != 0 {
+		t.Fatalf("blocked = %v, want empty", got)
+	}
+
+	expect(http.MethodPost, "/v1/songs/s1:block", "", http.StatusOK)
+	assertQueueUpdated(t, b, "song_blocked")
+	expect(http.MethodPost, "/v1/songs/s1:block", "", http.StatusOK)
+	if got := blockedIDs(t, h); len(got) != 1 || got[0] != "s1:One:false" {
+		t.Fatalf("blocked = %v, want [s1:One:false]", got)
+	}
+	expect(http.MethodPost, "/v1/queue", `{"song_id":"s1"}`, http.StatusConflict)
+	expect(http.MethodPost, "/v1/queue:play-next", `{"song_id":"s1"}`, http.StatusConflict)
+
+	b.msgs = nil
+	expect(http.MethodPost, "/v1/songs/s1:unblock", "", http.StatusOK)
+	assertQueueUpdated(t, b, "song_unblocked")
+	if got := blockedIDs(t, h); len(got) != 0 {
+		t.Fatalf("blocked = %v, want empty after unblock", got)
+	}
+	expect(http.MethodPost, "/v1/queue", `{"song_id":"s1"}`, http.StatusCreated)
 }

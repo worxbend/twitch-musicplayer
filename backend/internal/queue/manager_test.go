@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 
+	"lofi-radio-backend/internal/blocklist"
 	"lofi-radio-backend/internal/models"
 	"lofi-radio-backend/internal/played"
 	"lofi-radio-backend/internal/repository"
@@ -718,5 +720,212 @@ func assertRemovedCarryoverNoRepeat(t *testing.T) {
 			t.Fatalf("%s repeated within one cycle", s.ID)
 		}
 		seen[s.ID] = true
+	}
+}
+
+// buildBlockingManager is buildManagerWithSongs with a blocklist saved under
+// a temp dir; blocked IDs are added to the store before the Manager is built.
+func buildBlockingManager(t *testing.T, cfg ManagerConfig, songs []*models.Song, blocked ...string) (*Manager, *repository.MemSongRepo, *blocklist.Store) {
+	t.Helper()
+	store := blocklist.Empty(filepath.Join(t.TempDir(), "radio.blocked.json"))
+	for _, id := range blocked {
+		if err := store.Add(id); err != nil {
+			t.Fatalf("block %s: %v", id, err)
+		}
+	}
+	cfg.Blocklist = store
+	m, songRepo := buildManagerWithSongs(t, cfg, songs)
+	return m, songRepo, store
+}
+
+// sameArtistLibrary is library(n) with one artist, so artist adjacency never
+// shapes the picks.
+func sameArtistLibrary(n int) []*models.Song {
+	lib := library(n)
+	for _, s := range lib {
+		s.Artist = "One"
+	}
+	return lib
+}
+
+func TestAutoSelectNeverPicksBlockedSong(t *testing.T) {
+	fills := map[string]FillConfig{
+		"auto_refill": {Strategy: FillAutoRefill},
+		"preload":     {Strategy: FillPreload, PreloadSize: 2},
+	}
+	for _, strat := range []ShuffleStrategy{ShuffleRoundRobin, ShuffleWeightedHistory} {
+		for fillName, fill := range fills {
+			t.Run(string(strat)+"/"+fillName, func(t *testing.T) {
+				cfg := ManagerConfig{Shuffle: ShuffleConfig{Strategy: strat}, Fill: fill}
+				m, _, _ := buildBlockingManager(t, cfg, library(5), "s0", "s3")
+				for i := 0; i < 50; i++ {
+					s, err := m.NextSong(context.Background())
+					if err != nil {
+						t.Fatalf("NextSong[%d]: %v", i, err)
+					}
+					if s.ID == "s0" || s.ID == "s3" {
+						t.Fatalf("NextSong[%d] picked blocked song %s", i, s.ID)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestCycleResetsWhenOnlyUnplayedSongIsBlocked: once the last unplayed song is
+// blocked the cycle must restart, so each pair of picks covers both songs left.
+func TestCycleResetsWhenOnlyUnplayedSongIsBlocked(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := buildBlockingManager(t, autoRefillCfg(ShuffleRoundRobin), sameArtistLibrary(3))
+	playedIDs := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		s, err := m.NextSong(ctx)
+		if err != nil {
+			t.Fatalf("NextSong[%d]: %v", i, err)
+		}
+		playedIDs[s.ID] = true
+	}
+	var unplayed string
+	for _, id := range []string{"s0", "s1", "s2"} {
+		if !playedIDs[id] {
+			unplayed = id
+		}
+	}
+	if err := m.BlockSong(ctx, unplayed); err != nil {
+		t.Fatalf("BlockSong: %v", err)
+	}
+	for round := 0; round < 10; round++ {
+		first, err := m.NextSong(ctx)
+		if err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		second, err := m.NextSong(ctx)
+		if err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if first.ID == second.ID || first.ID == unplayed || second.ID == unplayed {
+			t.Fatalf("round %d played %s, %s; want both of the unblocked songs", round, first.ID, second.ID)
+		}
+	}
+}
+
+func TestEverySongBlockedIsLibraryEmpty(t *testing.T) {
+	ctx := context.Background()
+	cfg := ManagerConfig{Fill: FillConfig{Strategy: FillPreload, PreloadSize: 2}}
+	m, _, _ := buildBlockingManager(t, cfg, library(2), "s0", "s1")
+	if added, err := m.PrepareInitialQueue(ctx); err != nil || added != 0 {
+		t.Fatalf("PrepareInitialQueue = %d, %v; want 0, nil", added, err)
+	}
+	if _, err := m.NextSong(ctx); !errors.Is(err, ErrLibraryEmpty) {
+		t.Fatalf("NextSong error = %v, want ErrLibraryEmpty", err)
+	}
+	if total, err := m.TotalSongs(ctx); err != nil || total != 0 {
+		t.Fatalf("TotalSongs = %d, %v; want 0, nil", total, err)
+	}
+}
+
+func TestAddAndPlayNextRefuseBlockedSong(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := buildBlockingManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, library(2), "s0")
+	if _, err := m.AddToQueue(ctx, "s0", models.QueueSourceManual); !errors.Is(err, ErrSongBlocked) {
+		t.Fatalf("AddToQueue error = %v, want ErrSongBlocked", err)
+	}
+	if err := m.PlayNext(ctx, "s0"); !errors.Is(err, ErrSongBlocked) {
+		t.Fatalf("PlayNext error = %v, want ErrSongBlocked", err)
+	}
+	if items := listQueue(t, m); len(items) != 0 {
+		t.Fatalf("queue = %+v, want empty", items)
+	}
+}
+
+func TestBlockSongPurgesQueuedEntries(t *testing.T) {
+	ctx := context.Background()
+	m, _, store := buildBlockingManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, library(2))
+	for _, id := range []string{"s0", "s1", "s0"} {
+		if _, err := m.AddToQueue(ctx, id, models.QueueSourceManual); err != nil {
+			t.Fatalf("AddToQueue(%s): %v", id, err)
+		}
+	}
+	if err := m.BlockSong(ctx, "missing"); !errors.Is(err, ErrSongNotFound) {
+		t.Fatalf("BlockSong(missing) = %v, want ErrSongNotFound", err)
+	}
+	for i := 0; i < 2; i++ { // the second call checks it is idempotent
+		if err := m.BlockSong(ctx, "s0"); err != nil {
+			t.Fatalf("BlockSong[%d]: %v", i, err)
+		}
+	}
+	items := listQueue(t, m)
+	if len(items) != 1 || items[0].SongID != "s1" {
+		t.Fatalf("queue = %+v, want only s1", items)
+	}
+	if got := store.List(); len(got) != 1 || got[0] != "s0" {
+		t.Fatalf("store = %v, want [s0]", got)
+	}
+}
+
+// TestNextSongDropsEntryBlockedAfterQueueing covers an entry that was queued
+// before its song was blocked without the purge (the store edited directly).
+func TestNextSongDropsEntryBlockedAfterQueueing(t *testing.T) {
+	ctx := context.Background()
+	m, _, store := buildBlockingManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, library(2))
+	for _, id := range []string{"s0", "s1"} {
+		if _, err := m.AddToQueue(ctx, id, models.QueueSourceManual); err != nil {
+			t.Fatalf("AddToQueue(%s): %v", id, err)
+		}
+	}
+	if err := store.Add("s0"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := m.NextSong(ctx)
+	if err != nil || s.ID != "s1" {
+		t.Fatalf("NextSong = %v, %v; want s1", s, err)
+	}
+	if _, err := m.NextSong(ctx); !errors.Is(err, ErrQueueEmpty) {
+		t.Fatalf("NextSong error = %v, want ErrQueueEmpty", err)
+	}
+}
+
+func TestUnblockSong(t *testing.T) {
+	ctx := context.Background()
+	m, songRepo, store := buildBlockingManager(t, autoRefillCfg(ShuffleRoundRobin), sameArtistLibrary(2), "s0", "s1")
+	if _, _, err := songRepo.DeleteByPath(ctx, "/music/s1.mp3"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.UnblockSong(ctx, "s1"); err != nil {
+		t.Fatalf("UnblockSong(stale s1) = %v, want nil", err)
+	}
+	if err := m.UnblockSong(ctx, "s1"); !errors.Is(err, ErrSongNotFound) {
+		t.Fatalf("UnblockSong(s1 again) = %v, want ErrSongNotFound", err)
+	}
+	if _, err := m.NextSong(ctx); !errors.Is(err, ErrLibraryEmpty) {
+		t.Fatalf("NextSong error = %v, want ErrLibraryEmpty while s0 is blocked", err)
+	}
+	if err := m.UnblockSong(ctx, "s0"); err != nil {
+		t.Fatalf("UnblockSong(s0): %v", err)
+	}
+	if err := m.UnblockSong(ctx, "s0"); err != nil {
+		t.Fatalf("UnblockSong(s0 again) = %v, want nil for an indexed song", err)
+	}
+	if s, err := m.NextSong(ctx); err != nil || s.ID != "s0" {
+		t.Fatalf("NextSong = %v, %v; want s0", s, err)
+	}
+	if got := store.List(); len(got) != 0 {
+		t.Fatalf("store = %v, want empty", got)
+	}
+}
+
+func TestBlockedSongs(t *testing.T) {
+	ctx := context.Background()
+	m, songRepo, _ := buildBlockingManager(t, ManagerConfig{}, library(2), "s1", "s0")
+	if _, _, err := songRepo.DeleteByPath(ctx, "/music/s1.mp3"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.BlockedSongs(ctx)
+	if err != nil {
+		t.Fatalf("BlockedSongs: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != "s0" || got[0].Song == nil || got[1].ID != "s1" || got[1].Song != nil {
+		t.Fatalf("BlockedSongs = %+v, want s0 with its song, then s1 missing", got)
 	}
 }

@@ -15,6 +15,9 @@ func RegisterRoutes(r chi.Router, songs *SongsHandler, queue *QueueHandler, play
 		r.Get("/songs/{id}/content", songs.StreamContent)
 		r.Get("/songs/{id}:stream", songs.StreamContent)
 		r.Get("/songs/{id}/cover", songs.Cover)
+		r.Post("/songs/{id}:block", queue.Block)
+		r.Post("/songs/{id}:unblock", queue.Unblock)
+		r.Get("/blocked", queue.ListBlocked)
 
 		// Queue
 		r.Get("/queue", queue.List)

@@ -21,6 +21,9 @@ type queueManager interface {
 	ClearQueue(ctx context.Context) error
 	RemoveEntry(ctx context.Context, id string) error
 	MoveEntry(ctx context.Context, id string, delta int) (position int, moved bool, err error)
+	BlockSong(ctx context.Context, songID string) error
+	UnblockSong(ctx context.Context, songID string) error
+	BlockedSongs(ctx context.Context) ([]queuemgr.BlockedSong, error)
 	skipSource
 }
 
@@ -95,11 +98,9 @@ func (h *QueueHandler) Add(w http.ResponseWriter, r *http.Request) {
 	// appends further auto-picked songs behind the manual one.
 	item, err := h.mgr.AddToQueue(r.Context(), req.SongID, models.QueueSourceManual)
 	if err != nil {
-		if errors.Is(err, queuemgr.ErrSongNotFound) {
-			writeError(w, http.StatusNotFound, "song not found")
-			return
+		if !writeSongError(w, err) {
+			writeError(w, http.StatusInternalServerError, "failed to add song to queue")
 		}
-		writeError(w, http.StatusInternalServerError, "failed to add song to queue")
 		return
 	}
 
@@ -230,11 +231,9 @@ func (h *QueueHandler) PlayNext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.mgr.PlayNext(r.Context(), req.SongID); err != nil {
-		if errors.Is(err, queuemgr.ErrSongNotFound) {
-			writeError(w, http.StatusNotFound, "song not found")
-			return
+		if !writeSongError(w, err) {
+			writeError(w, http.StatusInternalServerError, "failed to queue song for immediate play")
 		}
-		writeError(w, http.StatusInternalServerError, "failed to queue song for immediate play")
 		return
 	}
 
@@ -246,6 +245,73 @@ func (h *QueueHandler) PlayNext(w http.ResponseWriter, r *http.Request) {
 	h.broadcastQueueUpdated(r.Context(), "play_next")
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "song queued for immediate play"})
+}
+
+// ListBlocked handles GET /v1/blocked. Each entry is the song, or
+// {"id":...,"missing":true} when its file has left the library.
+func (h *QueueHandler) ListBlocked(w http.ResponseWriter, r *http.Request) {
+	blocked, err := h.mgr.BlockedSongs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list blocked songs")
+		return
+	}
+	entries := make([]any, 0, len(blocked))
+	for _, b := range blocked {
+		if b.Song != nil {
+			entries = append(entries, b.Song)
+		} else {
+			entries = append(entries, missingSong{ID: b.ID, Missing: true})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"songs": entries})
+}
+
+// missingSong stands in for a blocked song whose file has left the library.
+type missingSong struct {
+	ID      string `json:"id"`
+	Missing bool   `json:"missing"`
+}
+
+// Block handles POST /v1/songs/{id}:block. It pulls the song out of rotation
+// and drops its queued entries; blocking a blocked song succeeds again.
+func (h *QueueHandler) Block(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.mgr.BlockSong(r.Context(), id); err != nil {
+		if !writeSongError(w, err) {
+			writeError(w, http.StatusInternalServerError, "failed to block song")
+		}
+		return
+	}
+	h.broadcastQueueUpdated(r.Context(), "song_blocked")
+	writeJSON(w, http.StatusOK, map[string]string{"message": "song blocked"})
+}
+
+// Unblock handles POST /v1/songs/{id}:unblock. It puts the song back in
+// rotation, and also clears a blocked ID whose file has left the library.
+func (h *QueueHandler) Unblock(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.mgr.UnblockSong(r.Context(), id); err != nil {
+		if !writeSongError(w, err) {
+			writeError(w, http.StatusInternalServerError, "failed to unblock song")
+		}
+		return
+	}
+	h.broadcastQueueUpdated(r.Context(), "song_unblocked")
+	writeJSON(w, http.StatusOK, map[string]string{"message": "song unblocked"})
+}
+
+// writeSongError writes 404 for an unknown song and 409 for a blocked one,
+// and reports whether err was either.
+func writeSongError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, queuemgr.ErrSongNotFound):
+		writeError(w, http.StatusNotFound, "song not found")
+	case errors.Is(err, queuemgr.ErrSongBlocked):
+		writeError(w, http.StatusConflict, queuemgr.ErrSongBlocked.Error())
+	default:
+		return false
+	}
+	return true
 }
 
 func (h *QueueHandler) broadcastQueueUpdated(ctx context.Context, reason string) {

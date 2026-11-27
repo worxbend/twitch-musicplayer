@@ -361,3 +361,36 @@ func TestBroadcastQueueUpdatedSendsOnListError(t *testing.T) {
 
 	assertQueueUpdated(t, hub, 0, "file_removed")
 }
+
+func TestBlocklistPath(t *testing.T) {
+	tests := map[string]string{
+		"./lofi-radio.bloom":     "./lofi-radio.blocked.json",
+		"/data/lofi-radio.bloom": "/data/lofi-radio.blocked.json",
+		"/data/history":          "/data/history.blocked.json",
+	}
+	for bloom, want := range tests {
+		if got := blocklistPath(bloom); got != want {
+			t.Errorf("blocklistPath(%q) = %q, want %q", bloom, got, want)
+		}
+	}
+}
+
+// TestLoadBlocklistReplacesCorruptFile: a corrupt file gives an empty list
+// that overwrites it on the next change.
+func TestLoadBlocklistReplacesCorruptFile(t *testing.T) {
+	bloom := filepath.Join(t.TempDir(), "radio.bloom")
+	path := blocklistPath(bloom)
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := loadBlocklist(bloom)
+	if got := store.List(); len(got) != 0 {
+		t.Fatalf("List = %v, want empty", got)
+	}
+	if err := store.Add("s1"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if got := loadBlocklist(bloom).List(); len(got) != 1 || got[0] != "s1" {
+		t.Fatalf("reloaded List = %v, want [s1]", got)
+	}
+}

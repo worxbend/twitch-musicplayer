@@ -224,6 +224,100 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/songs/{id}:block:
+    post:
+      summary: Don't play this song
+      description: >
+        Pulls the song out of rotation: auto-select never picks it, its queued
+        entries are removed, and adding it to the queue or playing it next
+        returns 409. The song playing now keeps playing. Blocked song IDs are
+        saved next to the Bloom file, as `<bloom path without extension>.blocked.json`,
+        so they survive a restart. Blocking a blocked song succeeds again.
+        Broadcasts `queue_updated` with reason `song_blocked`.
+      operationId: blockSong
+      tags: [songs]
+      parameters:
+        - $ref: "#/components/parameters/songId"
+      responses:
+        "200":
+          description: Song blocked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: song blocked
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          description: The blocklist file could not be saved; the song stays unblocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/songs/{id}:unblock:
+    post:
+      summary: Allow a blocked song again
+      description: >
+        Puts the song back in rotation. A blocked ID whose file has left the
+        library is removed too. Unblocking an indexed song that is not blocked
+        succeeds. Broadcasts `queue_updated` with reason `song_unblocked`.
+      operationId: unblockSong
+      tags: [songs]
+      parameters:
+        - $ref: "#/components/parameters/songId"
+      responses:
+        "200":
+          description: Song unblocked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: song unblocked
+        "404":
+          description: The ID is neither blocked nor in the library
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: The blocklist file could not be saved; the song stays blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/blocked:
+    get:
+      summary: List blocked songs
+      description: >
+        Returns the blocked songs, sorted by ID. A blocked song whose file has
+        left the library is listed as `{"id": "...", "missing": true}`.
+      operationId: listBlocked
+      tags: [songs]
+      responses:
+        "200":
+          description: Blocked songs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  songs:
+                    type: array
+                    items:
+                      oneOf:
+                        - $ref: "#/components/schemas/Song"
+                        - $ref: "#/components/schemas/MissingSong"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/queue:
     get:
       summary: List queue
@@ -269,6 +363,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SongBlocked"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
 
@@ -444,6 +540,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SongBlocked"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
 
@@ -616,6 +714,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    SongBlocked:
+      description: The song is blocked (`song is blocked`); see POST /v1/songs/{id}:unblock
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     Forbidden:
       description: Song path resolves outside the music directory
       content:
@@ -656,6 +760,17 @@ components:
         added_at:
           type: string
           format: date-time
+
+    MissingSong:
+      type: object
+      description: A blocked song whose file has left the library.
+      properties:
+        id:
+          type: string
+          format: uuid
+        missing:
+          type: boolean
+          enum: [true]
 
     QueueItem:
       type: object

@@ -144,6 +144,8 @@ Known reasons:
 - `file_removed` (a library file or directory was deleted or renamed away)
 - `file_updated` (a library file was rewritten or replaced and its tags changed)
 - `song_started` (the server sent the next song to the player and took it off the queue)
+- `song_blocked` (an admin pulled a song out of rotation; its queued entries are gone)
+- `song_unblocked` (an admin put a blocked song back in rotation)
 
 `queue_depth` is the live queue length after the change, for every reason.
 

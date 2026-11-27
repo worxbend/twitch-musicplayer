@@ -6,12 +6,14 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"lofi-radio-backend/internal/api"
+	"lofi-radio-backend/internal/blocklist"
 	"lofi-radio-backend/internal/config"
 	"lofi-radio-backend/internal/models"
 	"lofi-radio-backend/internal/played"
@@ -33,13 +35,16 @@ func main() {
 	songRepo := repository.NewMemSongRepo()
 	queueRepo := repository.NewMemQueueRepo(songRepo)
 
-	// ── Played tracker (Bloom filter — the only persistence) ──────────────────
+	// ── Played tracker (Bloom filter; with the blocklist, all that persists) ──
 	playedTracker := played.New(10_000, 0.01)
 	if err := playedTracker.Load(cfg.BloomPath); err != nil {
 		log.Printf("bloom filter: starting fresh (%v)", err)
 	} else {
 		log.Printf("bloom filter loaded from %s (~%d songs played)", cfg.BloomPath, playedTracker.ApproxCount())
 	}
+
+	// ── Blocklist (songs pulled out of rotation, saved next to the Bloom file) ─
+	blocked := loadBlocklist(cfg.BloomPath)
 
 	// ── Queue manager ─────────────────────────────────────────────────────────
 	queueMgr := queue.New(songRepo, playedTracker, queueRepo, queue.ManagerConfig{
@@ -52,6 +57,7 @@ func main() {
 			MinAhead:    cfg.Queue.MinAhead,
 			PreloadSize: cfg.Queue.PreloadSize,
 		},
+		Blocklist: blocked,
 	})
 
 	// ── Player state tracker ──────────────────────────────────────────────────
@@ -159,6 +165,26 @@ func main() {
 	}
 	<-done
 	fmt.Println("shutdown complete.")
+}
+
+// blocklistPath returns where the blocklist lives: the Bloom file's path with
+// its extension replaced by ".blocked.json".
+func blocklistPath(bloomPath string) string {
+	return strings.TrimSuffix(bloomPath, filepath.Ext(bloomPath)) + ".blocked.json"
+}
+
+// loadBlocklist loads the blocklist next to the Bloom file. A corrupt file is
+// logged and replaced by an empty list on the next change, so it never stops
+// the radio.
+func loadBlocklist(bloomPath string) *blocklist.Store {
+	path := blocklistPath(bloomPath)
+	store, err := blocklist.Load(path)
+	if err != nil {
+		log.Printf("warning: blocklist: starting empty (%v)", err)
+		return blocklist.Empty(path)
+	}
+	log.Printf("blocklist loaded from %s (%d songs blocked)", path, len(store.List()))
+	return store
 }
 
 // bloomSaver is the part of played.Tracker that shutdown persists.

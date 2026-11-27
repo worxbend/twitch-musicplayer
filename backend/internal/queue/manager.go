@@ -8,6 +8,7 @@ import (
 	"log"
 	"maps"
 	"math/rand"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,14 @@ var ErrLibraryEmpty = errors.New("no songs available")
 
 // ErrSongNotFound is returned by AddToQueue when the requested song does not exist.
 var ErrSongNotFound = errors.New("song not found")
+
+// ErrSongBlocked is returned by AddToQueue and PlayNext when the streamer
+// pulled the requested song out of rotation.
+var ErrSongBlocked = errors.New("song is blocked")
+
+// errNoBlocklist is returned by BlockSong and UnblockSong when the Manager was
+// built without a Blocklist.
+var errNoBlocklist = errors.New("no blocklist configured")
 
 // ShuffleStrategy controls how songs are selected for auto-play.
 type ShuffleStrategy string
@@ -64,6 +73,8 @@ type FillConfig struct {
 type ManagerConfig struct {
 	Shuffle ShuffleConfig
 	Fill    FillConfig
+	// Blocklist holds the songs pulled out of rotation. nil blocks nothing.
+	Blocklist Blocklist
 }
 
 func defaultConfig() ManagerConfig {
@@ -88,6 +99,15 @@ type PlayedTracker interface {
 	Reset()
 }
 
+// Blocklist is the persisted set of song IDs the streamer pulled out of
+// rotation. Implementations are safe for concurrent use.
+type Blocklist interface {
+	Has(songID string) bool
+	Add(songID string) error
+	Remove(songID string) (bool, error)
+	List() []string
+}
+
 type QueueRepository interface {
 	Enqueue(ctx context.Context, item *models.QueueItem) error
 	EnqueueFront(ctx context.Context, item *models.QueueItem) error
@@ -102,11 +122,12 @@ type QueueRepository interface {
 
 // Manager is the brain of the service — decides which song plays next.
 type Manager struct {
-	songs   SongRepository
-	tracker PlayedTracker
-	queue   QueueRepository
-	cfg     ManagerConfig
-	mu      sync.Mutex
+	songs     SongRepository
+	tracker   PlayedTracker
+	queue     QueueRepository
+	blocklist Blocklist
+	cfg       ManagerConfig
+	mu        sync.Mutex
 
 	// recent holds the IDs of recently-played songs, oldest first, newest last.
 	// Used for recency weighting (weighted_history) and to avoid immediate
@@ -141,7 +162,7 @@ func New(songs SongRepository, tracker PlayedTracker, queue QueueRepository, cfg
 			cfg.Fill.PreloadSize = def.Fill.PreloadSize
 		}
 	}
-	return &Manager{songs: songs, tracker: tracker, queue: queue, cfg: cfg, carryover: map[string]struct{}{}}
+	return &Manager{songs: songs, tracker: tracker, queue: queue, blocklist: cfg.Blocklist, cfg: cfg, carryover: map[string]struct{}{}}
 }
 
 // InitialQueueTarget returns the configured queue depth to prepare before playback starts.
@@ -159,11 +180,11 @@ func (m *Manager) PrepareInitialQueue(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	totalSongs, err := m.songs.Count(ctx)
+	rotation, err := m.rotation(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("count songs: %w", err)
+		return 0, err
 	}
-	if totalSongs == 0 {
+	if len(rotation) == 0 {
 		return 0, nil
 	}
 
@@ -253,10 +274,10 @@ func (m *Manager) markPlayed(songID string) {
 	m.tracker.MarkPlayed(songID)
 }
 
-// dequeueLive pops queue entries until one still points at an indexed song.
-// Entries whose song left the library (a dropped fsnotify event, or a delete
-// racing a dequeue) are logged and skipped. It returns (nil, nil) when the
-// queue runs dry. Must be called with m.mu held.
+// dequeueLive pops queue entries until one still points at an indexed song
+// that is not blocked. Entries whose song left the library (a dropped fsnotify
+// event, or a delete racing a dequeue) or was blocked are logged and dropped.
+// It returns (nil, nil) when the queue runs dry. Must be called with m.mu held.
 func (m *Manager) dequeueLive(ctx context.Context) (*models.Song, error) {
 	for {
 		item, err := m.queue.Dequeue(ctx)
@@ -273,6 +294,10 @@ func (m *Manager) dequeueLive(ctx context.Context) (*models.Song, error) {
 		}
 		if err != nil {
 			return nil, fmt.Errorf("get queued song: %w", err)
+		}
+		if m.isBlocked(song.ID) {
+			log.Printf("queue: skipping entry %s, song %s is blocked", item.ID, item.SongID)
+			continue
 		}
 		return song, nil
 	}
@@ -383,9 +408,9 @@ func (m *Manager) weightedPick(candidates []*models.Song, total int) *models.Son
 // autoSelect picks the next song according to the shuffle strategy.
 // Must be called with m.mu held.
 func (m *Manager) autoSelect(ctx context.Context) (*models.Song, error) {
-	allSongs, err := m.songs.List(ctx)
+	allSongs, err := m.rotation(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list songs: %w", err)
+		return nil, err
 	}
 	if len(allSongs) == 0 {
 		return nil, ErrLibraryEmpty
@@ -393,6 +418,25 @@ func (m *Manager) autoSelect(ctx context.Context) (*models.Song, error) {
 
 	m.resetCycleIfComplete(allSongs, nil)
 	return m.pickByStrategy(allSongs, m.lastArtist, len(allSongs))
+}
+
+// rotation lists the songs auto-select may pick: the library minus blocked
+// songs. Blocked songs must not count toward the rotation cycle, or it would
+// never complete.
+func (m *Manager) rotation(ctx context.Context) ([]*models.Song, error) {
+	allSongs, err := m.songs.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list songs: %w", err)
+	}
+	if m.blocklist == nil {
+		return allSongs, nil
+	}
+	return slices.DeleteFunc(allSongs, func(s *models.Song) bool { return m.blocklist.Has(s.ID) }), nil
+}
+
+// isBlocked reports whether songID is pulled out of rotation.
+func (m *Manager) isBlocked(songID string) bool {
+	return m.blocklist != nil && m.blocklist.Has(songID)
 }
 
 // resetCycleIfComplete starts a new rotation cycle once every song is either
@@ -523,9 +567,9 @@ func (m *Manager) tailArtist(ctx context.Context, items []*models.QueueItem, fal
 }
 
 func (m *Manager) autoSelectExcluding(ctx context.Context, queued map[string]struct{}, avoidArtist string) (*models.Song, error) {
-	allSongs, err := m.songs.List(ctx)
+	allSongs, err := m.rotation(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list songs: %w", err)
+		return nil, err
 	}
 	if len(allSongs) == 0 {
 		return nil, ErrLibraryEmpty
@@ -563,10 +607,22 @@ func (m *Manager) AddToQueue(ctx context.Context, songID string, source models.Q
 	return item, nil
 }
 
-// requireSong loads a song by ID, translating "not found" into ErrSongNotFound
-// so callers can map it onto a 404 without knowing about the storage layer.
-// Must be called with m.mu held.
+// requireSong loads a song that may be queued: it fails with ErrSongNotFound
+// or ErrSongBlocked so callers can map either onto a status code without
+// knowing about the storage layer. Must be called with m.mu held.
 func (m *Manager) requireSong(ctx context.Context, songID string) (*models.Song, error) {
+	song, err := m.lookupSong(ctx, songID)
+	if err != nil {
+		return nil, err
+	}
+	if m.isBlocked(songID) {
+		return nil, fmt.Errorf("%w: %s", ErrSongBlocked, songID)
+	}
+	return song, nil
+}
+
+// lookupSong loads a song by ID, translating "not found" into ErrSongNotFound.
+func (m *Manager) lookupSong(ctx context.Context, songID string) (*models.Song, error) {
 	song, err := m.songs.GetByID(ctx, songID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -587,9 +643,77 @@ func newQueueItem(songID string, source models.QueueSource) *models.QueueItem {
 	}
 }
 
-// TotalSongs reports how many songs are currently indexed.
+// TotalSongs reports how many indexed songs are in rotation (not blocked).
 func (m *Manager) TotalSongs(ctx context.Context) (int, error) {
-	return m.songs.Count(ctx)
+	rotation, err := m.rotation(ctx)
+	return len(rotation), err
+}
+
+// BlockedSong is a blocked song ID with its library entry, or a nil Song when
+// the file has left the library.
+type BlockedSong struct {
+	ID   string
+	Song *models.Song
+}
+
+// BlockedSongs lists the blocked songs, sorted by ID.
+func (m *Manager) BlockedSongs(ctx context.Context) ([]BlockedSong, error) {
+	if m.blocklist == nil {
+		return nil, nil
+	}
+	ids := m.blocklist.List()
+	out := make([]BlockedSong, 0, len(ids))
+	for _, id := range ids {
+		song, err := m.songs.GetByID(ctx, id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("get blocked song %s: %w", id, err)
+		}
+		out = append(out, BlockedSong{ID: id, Song: song})
+	}
+	return out, nil
+}
+
+// BlockSong pulls a library song out of rotation and drops its queued
+// entries. The song playing now keeps playing. Blocking a blocked song is a
+// no-op apart from the purge. It returns ErrSongNotFound for an unknown song.
+func (m *Manager) BlockSong(ctx context.Context, songID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.blocklist == nil {
+		return errNoBlocklist
+	}
+	if _, err := m.lookupSong(ctx, songID); err != nil {
+		return err
+	}
+	if err := m.blocklist.Add(songID); err != nil {
+		return fmt.Errorf("block song %s: %w", songID, err)
+	}
+	if _, err := m.queue.RemoveBySongID(ctx, songID); err != nil {
+		return fmt.Errorf("purge blocked song %s: %w", songID, err)
+	}
+	return nil
+}
+
+// UnblockSong puts a song back in rotation. A blocked ID is removed even when
+// its song has left the library, so stale entries can be cleaned up. It
+// returns ErrSongNotFound only when the ID is neither blocked nor indexed.
+func (m *Manager) UnblockSong(ctx context.Context, songID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.blocklist == nil {
+		return errNoBlocklist
+	}
+	removed, err := m.blocklist.Remove(songID)
+	if err != nil {
+		return fmt.Errorf("unblock song %s: %w", songID, err)
+	}
+	if removed {
+		return nil
+	}
+	_, err = m.lookupSong(ctx, songID)
+	return err
 }
 
 // ListQueue returns the current contents of the playback queue.
