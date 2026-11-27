@@ -79,8 +79,9 @@ type Watcher struct {
 	settlePoll time.Duration
 	settling   sync.WaitGroup
 	inflightMu sync.Mutex
-	inflight   map[string]struct{}
-	settleSem  chan struct{}
+	// inflight maps a claimed path to whether another pass was requested.
+	inflight  map[string]bool
+	settleSem chan struct{}
 	// settleWait is w.waitSettled; it is a field only as a test seam.
 	settleWait func(ctx context.Context, path string) error
 	// resyncing collapses back-to-back event overflows into one resync.
@@ -136,7 +137,7 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 		logger:      log.New(log.Writer(), "[watcher] ", log.LstdFlags),
 
 		settlePoll: 250 * time.Millisecond,
-		inflight:   make(map[string]struct{}),
+		inflight:   make(map[string]bool),
 		settleSem:  make(chan struct{}, settleWorkers),
 	}
 	w.settleWait = w.waitSettled
@@ -257,7 +258,8 @@ func (w *Watcher) handleEvent(ctx context.Context, event fsnotify.Event) {
 	if event.Has(fsnotify.Create) {
 		w.handleCreate(ctx, event.Name)
 	} else if event.Has(fsnotify.Write) && w.isMusicFile(event.Name) {
-		// An in-place tag save; claim collapses the burst of Writes.
+		// An in-place tag save; claim folds a burst of Writes that lands
+		// mid-flight into exactly one more pass.
 		w.registerWhenSettled(ctx, event.Name)
 	}
 }
@@ -401,22 +403,29 @@ func (w *Watcher) handleCreate(ctx context.Context, path string) {
 }
 
 // registerWhenSettled indexes and queues path in the background once it stops
-// changing. A path already settling is skipped, so a directory scan racing the
-// file's own Create event registers it once.
+// changing. An event for a path already in flight schedules exactly one more
+// pass, so a tag saved after the metadata read is not lost. That pass finds
+// the song indexed and only refreshes it, so a directory scan racing the
+// file's own Create event still queues it once.
 func (w *Watcher) registerWhenSettled(ctx context.Context, path string) {
 	if !w.claim(path) {
 		return
 	}
 	w.settling.Go(func() {
-		defer w.release(path)
-		if err := w.awaitSettled(ctx, path); err != nil {
-			if ctx.Err() == nil {
-				w.logger.Printf("skip %s: %v", path, err)
+		for {
+			if err := w.awaitSettled(ctx, path); err != nil {
+				if ctx.Err() == nil {
+					w.logger.Printf("skip %s: %v", path, err)
+				}
+				w.release(path)
+				return
 			}
-			return
-		}
-		if _, _, err := w.registerFile(ctx, path, true); err != nil {
-			w.logger.Printf("register %s: %v", path, err)
+			if _, _, err := w.registerFile(ctx, path, true); err != nil {
+				w.logger.Printf("register %s: %v", path, err)
+			}
+			if !w.releaseOrRerun(path) {
+				return
+			}
 		}
 	})
 }
@@ -434,16 +443,33 @@ func (w *Watcher) awaitSettled(ctx context.Context, path string) error {
 	return w.settleWait(ctx, path)
 }
 
+// claim reports whether the caller now owns path. If path is already in
+// flight, it asks the owner for one more pass instead.
 func (w *Watcher) claim(path string) bool {
 	w.inflightMu.Lock()
 	defer w.inflightMu.Unlock()
 	if _, busy := w.inflight[path]; busy {
+		w.inflight[path] = true
 		return false
 	}
-	w.inflight[path] = struct{}{}
+	w.inflight[path] = false
 	return true
 }
 
+// releaseOrRerun drops the claim on path and returns false, unless another
+// pass was requested: then it keeps the claim and returns true.
+func (w *Watcher) releaseOrRerun(path string) bool {
+	w.inflightMu.Lock()
+	defer w.inflightMu.Unlock()
+	if w.inflight[path] {
+		w.inflight[path] = false
+		return true
+	}
+	delete(w.inflight, path)
+	return false
+}
+
+// release drops the claim on path, discarding any requested pass.
 func (w *Watcher) release(path string) {
 	w.inflightMu.Lock()
 	defer w.inflightMu.Unlock()

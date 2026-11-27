@@ -965,3 +965,97 @@ func TestWatcherIgnoresNewSymlinkOutsideLibrary(t *testing.T) {
 		t.Errorf("queue depth = %d, want 1 (only z.mp3)", n)
 	}
 }
+
+// retagHarness indexes a.mp3 (titled "A") with an unstarted watcher whose
+// settle wait is settle, so a test drives handleEvent itself.
+func retagHarness(t *testing.T, settle func(context.Context, string) error) (*Watcher, *repository.MemSongRepo, string) {
+	t.Helper()
+	songs := repository.NewMemSongRepo()
+	w, _, path, _ := registerHarness(t, songs, songs)
+	w.settleWait = settle
+	if _, err := w.ScanExisting(context.Background()); err != nil {
+		t.Fatalf("ScanExisting: %v", err)
+	}
+	return w, songs, path
+}
+
+func retag(t *testing.T, path, title string) {
+	t.Helper()
+	if err := os.WriteFile(path, taggedMP3(t, title), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func titleOf(t *testing.T, songs *repository.MemSongRepo, path string) string {
+	t.Helper()
+	song, err := songs.GetByID(context.Background(), songID(path))
+	if err != nil {
+		t.Fatalf("GetByID(%s): %v", path, err)
+	}
+	return song.Title
+}
+
+func TestWatcherRerunsRegistrationForWriteWhileInFlight(t *testing.T) {
+	ctx := context.Background()
+	w, songs, path := retagHarness(t, func(context.Context, string) error { return nil })
+	v3 := taggedMP3(t, "v3")
+	var updates atomic.Int32
+	w.OnUpdated = func(_ *models.Song) {
+		if updates.Add(1) == 1 {
+			// The path is still claimed here: this Write lands mid-flight.
+			if err := os.WriteFile(path, v3, 0o644); err != nil {
+				t.Errorf("write v3: %v", err)
+			}
+			w.handleEvent(ctx, fsnotify.Event{Name: path, Op: fsnotify.Write})
+		}
+	}
+
+	retag(t, path, "v2")
+	w.handleEvent(ctx, fsnotify.Event{Name: path, Op: fsnotify.Write})
+	w.settling.Wait()
+
+	if got := titleOf(t, songs, path); got != "v3" {
+		t.Fatalf("title = %q, want v3 (Write during refresh dropped)", got)
+	}
+	if n := updates.Load(); n != 2 {
+		t.Fatalf("OnUpdated fired %d times, want 2", n)
+	}
+}
+
+func TestWatcherReleasesPathWhenSettleFailsAfterMidFlightWrite(t *testing.T) {
+	ctx := context.Background()
+	entered := make(chan struct{})
+	proceed := make(chan struct{})
+	var calls atomic.Int32
+	w, songs, path := retagHarness(t, func(context.Context, string) error {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-proceed
+			return errors.New("vanished")
+		}
+		return nil
+	})
+
+	w.handleEvent(ctx, fsnotify.Event{Name: path, Op: fsnotify.Write})
+	<-entered
+	w.handleEvent(ctx, fsnotify.Event{Name: path, Op: fsnotify.Write})
+	close(proceed)
+	w.settling.Wait()
+
+	w.inflightMu.Lock()
+	left := len(w.inflight)
+	w.inflightMu.Unlock()
+	if left != 0 {
+		t.Fatalf("inflight holds %d paths after a failed settle, want 0", left)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("settle ran %d times, want 1 (a failed settle must not rerun)", n)
+	}
+
+	retag(t, path, "v2")
+	w.handleEvent(ctx, fsnotify.Event{Name: path, Op: fsnotify.Write})
+	w.settling.Wait()
+	if got := titleOf(t, songs, path); got != "v2" {
+		t.Fatalf("title = %q, want v2 (later Write not processed)", got)
+	}
+}
