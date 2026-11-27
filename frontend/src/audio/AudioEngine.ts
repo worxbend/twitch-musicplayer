@@ -534,17 +534,21 @@ export class AudioEngine {
     }
   }
 
-  update(dt: number, intensity = 1) {
-    if (this._disposed) return;
+  /** True while the active element plays backend audio; `playing` stays set after an end or an external pause. */
+  get audible(): boolean {
     const el = this._activeAudioElement();
-    // `playing` is not cleared when a track ends, so also check the element itself.
-    const usingReal =
+    return (
       this.mode === 'backend' &&
       !!this.analyser &&
       this.playing &&
-      !!el && !el.paused && !el.ended;
+      !!el && !el.paused && !el.ended
+    );
+  }
 
-    if (usingReal) {
+  update(dt: number, intensity = 1) {
+    if (this._disposed) return;
+
+    if (this.audible) {
       this.analyser!.getByteFrequencyData(this._real);
       const n = Math.min(BINS, this._real.length);
       for (let i = 0; i < n; i++) this.raw[i] = this._real[i];

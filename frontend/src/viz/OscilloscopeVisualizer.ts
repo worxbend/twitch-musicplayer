@@ -96,7 +96,7 @@ export class OscilloscopeVisualizer extends WaveScene {
 
   protected draw(frame: AudioFrame, dt: number) {
     const td = frame.timeDomain;
-    const activity = this.audio.playing ? 1 : 0.65;
+    const activity = this.audio.audible ? 1 : 0.65;
     const length = td.length;
     let start = 0;
     let period = Math.max(16, Math.floor(length / 12));

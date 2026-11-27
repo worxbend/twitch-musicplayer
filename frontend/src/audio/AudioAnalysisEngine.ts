@@ -105,7 +105,7 @@ export class AudioAnalysisEngine {
   get waveCount() { return this.nWave; }
 
   update(audio: AudioEngine, dt = 1 / 60): AudioFrame {
-    const live = this.ensureNode(audio) && audio.playing;
+    const live = this.ensureNode(audio) && audio.audible;
 
     if (live && this.node) {
       this.node.getByteFrequencyData(this.freqBytes);

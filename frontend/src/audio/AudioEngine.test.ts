@@ -253,6 +253,27 @@ test('visuals fall back to the synth once the active track ends', async () => {
   assert.equal(readSpectrum.mock.callCount(), 1);
 });
 
+test('audible is true while a started backend track plays', async () => {
+  await playFirstTrack();
+  assert.equal(engine.audible, true);
+});
+
+test('audible is false once the active track ends, though playing stays set', async () => {
+  const el = await playFirstTrack();
+  el.paused = true;
+  el.ended = true;
+  el.dispatch('ended');
+  assert.equal(engine.playing, true);
+  assert.equal(engine.audible, false);
+});
+
+test('audible is false after an external pause, though playing stays set', async () => {
+  const el = await playFirstTrack();
+  el.pause();
+  assert.equal(engine.playing, true);
+  assert.equal(engine.audible, false);
+});
+
 // Swaps the next channel's play() for one the test settles by hand.
 function holdNextPlay() {
   const el = engine['_nextChannel']().audioEl as unknown as FakeAudioElement;

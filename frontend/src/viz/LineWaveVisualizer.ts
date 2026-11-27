@@ -41,7 +41,7 @@ export class LineWaveVisualizer extends WaveScene {
 
   protected draw(frame: AudioFrame, dt: number) {
     const g = this.gfx;
-    const activity = this.audio.playing ? 1 : 0.65;
+    const activity = this.audio.audible ? 1 : 0.65;
     const follow = 1 - Math.exp(-dt / 0.06);
     const td = frame.timeDomain;
     for (let i = 0; i < POINTS; i++) {

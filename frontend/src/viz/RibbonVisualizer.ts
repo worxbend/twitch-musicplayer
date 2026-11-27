@@ -53,7 +53,7 @@ export class RibbonVisualizer extends WaveScene {
     this.drawnGradient?.destroy();
     this.drawnGradient = null;
     const g = this.gfx;
-    const activity = this.audio.playing ? 1 : 0.65;
+    const activity = this.audio.audible ? 1 : 0.65;
     const follow = 1 - Math.exp(-dt / 0.11);
     const fast = 1 - Math.exp(-dt / 0.05);
     const amp = this.halfBand * (0.96 + Math.min(1, this.beatPulse) * 0.025);
