@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails when the Docker build images or CI drift from the pinned toolchains:
-# Go major.minor (backend/go.mod toolchain vs backend/Dockerfile and the CI
+# Go major.minor (backend/go.mod toolchain vs backend/Dockerfile and every CI
 # setup-go version) and Node major (frontend/.nvmrc vs frontend/Dockerfile,
 # @types/node and package.json engines.node).
 # Patch versions may differ so Dependabot patch bumps stay green.
@@ -32,10 +32,19 @@ go_mod=$(grep -m1 -E '^toolchain go[0-9]' backend/go.mod \
   | sed -E 's/^toolchain go([0-9]+\.[0-9]+).*/\1/' || true)
 go_image=$(first_from backend/Dockerfile \
   | sed -nE 's/^golang:([0-9]+\.[0-9]+).*/\1/p')
-ci_go=$(grep -m1 -E '^[[:space:]]*go-version:' .github/workflows/ci.yml \
-  | sed -E "s/.*go-version:[[:space:]]*['\"]?([0-9]+\.[0-9]+).*/\1/" || true)
 compare "go major.minor" backend/go.mod "$go_mod" backend/Dockerfile "$go_image"
-compare "go major.minor" backend/go.mod "$go_mod" .github/workflows/ci.yml "$ci_go"
+
+# Every setup-go in CI (the backend and lint jobs each pin one).
+ci_go_lines=$(grep -n -E '^[[:space:]]*go-version:' .github/workflows/ci.yml || true)
+if [[ -z "$ci_go_lines" ]]; then
+  echo "MISMATCH go major.minor: no go-version: line in .github/workflows/ci.yml" >&2
+  status=1
+fi
+while IFS=: read -r line_no line; do
+  [[ -n "$line_no" ]] || continue
+  ci_go=$(sed -E "s/.*go-version:[[:space:]]*['\"]?([0-9]+\.[0-9]+).*/\1/" <<<"$line")
+  compare "go major.minor" backend/go.mod "$go_mod" ".github/workflows/ci.yml:$line_no" "$ci_go"
+done <<<"$ci_go_lines"
 
 nvmrc=$(sed -nE '1s/^v?([0-9]+).*/\1/p' frontend/.nvmrc)
 node_image=$(first_from frontend/Dockerfile \

@@ -29,7 +29,7 @@ editing code — the containers do not hot-reload.
 - Go 1.27 (`backend/go.mod` pins `toolchain go1.27.4`).
 - Node.js 26+ (`engines` in `frontend/package.json`; `frontend/.nvmrc` selects 26).
 - npm.
-- The Docker build images, CI `setup-go` and `package.json` (`engines.node`, `@types/node`) follow `backend/go.mod`'s toolchain (Go major.minor) and `frontend/.nvmrc` (Node major); `scripts/check-toolchains.sh` enforces this in CI and `make check`.
+- The Docker build images, every CI `setup-go` and `package.json` (`engines.node`, `@types/node`) follow `backend/go.mod`'s toolchain (Go major.minor) and `frontend/.nvmrc` (Node major); `scripts/check-toolchains.sh` enforces this in CI and `make check`.
 - No CGO toolchain required: the service uses no database driver.
 - MP3 files for local playback.
 
@@ -195,6 +195,20 @@ does not leave styling behind.
 
 ## ✅ Verification
 
+Run every CI gate from the repo root with one command:
+
+```bash
+make check              # toolchain parity, lint, backend check, frontend
+                        # npm ci + typecheck + test + build
+make ui                 # opt-in: Playwright (needs chromium installed)
+make docker-smoke       # opt-in: builds both images, runs scripts/docker-smoke.sh
+                        # on ports 18081/13001 (override with SMOKE_BE_PORT=...
+                        # SMOKE_FE_PORT=...), then removes the images
+```
+
+`ui` and `docker-smoke` stay out of `make check` because both are heavy on a shared host.
+The blocks below are the per-gate detail.
+
 ```bash
 make -C backend check   # gofmt, go mod tidy -diff, go vet, staticcheck,
                         # go test -race, govulncheck, go build
@@ -215,8 +229,16 @@ bash scripts/lint.sh    # actionlint over workflows, shellcheck over scripts/ an
                         # frontend/docker-entrypoint.d (needs go + shellcheck 0.11.0)
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same gates in five jobs: `backend`, `frontend`,
-`ui` (Playwright), `lint` (`scripts/lint.sh`) and `docker` (compose validation, image builds and smoke tests).
+```bash
+bash scripts/docker-smoke.sh BACKEND_IMAGE FRONTEND_IMAGE
+                        # hardened-container smoke of built images; ports via
+                        # SMOKE_BE_PORT / SMOKE_FE_PORT (default 8080 / 3000), needs node
+```
+
+CI (`.github/workflows/ci.yml`) runs the same gates in six jobs: `backend`, `frontend`,
+`ui` (Playwright), `lint` (`scripts/lint.sh`), `docker` (compose validation, image builds,
+`scripts/docker-smoke.sh` and a compose hardening check) and `docker-arm64` (native arm64
+image builds on an arm64 runner, an architecture check and the same smoke script).
 
 Frontend unit tests run in plain Node, which executes the TypeScript directly.
 Browser tests use Playwright and a separate Vite server on port 3100.
