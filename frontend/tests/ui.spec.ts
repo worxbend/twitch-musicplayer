@@ -205,6 +205,8 @@ test('admin drops a silent socket and reconnects', async ({ page }) => {
   await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { sockets.push(ws); });
   await page.goto('/admin');
   await expect.poll(() => sockets.length).toBe(1);
+  // The route handler runs before the page's onopen, which arms the heartbeat.
+  await expect(page.getByText('Backend connected')).toBeVisible();
   // No heartbeat_ack: stale after STALE_AFTER_MS, checked on the next heartbeat tick, then backoff.
   await page.clock.runFor(62_500 + 25_000 + 1_000);
   await expect.poll(() => sockets.length).toBe(2);
@@ -657,9 +659,14 @@ test('now-playing hold re-shows a repeated title on a new history_id; a dry-queu
 test('now-playing overlay reconnects a silent socket', async ({ page }) => {
   await page.clock.install();
   const sockets: WebSocketRoute[] = [];
-  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { sockets.push(ws); });
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
+    sockets.push(ws);
+    ws.send(JSON.stringify({ type: 'now_playing', payload: { song: songs[0], history_id: 'h1', queue_depth: 1 } }));
+  });
   await page.goto('/now-playing');
   await expect.poll(() => sockets.length).toBe(1);
+  // onmessage follows onopen, so a shown title proves the heartbeat is armed.
+  await expect(page.getByText('Midnight compiler')).toBeVisible();
   await page.clock.runFor(62_500 + 25_000 + 1_000);
   await expect.poll(() => sockets.length).toBe(2);
 });
@@ -670,6 +677,7 @@ test('now-playing overlay keeps a socket that answers heartbeats', async ({ page
   let acks = 0;
   await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
     sockets.push(ws);
+    ws.send(JSON.stringify({ type: 'now_playing', payload: { song: songs[0], history_id: 'h1', queue_depth: 1 } }));
     ws.onMessage(message => {
       if (JSON.parse(String(message)).type !== 'heartbeat') return;
       acks++;
@@ -678,6 +686,7 @@ test('now-playing overlay keeps a socket that answers heartbeats', async ({ page
   });
   await page.goto('/now-playing');
   await expect.poll(() => sockets.length).toBe(1);
+  await expect(page.getByText('Midnight compiler')).toBeVisible();
   // Advance one heartbeat at a time so each ack lands before the next stale check.
   for (let i = 0; i < 7; i++) {
     await page.clock.runFor(25_000);
