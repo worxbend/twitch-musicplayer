@@ -1,5 +1,5 @@
 import type { AudioEngine } from './AudioEngine';
-import { getWebSocketURL, resolveStreamURL } from '../config/backend.ts';
+import { coverURL, getWebSocketURL, resolveStreamURL } from '../config/backend.ts';
 
 type MessageType =
   | 'need_song'
@@ -24,6 +24,7 @@ interface Song {
   title: string;
   artist?: string;
   filename: string;
+  has_cover?: boolean;
 }
 
 interface PlaySongPayload {
@@ -36,7 +37,7 @@ interface ErrorPayload {
   message: string;
 }
 
-export interface SongInfo { title: string; artist?: string }
+export interface SongInfo { title: string; artist?: string; coverUrl?: string }
 
 /** Health of the WebSocket link to the backend. */
 export type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected';
@@ -333,7 +334,11 @@ export class BackendPlaybackClient {
         onStarted: () => {
           if (token !== this.playToken) return;
           this.displayedHistoryId = payload.history_id;
-          this.onSongChange?.({ title: songName, artist: payload.song.artist });
+          this.onSongChange?.({
+            title: songName,
+            artist: payload.song.artist,
+            coverUrl: payload.song.has_cover === true ? coverURL(payload.song.id) : undefined,
+          });
           this.report({ playback: 'playing' }, 'playing');
         },
       });

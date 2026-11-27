@@ -23,7 +23,8 @@ export function ScenesIndex() {
   const [align, setAlign] = createSignal<NowPlayingAlign>('left');
   const [size, setSize] = createSignal(32);
   const [hold, setHold] = createSignal(0);
-  const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold() });
+  const [art, setArt] = createSignal(false);
+  const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold(), art: art() });
   let timer = 0;
   onMount(() => {
     document.documentElement.classList.add('scenes-index-page');
@@ -126,6 +127,10 @@ export function ScenesIndex() {
                   <input type="number" min="0" max="600" step="1" value={hold()} aria-describedby="hold-help" onInput={e => setHold(e.currentTarget.valueAsNumber)} />
                 </label>
                 <small id="hold-help">0 = always visible</small>
+                <label class="overlay-check">
+                  <input type="checkbox" checked={art()} onChange={e => setArt(e.currentTarget.checked)} />
+                  Album art
+                </label>
               </div>
               <div class="scene-urls">
                 <button class="scene-url" onClick={() => void copy(nowPlayingURL())} aria-label="Copy now playing overlay URL"><span>{nowPlayingURL()}</span><span class="copy-hint">copy ⧉</span></button>

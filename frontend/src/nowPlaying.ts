@@ -7,11 +7,14 @@
  * are `{type, payload}` envelopes (backend/internal/websocket/protocol.go).
  */
 
-/** `startId` is now_playing's history_id: set on a real song start, absent on a retag or `state` frame. */
-export type NowPlayingSong = { title: string; artist: string; startId?: string };
+/**
+ * `startId` is now_playing's history_id: set on a real song start, absent on a retag or `state` frame.
+ * `coverId` is the song id when the song has embedded cover art; the overlay turns it into a URL.
+ */
+export type NowPlayingSong = { title: string; artist: string; startId?: string; coverId?: string };
 export type NowPlayingAlign = 'left' | 'center' | 'right';
-/** `hold` is seconds the title stays visible after each change; 0 keeps it visible. */
-export type NowPlayingOptions = { align: NowPlayingAlign; size: number; hold: number };
+/** `hold` is seconds the title stays visible after each change; 0 keeps it visible. `art` shows the cover. */
+export type NowPlayingOptions = { align: NowPlayingAlign; size: number; hold: number; art: boolean };
 
 type JsonObject = Record<string, unknown>;
 
@@ -32,7 +35,10 @@ function stripExtension(filename: string): string {
 function toSong(raw: unknown): NowPlayingSong | null {
   if (!isObject(raw)) return null;
   const title = asText(raw.title) || stripExtension(asText(raw.filename));
-  return title ? { title, artist: asText(raw.artist) } : null;
+  if (!title) return null;
+  const song: NowPlayingSong = { title, artist: asText(raw.artist) };
+  const coverId = raw.has_cover === true ? asText(raw.id) : '';
+  return coverId ? { ...song, coverId } : song;
 }
 
 function parse(raw: string): JsonObject | null {
@@ -91,8 +97,8 @@ function parseWholeNumber(raw: string | null): number {
 }
 
 /**
- * Reads `?align=`, `?size=` (px) and `?hold=` (seconds, 1..600). Anything invalid
- * falls back to left / 32 / 0, where hold 0 means always visible.
+ * Reads `?align=`, `?size=` (px), `?hold=` (seconds, 1..600) and `?art=1`. Anything
+ * invalid falls back to left / 32 / 0 / no art, where hold 0 means always visible.
  */
 export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const params = new URLSearchParams(search);
@@ -102,7 +108,7 @@ export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const size = px >= minSizePx && px <= maxSizePx ? px : defaultSizePx;
   const secs = parseWholeNumber(params.get('hold'));
   const hold = secs >= 1 && secs <= maxHoldSecs ? secs : 0;
-  return { align, size, hold };
+  return { align, size, hold, art: params.get('art') === '1' };
 }
 
 /** Rounds to a whole number inside min..max; a missing or non-numeric value gives `fallback`. */
@@ -123,6 +129,7 @@ export function nowPlayingPath(opts: Partial<NowPlayingOptions>): string {
   if (align !== 'left') params.set('align', align);
   if (size !== defaultSizePx) params.set('size', String(size));
   if (hold !== 0) params.set('hold', String(hold));
+  if (opts.art === true) params.set('art', '1');
   const query = params.toString();
   return query ? `/now-playing?${query}` : '/now-playing';
 }

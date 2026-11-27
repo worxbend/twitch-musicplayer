@@ -9,6 +9,8 @@ import { SCENES } from '../viz/scenes';
 interface Props {
   trackName: () => string;
   trackArtist: () => string;
+  /** Embedded cover art of the playing track, or undefined when it has none. */
+  trackCover: () => string | undefined;
   wsStatus: () => ConnectionStatus;
   playbackStatus: () => PlaybackStatus;
   audio: () => AudioEngine | null;
@@ -42,6 +44,12 @@ export function PlayerUI(props: Props) {
   const [remaining, setRemaining] = createSignal('0:00');
   const [valueText, setValueText] = createSignal('No track loaded');
   const [volume, setVolume] = createSignal(loadVolume(browserStorage()));
+  // A cover that failed to load falls back to the record art instead of a broken image.
+  const [failedCover, setFailedCover] = createSignal<string>();
+  const cover = () => {
+    const url = props.trackCover();
+    return url && url !== failedCover() ? url : undefined;
+  };
   const [muted, setMuted] = createSignal(false);
   const storeVolume = (next: number) => {
     setVolume(next);
@@ -106,7 +114,9 @@ export function PlayerUI(props: Props) {
           <For each={SCENES}>{scene => <a href={`/${scene.slug}${new URLSearchParams(window.location.search).has('ramp') ? `?ramp=${encodeURIComponent(new URLSearchParams(window.location.search).get('ramp')!)}` : ''}`} aria-current={props.sceneSlug === scene.slug ? 'page' : undefined}>{scene.label}</a>}</For>
         </div>
         <section class="player-deck" aria-label="Current track">
-          <div class="deck-art" aria-hidden="true"><span /></div>
+          <Show when={cover()} keyed fallback={<div class="deck-art" aria-hidden="true"><span /></div>}>
+            {url => <img class="np-cover" src={url} alt="" width="58" height="58" decoding="async" onError={() => setFailedCover(url)} />}
+          </Show>
           <div class="np-info"><span class="np-label">{status().live ? 'Now playing' : 'Current track'}</span><span id="np-title" title={props.trackName()}>{props.trackName()}</span><span id="np-artist">{props.trackArtist()}</span></div>
           <div class="np-progress"><div class="np-times"><span>{elapsed()}</span><span>{remaining()}</span></div><div class="np-bar" role="progressbar" aria-label="Track progress" aria-valuenow={Math.round(fraction() * 100)} aria-valuetext={valueText()} aria-valuemin={0} aria-valuemax={100}><div class="np-bar-fill" style={{width: `${fraction() * 100}%`}} /></div><span class="progress-caption">Continuous playback</span></div>
           <div class="np-volume"><button type="button" class="btn btn-icon" aria-pressed={muted()} aria-label="Mute" title="Mute (M)" onClick={() => setMuted(m => !m)}>{muted() ? '×' : '♪'}</button><input type="range" min="0" max="100" step="1" aria-label="Volume" title="Volume (- / +)" value={Math.round(volume() * 100)} onInput={e => unmuteAt(Number(e.currentTarget.value) / 100)} /></div>

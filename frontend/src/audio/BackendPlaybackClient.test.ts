@@ -158,11 +158,11 @@ function socket(index = FakeWebSocket.instances.length - 1) {
   return FakeWebSocket.instances[index];
 }
 
-function playSong(id: string, title = id) {
+function playSong(id: string, title = id, extra: Record<string, unknown> = {}) {
   return {
     type: 'play_song',
     payload: {
-      song: { id, title, filename: `${id}.mp3` },
+      song: { id, title, filename: `${id}.mp3`, ...extra },
       stream_url: `/stream/${id}`,
       history_id: `h-${id}`,
     },
@@ -274,9 +274,28 @@ test('a play that settles after a newer one is ignored', async () => {
   await flush();
 
   assert.equal(internals().current?.history_id, 'h-b');
-  assert.deepEqual(songs, [{ title: 'Second', artist: undefined }]);
+  assert.deepEqual(songs, [{ title: 'Second', artist: undefined, coverUrl: undefined }]);
   assert.equal(lastPlayback(), 'playing');
 });
+
+async function startedSong(extra: Record<string, unknown>) {
+  socket().open();
+  socket().message(playSong('a 1', 'A', extra));
+  audio.plays[0].settle.resolve();
+  await flush();
+  return songs.at(-1);
+}
+
+test('a song with has_cover reports its cover URL', async () => {
+  const song = await startedSong({ has_cover: true });
+  assert.equal(song?.coverUrl, 'http://localhost:8080/v1/songs/a%201/cover');
+});
+
+for (const [name, extra] of [['false', { has_cover: false }], ['absent', {}]] as const) {
+  test(`a song with has_cover ${name} reports no cover URL`, async () => {
+    assert.equal((await startedSong(extra))?.coverUrl, undefined);
+  });
+}
 
 test('a stale play failure does not report over the newer play', async () => {
   socket().open();
@@ -834,7 +853,7 @@ test('a skipped play that settles late does not become current', async () => {
   audio.plays[1].settle.resolve();
   await flush();
   assert.equal(internals().current?.history_id, 'h-b');
-  assert.deepEqual(songs.at(-1), { title: 'Next', artist: undefined });
+  assert.deepEqual(songs.at(-1), { title: 'Next', artist: undefined, coverUrl: undefined });
 });
 
 test('skip_now resets the stream retry count', async () => {
@@ -860,13 +879,13 @@ test('a near-end crossfade switches the title when the next song starts, with no
   audio.plays[0].callbacks.onNearEnd();
   ws.message(playSong('b', 'B'));
   audio.plays[1].start();
-  assert.deepEqual(songs, [{ title: 'A', artist: undefined }, { title: 'B', artist: undefined }], 'B shows while the fade runs');
+  assert.deepEqual(songs, [{ title: 'A', artist: undefined, coverUrl: undefined }, { title: 'B', artist: undefined, coverUrl: undefined }], 'B shows while the fade runs');
   assert.equal(lastPlayback(), 'playing');
 
   audio.plays[1].settle.resolve();
   await flush();
   audio.plays[0].callbacks.onEnded();
-  assert.deepEqual(songs, [{ title: 'A', artist: undefined }, { title: 'B', artist: undefined }]);
+  assert.deepEqual(songs, [{ title: 'A', artist: undefined, coverUrl: undefined }, { title: 'B', artist: undefined, coverUrl: undefined }]);
   assert.equal(internals().current?.history_id, 'h-b');
 });
 
@@ -879,10 +898,10 @@ test('the title clears only when a song with no replacement really ends', async 
 
   audio.plays[0].callbacks.onNearEnd();
   ws.message({ type: 'error', payload: { message: 'queue empty' } });
-  assert.deepEqual(songs, [{ title: 'A', artist: undefined }], 'A is still audible');
+  assert.deepEqual(songs, [{ title: 'A', artist: undefined, coverUrl: undefined }], 'A is still audible');
 
   audio.plays[0].callbacks.onEnded();
-  assert.deepEqual(songs, [{ title: 'A', artist: undefined }, null]);
+  assert.deepEqual(songs, [{ title: 'A', artist: undefined, coverUrl: undefined }, null]);
 });
 
 test('stop during an in-flight play suppresses its late title and status', async () => {

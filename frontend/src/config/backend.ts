@@ -52,3 +52,8 @@ export function getWebSocketURL(role?: 'player'): string {
 export function resolveStreamURL(url: string): string {
   return new URL(url, getBackendURL()).toString();
 }
+
+/** The embedded cover art of a song; only worth requesting when the song has `has_cover`. */
+export function coverURL(songId: string): string {
+  return `${getBackendURL()}/v1/songs/${encodeURIComponent(songId)}/cover`;
+}

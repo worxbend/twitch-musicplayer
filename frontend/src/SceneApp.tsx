@@ -26,6 +26,7 @@ interface Props {
 export function SceneApp(props: Props) {
   const [trackName, setTrackName] = createSignal('Waiting for a track…');
   const [trackArtist, setTrackArtist] = createSignal('lofi radio · 24/7');
+  const [trackCover, setTrackCover] = createSignal<string | undefined>();
   const [audio, setAudio] = createSignal<AudioEngine | null>(null);
   const [wsStatus, setWsStatus] = createSignal<ConnectionStatus>('disconnected');
   const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
@@ -67,6 +68,7 @@ export function SceneApp(props: Props) {
       onSongChange: (song) => {
         setTrackName(song?.title || 'Waiting for a track…');
         setTrackArtist(song?.artist || 'lofi radio · 24/7');
+        setTrackCover(song?.coverUrl);
         updateMediaMetadata(session, song);
       },
     });
@@ -106,6 +108,7 @@ export function SceneApp(props: Props) {
         <PlayerUI
           trackName={trackName}
           trackArtist={trackArtist}
+          trackCover={trackCover}
           wsStatus={wsStatus}
           playbackStatus={playbackStatus}
           paused={() => mediaState() === 'paused'}

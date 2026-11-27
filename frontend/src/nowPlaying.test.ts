@@ -41,6 +41,20 @@ test('a state frame gives no startId', () => {
   assert.equal(reduceNowPlaying(started, raw)?.startId, undefined);
 });
 
+test('a song with has_cover carries its id as coverId', () => {
+  const raw = frame('now_playing', { song: song({ has_cover: true }), history_id: 'h1' });
+  assert.deepEqual(reduceNowPlaying(null, raw), { title: 'Rainy Day', artist: 'Lofi Cat', coverId: 's1', startId: 'h1' });
+  const state = frame('state', { current_song: song({ has_cover: true }) });
+  assert.equal(reduceNowPlaying(null, state)?.coverId, 's1');
+});
+
+test('coverId needs has_cover true and a song id', () => {
+  for (const fields of [{ has_cover: false }, { has_cover: 'true' }, {}, { has_cover: true, id: '' }, { has_cover: true, id: 7 }]) {
+    const raw = frame('now_playing', { song: song(fields) });
+    assert.equal(reduceNowPlaying(null, raw)?.coverId, undefined, JSON.stringify(fields));
+  }
+});
+
 const shownRain: ShownKey = { key: 'h1', title: 'Rainy Day' };
 
 test('nextShown re-shows the same title on a new start id', () => {
@@ -101,19 +115,31 @@ test('a missing artist becomes an empty string', () => {
   assert.deepEqual(reduceNowPlaying(null, raw), { title: 'Rainy Day', artist: '' });
 });
 
+test('art is on only for art=1', () => {
+  assert.equal(parseNowPlayingOptions('?art=1').art, true);
+  for (const search of ['', '?art=', '?art=0', '?art=true', '?art=yes']) {
+    assert.equal(parseNowPlayingOptions(search).art, false, search);
+  }
+});
+
+test('nowPlayingPath emits art=1 only when art is on', () => {
+  assert.equal(nowPlayingPath({ art: true }), '/now-playing?art=1');
+  assert.equal(nowPlayingPath({ art: false }), '/now-playing');
+});
+
 test('options default to left and 32px', () => {
-  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0 });
+  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0, art: false });
 });
 
 test('options accept valid align and size values', () => {
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0 });
-  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0 });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0, art: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0, art: false });
   assert.equal(parseNowPlayingOptions('?size=120').size, 120);
 });
 
 test('invalid options fall back to the defaults', () => {
   for (const search of ['?align=middle&size=11', '?align=LEFT&size=121', '?size=40.5', '?size=-20', '?size=abc', '?size=']) {
-    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0 }, search);
+    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0, art: false }, search);
   }
 });
 
@@ -121,7 +147,7 @@ test('hold accepts whole seconds from 1 to 600', () => {
   assert.equal(parseNowPlayingOptions('?hold=5').hold, 5);
   assert.equal(parseNowPlayingOptions('?hold=1').hold, 1);
   assert.equal(parseNowPlayingOptions('?hold=600').hold, 600);
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10 });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10, art: false });
 });
 
 test('invalid or missing hold means always visible', () => {
@@ -132,7 +158,7 @@ test('invalid or missing hold means always visible', () => {
 
 test('nowPlayingPath leaves defaults out', () => {
   assert.equal(nowPlayingPath({}), '/now-playing');
-  assert.equal(nowPlayingPath({ align: 'left', size: 32, hold: 0 }), '/now-playing');
+  assert.equal(nowPlayingPath({ align: 'left', size: 32, hold: 0, art: false }), '/now-playing');
 });
 
 test('nowPlayingPath orders params align, size, hold', () => {
@@ -141,10 +167,11 @@ test('nowPlayingPath orders params align, size, hold', () => {
 
 test('nowPlayingPath round-trips through parseNowPlayingOptions', () => {
   const cases = [
-    { align: 'center', size: 48, hold: 8 },
-    { align: 'right', size: 12, hold: 600 },
-    { align: 'left', size: 120, hold: 1 },
-    { align: 'left', size: 32, hold: 0 },
+    { align: 'center', size: 48, hold: 8, art: true },
+    { align: 'right', size: 12, hold: 600, art: false },
+    { align: 'left', size: 120, hold: 1, art: false },
+    { align: 'left', size: 32, hold: 0, art: false },
+    { align: 'left', size: 32, hold: 0, art: true },
   ] as const;
   for (const opts of cases) {
     assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts);
@@ -154,7 +181,7 @@ test('nowPlayingPath round-trips through parseNowPlayingOptions', () => {
 test('nowPlayingPath clamps out-of-range values', () => {
   assert.equal(nowPlayingPath({ size: 5 }), '/now-playing?size=12');
   assert.equal(nowPlayingPath({ size: 500 }), '/now-playing?size=120');
-  assert.equal(nowPlayingPath({ hold: 9999 }), '/now-playing?hold=600');
+  assert.equal(nowPlayingPath({ hold: 9999, art: false }), '/now-playing?hold=600');
   assert.equal(nowPlayingPath({ hold: -3 }), '/now-playing');
 });
 

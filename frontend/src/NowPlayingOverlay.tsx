@@ -1,5 +1,5 @@
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
-import { getWebSocketURL } from './config/backend';
+import { coverURL, getWebSocketURL } from './config/backend';
 import { HEARTBEAT_MS, isStale, reconnectDelay } from './config/reconnect';
 import { nextShown, reduceNowPlaying, type NowPlayingOptions, type NowPlayingSong, type ShownKey } from './nowPlaying';
 
@@ -17,6 +17,13 @@ const heartbeatFrame = JSON.stringify({ type: 'heartbeat' });
 export function NowPlayingOverlay(props: Props) {
   const [song, setSong] = createSignal<NowPlayingSong | null>(null);
   const [visible, setVisible] = createSignal(true);
+  // A cover that fails to load is dropped, so OBS never shows a broken image.
+  const [failedCover, setFailedCover] = createSignal('');
+  const cover = () => {
+    const id = props.art ? song()?.coverId : undefined;
+    const url = id ? coverURL(id) : '';
+    return url !== failedCover() ? url : '';
+  };
   let shown: ShownKey = { key: '', title: '' };
   let hideTimer = 0;
   let lastMessageAt = 0;
@@ -105,11 +112,16 @@ export function NowPlayingOverlay(props: Props) {
     <div class="now-playing-overlay" classList={{ 'np-hidden': !visible() }} style={{ 'text-align': props.align, '--np-size': `${props.size}px` }}>
       <Show when={song()?.title} keyed>
         {title => (
-          <div class="np-track">
-            <p class="np-title">{title}</p>
-            <Show when={song()?.artist}>
-              <p class="np-artist">{song()?.artist}</p>
+          <div class="np-track" classList={{ 'np-track--art': cover() !== '' }}>
+            <Show when={cover()} keyed>
+              {url => <img class="np-art" src={url} alt="" decoding="async" onError={() => setFailedCover(url)} />}
             </Show>
+            <div class="np-text">
+              <p class="np-title">{title}</p>
+              <Show when={song()?.artist}>
+                <p class="np-artist">{song()?.artist}</p>
+              </Show>
+            </div>
           </div>
         )}
       </Show>

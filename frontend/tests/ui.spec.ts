@@ -7,7 +7,7 @@ const songs = [
   { id: 'b', title: 'Buffering dreams', artist: 'Terminal Club', album: 'Night shift', filename: 'b.mp3', duration_secs: 205, size_bytes: 1024 },
 ];
 
-async function mockStation(page: Page, options: { failure?: boolean; empty?: boolean; slow?: boolean; requireGesture?: boolean } = {}) {
+async function mockStation(page: Page, options: { failure?: boolean; empty?: boolean; slow?: boolean; requireGesture?: boolean; hasCover?: boolean } = {}) {
   if (options.requireGesture) {
     // Playwright's WebSocket interception injects messages with synthetic activation.
     // Model the browser policy explicitly, unlocking only on a real input event.
@@ -27,7 +27,8 @@ async function mockStation(page: Page, options: { failure?: boolean; empty?: boo
       if (JSON.parse(String(message)).type !== 'need_song') return;
       sawNeedSong();
       if (!options.empty) {
-        ws.send(JSON.stringify({ type: 'play_song', payload: { song: songs[0], history_id: 'h1', stream_url: '/v1/songs/a/content' } }));
+        const song = options.hasCover === undefined ? songs[0] : { ...songs[0], has_cover: options.hasCover };
+        ws.send(JSON.stringify({ type: 'play_song', payload: { song, history_id: 'h1', stream_url: '/v1/songs/a/content' } }));
       }
     });
   });
@@ -112,9 +113,10 @@ test('now playing overlay URL builder copies the configured URL', async ({ page,
   await page.getByLabel('Align').selectOption('center');
   await page.getByLabel('Size (px)').fill('48');
   await page.getByLabel('Hold (s)').fill('8');
+  await page.getByLabel('Album art').check();
   await page.getByRole('button', { name: 'Copy now playing overlay URL' }).click();
   await expect(page.getByRole('status')).toContainText('Browser-source URL copied');
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1');
 });
 
 test('library search, queue add/remove, and keyboard-safe clear confirmation', async ({ page }) => {
@@ -312,6 +314,39 @@ test('audio unlock works by keyboard and reports actual playback', async ({ page
   await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuetext', /^\d+:\d{2} of \d+:\d{2}$/);
 });
 
+const onePixelPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+
+async function startPlayback(page: Page) {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Enable audio' }).click();
+  await expect(page.locator('#np-title')).toHaveText('Midnight compiler', { timeout: 10000 });
+}
+
+test('the track deck shows embedded cover art for a tagged track', async ({ page }) => {
+  await mockStation(page, { requireGesture: true, hasCover: true });
+  await page.route('**/v1/songs/*/cover', route => route.fulfill({ contentType: 'image/png', body: onePixelPng }));
+  await startPlayback(page);
+  const cover = page.locator('.player-deck img.np-cover');
+  await expect(cover).toBeVisible();
+  await expect(cover).toHaveAttribute('src', 'http://127.0.0.1:18089/v1/songs/a/cover');
+  await expect(page.locator('.player-deck .deck-art')).toHaveCount(0);
+});
+
+test('the track deck keeps the record art for a track without a cover', async ({ page }) => {
+  await mockStation(page, { requireGesture: true, hasCover: false });
+  await startPlayback(page);
+  await expect(page.locator('.player-deck img')).toHaveCount(0);
+  await expect(page.locator('.player-deck .deck-art')).toBeVisible();
+});
+
+test('the track deck falls back to the record art when the cover fails to load', async ({ page }) => {
+  await mockStation(page, { requireGesture: true, hasCover: true });
+  await page.route('**/v1/songs/*/cover', route => route.fulfill({ status: 404, json: { error: 'no cover' } }));
+  await startPlayback(page);
+  await expect(page.locator('.player-deck img')).toHaveCount(0);
+  await expect(page.locator('.player-deck .deck-art')).toBeVisible();
+});
+
 test('player status stays in one live region from blocked to on air', async ({ page }) => {
   await mockStation(page, { requireGesture: true });
   await page.goto('/');
@@ -491,6 +526,19 @@ test('now-playing hold fades the title out; no hold keeps it visible', async ({ 
   await expect(page.getByText('Midnight compiler')).toBeVisible();
   await page.waitForTimeout(1500);
   await expect(overlay).not.toHaveClass(/np-hidden/);
+});
+
+test('now-playing shows cover art only with ?art=1', async ({ page }) => {
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
+    ws.send(JSON.stringify({ type: 'now_playing', payload: { song: { ...songs[0], has_cover: true }, history_id: 'h1', queue_depth: 1 } }));
+  });
+  await page.route('**/v1/songs/*/cover', route => route.fulfill({ contentType: 'image/png', body: onePixelPng }));
+  await page.goto('/now-playing?art=1');
+  await expect(page.locator('.np-art')).toBeVisible();
+  await expect(page.locator('.np-art')).toHaveAttribute('src', 'http://127.0.0.1:18089/v1/songs/a/cover');
+  await page.goto('/now-playing');
+  await expect(page.getByText('Midnight compiler')).toBeVisible();
+  await expect(page.locator('.np-art')).toHaveCount(0);
 });
 
 test('now-playing hold re-shows a repeated title on a new history_id; a dry-queue state clears it', async ({ page }) => {

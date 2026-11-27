@@ -18,7 +18,7 @@ const originalWindow = (globalThis as { window?: unknown }).window;
 const stub: WindowStub = { location: { protocol: 'http:', hostname: 'example.test' } };
 Object.defineProperty(globalThis, 'window', { value: stub, configurable: true, writable: true });
 
-const { getBackendURL, getWebSocketURL, resolveStreamURL } = await import('./backend.ts');
+const { coverURL, getBackendURL, getWebSocketURL, resolveStreamURL } = await import('./backend.ts');
 
 function useBackend(backendUrl: string | undefined) {
   stub.__LOFI_CONFIG__ = backendUrl === undefined ? undefined : { backendUrl };
@@ -86,4 +86,9 @@ test('relative stream URLs resolve against the backend, absolute ones pass throu
   useBackend('http://host:8080');
   assert.equal(resolveStreamURL('/v1/songs/1/content'), 'http://host:8080/v1/songs/1/content');
   assert.equal(resolveStreamURL('https://cdn.test/a.mp3'), 'https://cdn.test/a.mp3');
+});
+
+test('the cover URL keeps the backend path prefix and encodes the song id', () => {
+  useBackend('https://host/radio/');
+  assert.equal(coverURL('a b/c'), 'https://host/radio/v1/songs/a%20b%2Fc/cover');
 });

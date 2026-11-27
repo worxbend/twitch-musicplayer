@@ -10,6 +10,7 @@ export function App() {
   const [audio, setAudio]           = createSignal<AudioEngine | null>(null);
   const [trackName, setTrackName]   = createSignal('waiting for track…');
   const [trackArtist, setTrackArtist] = createSignal('lofi radio · 24/7');
+  const [trackCover, setTrackCover] = createSignal<string | undefined>();
   const [wsStatus, setWsStatus]     = createSignal<ConnectionStatus>('disconnected');
   const [playbackStatus, setPlaybackStatus] = createSignal<PlaybackStatus>('idle');
   const [mediaState, setMediaState] = createSignal<MediaSessionPlaybackState>('none');
@@ -35,6 +36,7 @@ export function App() {
       onSongChange: (song) => {
         setTrackName(song ? song.title || 'untitled' : 'waiting for track…');
         setTrackArtist(song?.artist || 'lofi radio · 24/7');
+        setTrackCover(song?.coverUrl);
         updateMediaMetadata(session, song);
       },
     });
@@ -63,6 +65,7 @@ export function App() {
       <PlayerUI
         trackName={trackName}
         trackArtist={trackArtist}
+        trackCover={trackCover}
         wsStatus={wsStatus}
         playbackStatus={playbackStatus}
         paused={() => mediaState() === 'paused'}
