@@ -84,6 +84,9 @@ export class AudioEngine {
   // _deferredPreload until the fade ends, so the fade tail and the preload both survive.
   private _fadingOut: PlaybackChannel | null = null;
   private _deferredPreload: string | null = null;
+  // The transition token pause() last ran under. A play() that pause() aborts during
+  // that transition's start window is a paused start, not a stream failure.
+  private _pausedTransition: number | null = null;
 
   constructor(options: AudioEngineOptions = {}) {
     this._allowAutoplay = options.allowAutoplay === true;
@@ -346,30 +349,7 @@ export class AudioEngine {
       this.playing = true;
       handlers.onStarted?.();
 
-      // Wire up near-end monitoring (prefetch + crossfade triggers).
-      if (handlers.onPrefetch || handlers.onNearEnd) {
-        const el = incoming.audioEl;
-        let prefetchFired = false;
-        let nearEndFired = false;
-        const timeHandler = () => {
-          if (nearEndFired) return;
-          const { duration, currentTime } = el;
-          if (!duration || !isFinite(duration) || currentTime < 2.0) return;
-          const remaining = duration - currentTime;
-          if (!prefetchFired && remaining < PREFETCH_THRESHOLD_SECS) {
-            prefetchFired = true;
-            handlers.onPrefetch?.();
-          }
-          if (remaining < NEAR_END_THRESHOLD_SECS) {
-            nearEndFired = true;
-            el.removeEventListener('timeupdate', timeHandler);
-            incoming._nearEndCleanup = null;
-            handlers.onNearEnd?.();
-          }
-        };
-        el.addEventListener('timeupdate', timeHandler);
-        incoming._nearEndCleanup = () => el.removeEventListener('timeupdate', timeHandler);
-      }
+      this._watchNearEnd(incoming, handlers);
 
       if (outgoingHasSource) this._fadingOut = outgoing;
       const fadeIn = this._fadeChannelTo(incoming, 1, DEFAULT_FADE_IN_MS);
@@ -386,6 +366,16 @@ export class AudioEngine {
       }
     } catch (error) {
       this._releaseFadeClaim(outgoing);
+      if (!superseded() && this._isPausedStart(error, token)) {
+        // The user paused before the stream started: keep the new track loaded and paused.
+        this._stopChannel(outgoing);
+        this._setChannelGain(incoming, 1);
+        this.playing = !incoming.audioEl.paused;
+        handlers.onStarted?.();
+        this._watchNearEnd(incoming, handlers);
+        this._emitPlayState();
+        return;
+      }
       if (superseded()) {
         if (!this._disposed && incoming !== this._activeChannel) this._stopChannel(incoming);
         throw error;
@@ -401,6 +391,40 @@ export class AudioEngine {
       this.mode = hadSource ? 'backend' : 'idle';
       this._emitPlayState();
       throw error;
+    }
+  }
+
+  private _isPausedStart(error: unknown, token: number): boolean {
+    return error instanceof DOMException && error.name === 'AbortError' && this._pausedTransition === token;
+  }
+
+  // Wires up near-end monitoring (prefetch + crossfade triggers) on a started channel.
+  private _watchNearEnd(
+    incoming: PlaybackChannel,
+    handlers: { onPrefetch?: () => void; onNearEnd?: () => void },
+  ) {
+    if (handlers.onPrefetch || handlers.onNearEnd) {
+      const el = incoming.audioEl;
+      let prefetchFired = false;
+      let nearEndFired = false;
+      const timeHandler = () => {
+        if (nearEndFired) return;
+        const { duration, currentTime } = el;
+        if (!duration || !isFinite(duration) || currentTime < 2.0) return;
+        const remaining = duration - currentTime;
+        if (!prefetchFired && remaining < PREFETCH_THRESHOLD_SECS) {
+          prefetchFired = true;
+          handlers.onPrefetch?.();
+        }
+        if (remaining < NEAR_END_THRESHOLD_SECS) {
+          nearEndFired = true;
+          el.removeEventListener('timeupdate', timeHandler);
+          incoming._nearEndCleanup = null;
+          handlers.onNearEnd?.();
+        }
+      };
+      el.addEventListener('timeupdate', timeHandler);
+      incoming._nearEndCleanup = () => el.removeEventListener('timeupdate', timeHandler);
     }
   }
 
@@ -446,6 +470,8 @@ export class AudioEngine {
     const active = this._activeAudioElement();
     if (this.mode === 'backend' && active && !active.paused) {
       active.pause();
+      this._fadingOut?.audioEl.pause();
+      this._pausedTransition = this._transition;
       this.playing = false;
     }
     return this.playing;

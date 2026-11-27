@@ -342,6 +342,66 @@ test('a stuck next stream times out and restores the outgoing track', async () =
   assert.equal(engine.playing, true);
 });
 
+// Like the browser: the next channel's play() stays pending, and a pause()
+// before it settles rejects it with AbortError.
+function abortNextPlayOnPause() {
+  const el = engine['_nextChannel']().audioEl as unknown as FakeAudioElement;
+  let abort: (() => void) | null = null;
+  const play = mock.method(el, 'play', () => {
+    el.paused = false;
+    return new Promise<void>((_, reject) => {
+      abort = () => reject(new DOMException('aborted', 'AbortError'));
+    });
+  });
+  const pause = el.pause.bind(el);
+  mock.method(el, 'pause', () => {
+    pause();
+    abort?.();
+    abort = null;
+  });
+  return { el, play };
+}
+
+test('a pause during the start window keeps the new track loaded and paused', async () => {
+  const first = await playFirstTrack();
+  const next = abortNextPlayOnPause();
+  const states = recordPlayStates();
+  const onStarted = mock.fn();
+  const second = engine.playStream('/stream/b', 'B', { onStarted });
+  await flush();
+
+  engine.pause();
+  await second;
+
+  assert.equal(activeElement(), next.el);
+  assert.equal(next.el.src, '/stream/b');
+  assert.equal(next.el.paused, true);
+  assert.equal(engine['_activeChannel']?.gain.gain.value, 1);
+  assert.equal(first.paused, true);
+  assert.equal(first.src, '');
+  assert.equal(channelGains().filter(gain => gain === 1).length, 1, 'outgoing gain not restored');
+  assert.equal(engine.playing, false);
+  assert.equal(onStarted.mock.callCount(), 1);
+  assert.equal(states.at(-1), 'paused');
+
+  assert.equal(engine.play(), true);
+  assert.equal(next.play.mock.callCount(), 2);
+  assert.equal(activeElement(), next.el);
+  assert.equal(next.el.paused, false);
+});
+
+test('a pause during a crossfade also silences the fading-out track', async () => {
+  const first = await playFirstTrack();
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+
+  engine.pause();
+  assert.equal(first.paused, true);
+  assert.equal(activeElement().paused, true);
+  mock.timers.tick(FADE_MS);
+  await second;
+});
+
 test('a play() that settles before the limit clears the start timer', async () => {
   const settle = holdNextPlay();
   const first = engine.playStream('/stream/a', 'A');
