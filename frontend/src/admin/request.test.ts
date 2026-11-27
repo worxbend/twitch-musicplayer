@@ -14,13 +14,33 @@ const hangingFetch: typeof fetch = (_input, init) => new Promise((_resolve, reje
   signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
 });
 
+const readJSON = (res: Response): Promise<unknown> => res.json();
+
 test('a hung request rejects with TimeoutError after REQUEST_TIMEOUT_MS', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let settled = false;
-  const pending = fetchWithTimeout(hangingFetch, '/v1/queue', undefined, REQUEST_TIMEOUT_MS);
+  const pending = fetchWithTimeout(hangingFetch, '/v1/queue', undefined, REQUEST_TIMEOUT_MS, readJSON);
   pending.catch(() => {}).finally(() => { settled = true; });
   t.mock.timers.tick(REQUEST_TIMEOUT_MS - 1);
   await Promise.resolve();
+  assert.equal(settled, false);
+  t.mock.timers.tick(1);
+  await assert.rejects(pending, (err: unknown) => err instanceof DOMException && err.name === 'TimeoutError');
+});
+
+test('a stalled response body rejects with TimeoutError after REQUEST_TIMEOUT_MS', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  // Headers arrive, then the body never enqueues or closes; like fetch, the
+  // stream errors with the signal's reason once the signal aborts.
+  const stalledBodyFetch: typeof fetch = async (_input, init) => new Response(new ReadableStream({
+    start(c) { init?.signal?.addEventListener('abort', () => c.error(init.signal?.reason), { once: true }); },
+  }));
+  let settled = false;
+  const pending = fetchWithTimeout(stalledBodyFetch, '/v1/queue', undefined, REQUEST_TIMEOUT_MS, readJSON);
+  pending.catch(() => {}).finally(() => { settled = true; });
+  await Promise.resolve();
+  t.mock.timers.tick(REQUEST_TIMEOUT_MS - 1);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(settled, false);
   t.mock.timers.tick(1);
   await assert.rejects(pending, (err: unknown) => err instanceof DOMException && err.name === 'TimeoutError');
@@ -31,10 +51,10 @@ test('a fast response is returned and leaves no timer behind', async t => {
   let signal: AbortSignal | undefined;
   const fastFetch: typeof fetch = async (_input, init) => {
     signal = init?.signal ?? undefined;
-    return new Response('{}', { status: 200 });
+    return new Response('{"current_song":null}', { status: 200 });
   };
-  const res = await fetchWithTimeout(fastFetch, '/v1/player', undefined, REQUEST_TIMEOUT_MS);
-  assert.equal(res.status, 200);
+  const data = await fetchWithTimeout(fastFetch, '/v1/player', undefined, REQUEST_TIMEOUT_MS, readJSON);
+  assert.deepEqual(data, { current_song: null });
   t.mock.timers.tick(REQUEST_TIMEOUT_MS * 2);
   assert.equal(signal?.aborted, false);
 });
@@ -42,7 +62,7 @@ test('a fast response is returned and leaves no timer behind', async t => {
 test('a caller abort rejects with the caller AbortError, not TimeoutError', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const caller = new AbortController();
-  const pending = fetchWithTimeout(hangingFetch, '/v1/songs', { signal: caller.signal }, REQUEST_TIMEOUT_MS);
+  const pending = fetchWithTimeout(hangingFetch, '/v1/songs', { signal: caller.signal }, REQUEST_TIMEOUT_MS, readJSON);
   caller.abort();
   await assert.rejects(pending, (err: unknown) => err instanceof DOMException && err.name === 'AbortError');
 });
@@ -51,7 +71,7 @@ test('an already aborted caller signal rejects at once with its reason', async (
   const caller = new AbortController();
   caller.abort();
   await assert.rejects(
-    fetchWithTimeout(hangingFetch, '/v1/songs', { signal: caller.signal }, REQUEST_TIMEOUT_MS),
+    fetchWithTimeout(hangingFetch, '/v1/songs', { signal: caller.signal }, REQUEST_TIMEOUT_MS, readJSON),
     (err: unknown) => err instanceof DOMException && err.name === 'AbortError',
   );
 });

@@ -78,17 +78,20 @@ export function AdminApp() {
   let disposed = false;
   let clearDialog!: HTMLDialogElement;
 
-  async function request(path: string, init?: RequestInit) {
+  // The deadline covers the body too: read and the error text run inside it.
+  function request<T>(path: string, read: (res: Response) => Promise<T>, init?: RequestInit) {
     // The wrapper keeps fetch bound to window (a bare reference throws Illegal invocation).
-    const res = await fetchWithTimeout((...args) => fetch(...args), `${backendURL}${path}`, init, REQUEST_TIMEOUT_MS);
-    if (!res.ok) throw new HttpError(res.status, await errorText(res));
-    return res;
+    return fetchWithTimeout((...args) => fetch(...args), `${backendURL}${path}`, init, REQUEST_TIMEOUT_MS, async res => {
+      if (!res.ok) throw new HttpError(res.status, await errorText(res));
+      return read(res);
+    });
   }
+  const readJSON = (res: Response) => res.json();
   async function fetchSongs(q = searchQuery()) {
     const id = ++searchRequest;
     setLoading(true);
     try {
-      const data = await (await request(`/v1/songs${q ? `?q=${encodeURIComponent(q)}` : ''}`)).json();
+      const data = await request(`/v1/songs${q ? `?q=${encodeURIComponent(q)}` : ''}`, readJSON);
       if (id === searchRequest && !disposed) { setSongs(data.songs ?? []); setLibraryError(false); }
     } catch { if (id === searchRequest && !disposed) setLibraryError(true); }
     finally { if (id === searchRequest && !disposed) setLoading(false); }
@@ -96,7 +99,7 @@ export function AdminApp() {
   async function fetchQueue() {
     const id = queueGate.begin();
     try {
-      const data = await (await request('/v1/queue')).json();
+      const data = await request('/v1/queue', readJSON);
       if (queueGate.isLatest(id) && !disposed) {
         const focused = focusedQueueControl(queue());
         setQueue(data.items ?? []);
@@ -108,7 +111,7 @@ export function AdminApp() {
   async function fetchHistory() {
     const id = historyGate.begin();
     try {
-      const data = await (await request('/v1/history?limit=10')).json();
+      const data = await request('/v1/history?limit=10', readJSON);
       if (historyGate.isLatest(id) && !disposed) { setHistory(data.items ?? []); setHistoryError(false); }
     } catch { if (historyGate.isLatest(id) && !disposed) setHistoryError(true); }
   }
@@ -120,7 +123,7 @@ export function AdminApp() {
   async function fetchPlayerState() {
     const id = playerGate.begin();
     try {
-      const data = await (await request('/v1/player')).json();
+      const data = await request('/v1/player', readJSON);
       if (playerGate.isLatest(id) && !disposed) { setCurrentSong(data.current_song ?? null); setPlayerError(false); }
     } catch { if (playerGate.isLatest(id) && !disposed) setPlayerError(true); }
   }
@@ -134,7 +137,8 @@ export function AdminApp() {
     if (busy()) return;
     setBusy(path);
     try {
-      await request(path, {
+      // Drain the body so the connection is released.
+      await request(path, res => res.text(), {
         method,
         ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
       });

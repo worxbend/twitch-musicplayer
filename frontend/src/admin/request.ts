@@ -22,9 +22,13 @@ export async function errorText(res: Response): Promise<string> {
   } catch { return ''; }
 }
 
-// fetchWithTimeout rejects with a DOMException named 'TimeoutError' after ms.
-// A caller's init.signal still aborts the request with its own reason.
-export async function fetchWithTimeout(fetchFn: typeof fetch, url: string, init: RequestInit | undefined, ms: number): Promise<Response> {
+// fetchWithTimeout fetches url and reads the response with read, all under one
+// deadline: it rejects with a DOMException named 'TimeoutError' after ms, even
+// when headers arrived and the body stalls. A caller's init.signal still aborts
+// the request with its own reason.
+export async function fetchWithTimeout<T>(
+  fetchFn: typeof fetch, url: string, init: RequestInit | undefined, ms: number, read: (res: Response) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController();
   const callerSignal = init?.signal;
   const onCallerAbort = () => controller.abort(callerSignal?.reason);
@@ -32,7 +36,8 @@ export async function fetchWithTimeout(fetchFn: typeof fetch, url: string, init:
   else callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
   const timer = setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), ms);
   try {
-    return await fetchFn(url, { ...init, signal: controller.signal });
+    const res = await fetchFn(url, { ...init, signal: controller.signal });
+    return await read(res);
   } catch (err) {
     // Browsers reject with the abort reason; fall back to it if a fetch does not.
     throw controller.signal.aborted ? controller.signal.reason : err;
