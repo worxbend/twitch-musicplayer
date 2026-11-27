@@ -46,7 +46,8 @@ var coverMIMEs = map[string]bool{
 }
 
 // Extract reads ID3v2 tags from path, returning best-effort metadata.
-// Falls back to filename-based title and file-size-based duration when tags are absent.
+// Falls back to the filename as title, and to a duration read from the MPEG frame
+// headers, when tags are absent.
 func Extract(path string) Info {
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	info := Info{Title: name}
@@ -59,7 +60,7 @@ func Extract(path string) Info {
 	}
 	tag, err := id3.Open(path, id3.Options{Parse: true, ParseFrames: frames})
 	if err != nil {
-		return withDurationEstimate(info, path)
+		return withDuration(info, path)
 	}
 	defer tag.Close()
 
@@ -81,7 +82,7 @@ func Extract(path string) Info {
 		}
 	}
 
-	return withDurationEstimate(info, path)
+	return withDuration(info, path)
 }
 
 // Cover returns the embedded cover image of the file at path and its sniffed
@@ -131,31 +132,47 @@ func coverPicture(tag *id3.Tag) (mime string, data []byte, ok bool) {
 	return mime, data, ok
 }
 
-// withDurationEstimate fills DurationSecs using a rough 128 kbps CBR assumption.
-// The ID3v2 tag is excluded so embedded cover art does not inflate the estimate.
-func withDurationEstimate(info Info, path string) Info {
-	stat, err := os.Stat(path)
+// withDuration fills DurationSecs from the MPEG frame headers (see
+// mpegDuration), falling back to a rough 128 kbps CBR estimate when no frame
+// is found. A leading ID3v2 and a trailing ID3v1 tag are excluded so embedded
+// cover art and tag bytes do not count as audio.
+func withDuration(info Info, path string) Info {
+	f, err := os.Open(path)
 	if err != nil {
 		return info
 	}
-	if audioBytes := stat.Size() - id3v2Size(path); audioBytes > 0 {
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		return info
+	}
+	audioStart := id3v2TagSize(f)
+	audioEnd := stat.Size() - id3v1TagSize(f, stat.Size())
+	if secs, ok := mpegDuration(f, audioStart, audioEnd); ok {
+		info.DurationSecs = secs
+	} else if audioBytes := audioEnd - audioStart; audioBytes > 0 {
 		info.DurationSecs = float64(audioBytes) / 16_000 // 128 kbps = 16 000 B/s
 	}
 	return info
 }
 
-// id3v2Size returns the on-disk length of a leading ID3v2 tag (header, frames,
-// padding and footer), or 0 when the file has none or cannot be read.
-// tag.Size() is not used: it reflects re-serialized frames and omits padding.
+// id3v2Size returns the on-disk length of a leading ID3v2 tag in the file at
+// path, or 0 when the file has none or cannot be read.
 func id3v2Size(path string) int64 {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0
 	}
 	defer f.Close()
+	return id3v2TagSize(f)
+}
 
+// id3v2TagSize returns the length of a leading ID3v2 tag (header, frames,
+// padding and footer), or 0 when r has none or cannot be read.
+// tag.Size() is not used: it reflects re-serialized frames and omits padding.
+func id3v2TagSize(r io.ReaderAt) int64 {
 	var header [10]byte
-	if _, err := io.ReadFull(f, header[:]); err != nil || string(header[:3]) != "ID3" {
+	if n, _ := r.ReadAt(header[:], 0); n < len(header) || string(header[:3]) != "ID3" {
 		return 0
 	}
 	var bodySize int64
@@ -167,4 +184,17 @@ func id3v2Size(path string) int64 {
 		total += int64(len(header))
 	}
 	return total
+}
+
+// id3v1TagSize returns 128 when r, size bytes long, ends with an ID3v1 tag, else 0.
+func id3v1TagSize(r io.ReaderAt, size int64) int64 {
+	const tagLen = 128
+	if size < tagLen {
+		return 0
+	}
+	var magic [3]byte
+	if n, _ := r.ReadAt(magic[:], size-tagLen); n < len(magic) || string(magic[:]) != "TAG" {
+		return 0
+	}
+	return tagLen
 }

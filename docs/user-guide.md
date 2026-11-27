@@ -42,9 +42,10 @@ backend is running** — including files dropped into nested subfolders — and 
 queue automatically. No restart, no import step. 🪄
 
 > [!TIP]
-> Metadata comes from ID3 tags. Files without tags fall back to the filename as the title,
-> and the duration is estimated from file size assuming 128 kbps. Tag your files if you want
-> the now-playing card to look right. 🏷️
+> Metadata comes from ID3 tags. Files without tags fall back to the filename as the title.
+> Without a TLEN tag, the duration is read from the MP3 frame headers (bitrate, or the
+> Xing/Info/VBRI frame count for VBR files). Tag your files if you want the now-playing card
+> to look right. 🏷️
 
 ## 🎬 Choosing a Scene
 
