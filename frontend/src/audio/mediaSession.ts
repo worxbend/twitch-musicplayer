@@ -50,7 +50,7 @@ export function positionStateOf(
   const rateValid = Number.isFinite(el.playbackRate) && el.playbackRate > 0;
   return {
     duration,
-    position: clamp(el.currentTime, 0, duration),
+    position: Number.isFinite(el.currentTime) ? clamp(el.currentTime, 0, duration) : 0,
     playbackRate: rateValid ? el.playbackRate : 1,
   };
 }

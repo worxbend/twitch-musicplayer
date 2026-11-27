@@ -165,6 +165,7 @@ test('positionStateOf reports duration, position and rate', () => {
 test('positionStateOf clamps the position into the track', () => {
   assert.equal(positionStateOf({ ...track, currentTime: 181 })?.position, 180);
   assert.equal(positionStateOf({ ...track, currentTime: -1 })?.position, 0);
+  assert.equal(positionStateOf({ ...track, currentTime: Number.NaN })?.position, 0);
 });
 
 test('positionStateOf turns a zero or NaN rate into 1', () => {
