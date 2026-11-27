@@ -126,6 +126,7 @@ Object.assign(globalThis, {
 Object.defineProperty(globalThis, 'WebSocket', { value: FakeWebSocket, configurable: true, writable: true });
 
 const { BackendPlaybackClient } = await import('./BackendPlaybackClient.ts');
+const { HANDSHAKE_TIMEOUT_MS } = await import('../config/reconnect.ts');
 
 let audio: FakeAudio;
 let statuses: RadioStatus[];
@@ -551,7 +552,7 @@ test('an error followed by close schedules exactly one reconnect, with capped ba
     assert.equal(FakeWebSocket.instances.length, before, `no reconnect before ${delay}ms`);
     mock.timers.tick(1);
     assert.equal(FakeWebSocket.instances.length, before + 1, `one reconnect at ${delay}ms`);
-    mock.timers.tick(20000);
+    mock.timers.tick(HANDSHAKE_TIMEOUT_MS - 1);
     assert.equal(FakeWebSocket.instances.length, before + 1, 'no second reconnect');
   }
 
@@ -577,6 +578,59 @@ test("a stale socket's late close does not reset connecting or reschedule", () =
   assert.equal(internals().connecting, true);
   assert.equal(statuses.length, reported);
   mock.timers.tick(20000);
+  assert.equal(FakeWebSocket.instances.length, 2);
+});
+
+test('a socket stuck in CONNECTING times out and reconnects after the backoff', () => {
+  const stuck = socket();
+  mock.timers.tick(HANDSHAKE_TIMEOUT_MS);
+
+  assert.equal(stuck.readyState, FakeWebSocket.CLOSED);
+  assert.equal(stuck.onopen, null);
+  assert.equal(stuck.onclose, null);
+  assert.deepEqual(
+    { connection: statuses.at(-1)?.connection, message: statuses.at(-1)?.message },
+    { connection: 'reconnecting', message: 'radio connection timed out' },
+  );
+  mock.timers.tick(899);
+  assert.equal(FakeWebSocket.instances.length, 1);
+  mock.timers.tick(1);
+  assert.equal(FakeWebSocket.instances.length, 2);
+});
+
+test('a socket that opens just before the handshake timeout stays open', () => {
+  mock.timers.tick(HANDSHAKE_TIMEOUT_MS - 1);
+  socket().open();
+  mock.timers.tick(10);
+
+  assert.equal(socket().readyState, FakeWebSocket.OPEN);
+  assert.equal(FakeWebSocket.instances.length, 1);
+});
+
+test('a second handshake timeout in a row backs off to 1800ms', () => {
+  mock.timers.tick(HANDSHAKE_TIMEOUT_MS);
+  mock.timers.tick(900);
+  assert.equal(FakeWebSocket.instances.length, 2);
+
+  mock.timers.tick(HANDSHAKE_TIMEOUT_MS);
+  mock.timers.tick(1799);
+  assert.equal(FakeWebSocket.instances.length, 2);
+  mock.timers.tick(1);
+  assert.equal(FakeWebSocket.instances.length, 3);
+});
+
+test('stop during the handshake cancels the timeout', () => {
+  client.stop();
+  mock.timers.tick(20000);
+  assert.equal(FakeWebSocket.instances.length, 1);
+});
+
+test('a close before the handshake timeout schedules exactly one reconnect', () => {
+  socket().close();
+  mock.timers.tick(900);
+  assert.equal(FakeWebSocket.instances.length, 2);
+  // The first socket's timer is gone; only the new socket's own timeout remains.
+  mock.timers.tick(HANDSHAKE_TIMEOUT_MS - 1);
   assert.equal(FakeWebSocket.instances.length, 2);
 });
 
@@ -817,8 +871,9 @@ test('error retries back off to 30s and reset after a successful play', async ()
 test('the reply timeout does not pile up need_song while disconnected', () => {
   socket(0).open();
   socket(0).close();
-  // No socket opens for a minute; reconnects keep backing off.
-  for (let ms = 0; ms < 58000; ms += 100) mock.timers.tick(100);
+  // No socket opens for a minute; each handshake times out and reconnects back off.
+  // The sixth socket is created at 61.5s and is still connecting at 62s.
+  for (let ms = 0; ms < 62000; ms += 100) mock.timers.tick(100);
   const reopened = socket();
   reopened.open();
   const sent = FakeWebSocket.instances.slice(1).reduce((n, ws) => n + needSongCount(ws), 0);
@@ -1038,8 +1093,8 @@ test('heartbeat stops after the socket closes', () => {
 
   assert.equal(sentOfType(closed, 'heartbeat').length, 0);
   assert.ok(!statuses.some(s => s.message === 'radio heartbeat timeout'));
-  assert.equal(FakeWebSocket.instances.length, 2);
-  assert.equal(socket(1).readyState, FakeWebSocket.CONNECTING);
+  // Every later socket stalls in CONNECTING, so only handshake timeouts reconnect.
+  assert.ok(statuses.some(s => s.message === 'radio connection timed out'));
 });
 
 test('prebuffer_song preloads the resolved stream URL', () => {

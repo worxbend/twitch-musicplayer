@@ -221,6 +221,7 @@ The supported frontend is a single active WebSocket playback client. It is desig
 - listens for browser `online` and `offline` events;
 - sends application heartbeats;
 - reconnects when heartbeat acknowledgements or other messages stop arriving;
+- retries a socket whose handshake has not finished within 10 seconds, on the same backoff;
 - queues important outbound control messages while disconnected;
 - flushes queued messages after reconnect;
 - requests a song again after reconnect when no song is active, or when a `need_song`/`song_finished` went out on a socket that closed before the reply;

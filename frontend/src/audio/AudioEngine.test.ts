@@ -108,8 +108,11 @@ class FakeAudioContext {
     return Promise.resolve();
   }
 
-  async close() {
+  closeError: Error | null = null;
+  close() {
+    if (this.closeError) return Promise.reject(this.closeError);
     this.state = 'closed';
+    return Promise.resolve();
   }
 }
 
@@ -790,6 +793,23 @@ test('dispose clears the position', async () => {
   const positions = recordPositions();
   engine.dispose();
   assert.equal(positions.at(-1), null);
+});
+
+test('dispose swallows an AudioContext.close() rejection and still clears the position', async () => {
+  await playFirstTrack();
+  const positions = recordPositions();
+  ctx().closeError = new DOMException('already closed', 'InvalidStateError');
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    engine.dispose();
+    await flush();
+    assert.deepEqual(unhandled, []);
+    assert.equal(positions.at(-1), null);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 });
 
 test('a play() that resolves after dispose does not start the disposed engine', async () => {

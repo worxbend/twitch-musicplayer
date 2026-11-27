@@ -683,7 +683,11 @@ export class AudioEngine {
     this._master = null;
     const ctx = this.ctx;
     this.ctx = null;
-    if (ctx && ctx.state !== 'closed') void ctx.close();
+    if (ctx && ctx.state !== 'closed') {
+      ctx.close().catch(() => {
+        // Already closed or torn down by the browser; teardown is best-effort.
+      });
+    }
     this.onPositionChange?.(null);
   }
 }

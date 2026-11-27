@@ -10,6 +10,9 @@ export const HEARTBEAT_MS = 25000;
 /** Silence longer than this means the socket is half-open: two missed acks plus slack. */
 export const STALE_AFTER_MS = HEARTBEAT_MS * 2.5;
 
+/** A socket still CONNECTING after this long is treated as dead and retried. */
+export const HANDSHAKE_TIMEOUT_MS = 10000;
+
 /** Exponential backoff: baseMs doubled per failed attempt, capped at maxMs. */
 export function reconnectDelay(attempt: number, baseMs = 900, maxMs = 8000): number {
   return Math.min(baseMs * 2 ** attempt, maxMs);
