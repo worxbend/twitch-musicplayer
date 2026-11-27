@@ -724,8 +724,8 @@ func TestShutdownCancelsPendingClear(t *testing.T) {
 
 // newRoleTestServer serves an Endpoint whose tracker holds song-1 and whose
 // hub clears now-playing grace after its last player leaves. It returns the
-// tracker and the /ws URL.
-func newRoleTestServer(t *testing.T, grace time.Duration) (*player.StateTracker, string) {
+// hub, the tracker and the /ws URL.
+func newRoleTestServer(t *testing.T, grace time.Duration) (*Hub, *player.StateTracker, string) {
 	t.Helper()
 	hub := NewHub()
 	hub.clearGrace = grace
@@ -734,13 +734,13 @@ func newRoleTestServer(t *testing.T, grace time.Duration) (*player.StateTracker,
 	tracker.SetCurrentSong(&models.Song{ID: "song-1", Title: "Rain"})
 	srv := httptest.NewServer(&Endpoint{Hub: hub, QueueMgr: emptyQueueManager{}, StateTracker: tracker})
 	t.Cleanup(srv.Close)
-	return tracker, "ws" + strings.TrimPrefix(srv.URL, "http")
+	return hub, tracker, "ws" + strings.TrimPrefix(srv.URL, "http")
 }
 
 // A peer that connects with ?role=player is a player before it sends
 // anything: its leaving clears now-playing for the overlay that stays.
 func TestRolePlayerDisconnectClearsNowPlaying(t *testing.T) {
-	tracker, url := newRoleTestServer(t, testClearGrace)
+	_, tracker, url := newRoleTestServer(t, testClearGrace)
 	overlay := dialWS(t, url)
 	dialWS(t, url+"?role=player").Close()
 
@@ -764,9 +764,21 @@ func TestRolePlayerDisconnectClearsNowPlaying(t *testing.T) {
 // its ?role=player reconnect alone must keep now-playing.
 func TestRolePlayerReconnectInsideGraceKeepsNowPlaying(t *testing.T) {
 	const grace = 300 * time.Millisecond
-	tracker, url := newRoleTestServer(t, grace)
+	hub, tracker, url := newRoleTestServer(t, grace)
 	dialWS(t, url+"?role=player").Close()
+	// Redial only once the server has dropped the first player, so the
+	// reconnect has a pending clear to cancel.
+	deadline := time.Now().Add(5 * time.Second)
+	for !hasPendingClear(hub) {
+		if time.Now().After(deadline) {
+			t.Fatal("first player's close scheduled no clear within 5s")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	dialWS(t, url+"?role=player")
+	if hasPendingClear(hub) {
+		t.Fatal("?role=player reconnect left the clear pending, want it cancelled")
+	}
 
 	time.Sleep(2 * grace)
 
