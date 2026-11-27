@@ -1173,3 +1173,65 @@ func TestRequeueRollsBackPlayCount(t *testing.T) {
 		}
 	})
 }
+
+// failingEnqueueRepo is a QueueRepository whose Enqueue fails while failing is
+// set. EnqueueFront still works, so a rollback can succeed.
+type failingEnqueueRepo struct {
+	QueueRepository
+	failing bool
+}
+
+func (r *failingEnqueueRepo) Enqueue(ctx context.Context, item *models.QueueItem) error {
+	if r.failing {
+		return errors.New("enqueue failed")
+	}
+	return r.QueueRepository.Enqueue(ctx, item)
+}
+
+// TestNextSongFailedRefillKeepsQueuedEntry: when the refill after a dequeue
+// fails, the popped entry goes back to the front unchanged and is not marked
+// played, so the request plays once the refill works again.
+func TestNextSongFailedRefillKeepsQueuedEntry(t *testing.T) {
+	fills := map[string]FillConfig{
+		"auto_refill": {Strategy: FillAutoRefill, MinAhead: 1},
+		"preload":     {Strategy: FillPreload, PreloadSize: 3},
+	}
+	for name, fill := range fills {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			songRepo := repository.NewMemSongRepo()
+			for _, s := range library(4) {
+				if err := songRepo.Create(ctx, s); err != nil {
+					t.Fatal(err)
+				}
+			}
+			repo := &failingEnqueueRepo{QueueRepository: repository.NewMemQueueRepo(songRepo)}
+			m := New(songRepo, played.New(1000, 0.01), repo, ManagerConfig{Fill: fill})
+			queued, err := m.AddToQueue(ctx, "s2", models.QueueSourceManual)
+			if err != nil {
+				t.Fatalf("AddToQueue: %v", err)
+			}
+
+			repo.failing = true
+			if got, err := m.NextSong(ctx); err == nil {
+				t.Fatalf("NextSong = %v, nil; want a refill error", got)
+			}
+			items, err := m.ListQueue(ctx)
+			if err != nil {
+				t.Fatalf("ListQueue: %v", err)
+			}
+			if len(items) == 0 || items[0].ID != queued.ID || items[0].Position != 1 || items[0].Source != models.QueueSourceManual {
+				t.Fatalf("queue head = %+v, want entry %s at position 1 with source manual", items, queued.ID)
+			}
+			if m.tracker.HasPlayed("s2") {
+				t.Fatal("s2 marked played after a failed NextSong")
+			}
+
+			repo.failing = false
+			got, err := m.NextSong(ctx)
+			if err != nil || got.ID != "s2" {
+				t.Fatalf("NextSong after refill recovers = (%v, %v), want (s2, nil)", got, err)
+			}
+		})
+	}
+}

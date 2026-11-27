@@ -215,7 +215,7 @@ func (m *Manager) NextSong(ctx context.Context) (*models.Song, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	song, err := m.dequeueLive(ctx)
+	item, song, err := m.dequeueLive(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -234,11 +234,11 @@ func (m *Manager) NextSong(ctx context.Context) (*models.Song, error) {
 	switch m.cfg.Fill.Strategy {
 	case FillPreload:
 		if err := m.fillQueue(ctx, m.cfg.Fill.PreloadSize, song.Artist, song.ID); err != nil {
-			return nil, fmt.Errorf("preload queue: %w", err)
+			return nil, errors.Join(fmt.Errorf("preload queue: %w", err), m.restoreDequeued(ctx, item))
 		}
 	case FillAutoRefill:
 		if err := m.fillQueue(ctx, m.cfg.Fill.MinAhead, song.Artist, song.ID); err != nil {
-			return nil, fmt.Errorf("auto-refill queue: %w", err)
+			return nil, errors.Join(fmt.Errorf("auto-refill queue: %w", err), m.restoreDequeued(ctx, item))
 		}
 	}
 
@@ -260,15 +260,17 @@ func (m *Manager) markPlayed(songID string) {
 // dequeueLive pops queue entries until one still points at an indexed song
 // that is not blocked. Entries whose song left the library (a dropped fsnotify
 // event, or a delete racing a dequeue) or was blocked are logged and dropped.
-// It returns (nil, nil) when the queue runs dry. Must be called with m.mu held.
-func (m *Manager) dequeueLive(ctx context.Context) (*models.Song, error) {
+// It returns the popped entry with its song, so a caller can put the entry
+// back unchanged, and (nil, nil, nil) when the queue runs dry. Must be called
+// with m.mu held.
+func (m *Manager) dequeueLive(ctx context.Context) (*models.QueueItem, *models.Song, error) {
 	for {
 		item, err := m.queue.Dequeue(ctx)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && item == nil) {
-			return nil, nil
+			return nil, nil, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("dequeue: %w", err)
+			return nil, nil, fmt.Errorf("dequeue: %w", err)
 		}
 		song, err := m.songs.GetByID(ctx, item.SongID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -276,14 +278,28 @@ func (m *Manager) dequeueLive(ctx context.Context) (*models.Song, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("get queued song: %w", err)
+			return nil, nil, fmt.Errorf("get queued song: %w", err)
 		}
 		if m.isBlocked(song.ID) {
 			log.Printf("queue: skipping entry %s, song %s is blocked", item.ID, item.SongID)
 			continue
 		}
-		return song, nil
+		return item, song, nil
 	}
+}
+
+// restoreDequeued puts an entry NextSong popped back at the front of the queue
+// when NextSong fails before handing its song out, so a manual request is not
+// lost. A nil item (the song was auto-selected) needs nothing. Must be called
+// with m.mu held.
+func (m *Manager) restoreDequeued(ctx context.Context, item *models.QueueItem) error {
+	if item == nil {
+		return nil
+	}
+	if err := m.queue.EnqueueFront(ctx, item); err != nil {
+		return fmt.Errorf("requeue entry %s: %w", item.ID, err)
+	}
+	return nil
 }
 
 // recordPlay updates the recency history, last-artist tracking and, for
