@@ -223,6 +223,8 @@ func TestLoadRejectsDegenerateOrCorruptFile(t *testing.T) {
 		{"short header", bloomFile(64, 3, 64, 0)[:23]},
 		{"m is zero", bloomFile(0, 3, 0, 0)},
 		{"k is zero", bloomFile(64, 0, 64, 1)},
+		{"k above max", bloomFile(64, maxBloomK+1, 64, 1)},
+		{"huge k", bloomFile(64, 1<<40, 64, 1)},
 		{"bitset length differs from m", bloomFile(64, 3, 128, 2)},
 		{"huge length header", bloomFile(1<<62, 3, 1<<62, 0)},
 		{"missing words", bloomFile(128, 3, 128, 1)},
@@ -251,6 +253,20 @@ func TestLoadRejectsDegenerateOrCorruptFile(t *testing.T) {
 			}
 			tr.MarkPlayed("after") // must not panic
 		})
+	}
+}
+
+func TestLoadAcceptsMaxHashCount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.bloom")
+	if err := os.WriteFile(path, bloomFile(64, maxBloomK, 64, 1), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	tr := newTestTracker()
+	if err := tr.Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if tr.HasPlayed("a") {
+		t.Error("HasPlayed(a) = true on an empty filter")
 	}
 }
 

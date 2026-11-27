@@ -173,10 +173,15 @@ func (t *Tracker) Load(path string) error {
 // length, followed by ceil(length/64) uint64 words.
 const bloomHeaderLen = 24
 
+// maxBloomK bounds the hash count read from disk. Estimates give k~7 at a 1%
+// false-positive rate and about 30 even at 1e-9, so 64 is generous.
+const maxBloomK = 64
+
 // validateBloomFile checks the header of a serialized filter before decoding.
 // The decoder trusts the header: m == 0 makes every lookup divide by zero,
-// k == 0 makes every song test as played, and a huge length allocates before
-// any bit is read.
+// k == 0 makes every song test as played, k > maxBloomK makes every
+// MarkPlayed and HasPlayed loop k times under the queue mutex, and a huge
+// length allocates before any bit is read.
 func validateBloomFile(data []byte) error {
 	if len(data) < bloomHeaderLen {
 		return fmt.Errorf("header is %d bytes, want %d", len(data), bloomHeaderLen)
@@ -186,6 +191,9 @@ func validateBloomFile(data []byte) error {
 	length := binary.BigEndian.Uint64(data[16:24])
 	if m == 0 || k == 0 {
 		return fmt.Errorf("degenerate filter m=%d k=%d", m, k)
+	}
+	if k > maxBloomK {
+		return fmt.Errorf("hash count k=%d exceeds %d", k, maxBloomK)
 	}
 	if length != m {
 		return fmt.Errorf("bitset length %d does not match m=%d", length, m)
