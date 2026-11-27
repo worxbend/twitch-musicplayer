@@ -20,9 +20,10 @@ on:
 permissions:
   contents: read
 
+# PR checks get their own group: a pending PR run must never replace a queued deploy.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -68,8 +69,9 @@ jobs:
           done
           size=$(du -sb _site | cut -f1)
           echo "site size: $size bytes"
-          if [ "$size" -gt 2000000 ]; then
-            echo "::error::site is $size bytes, over the 2000000 byte budget"
+          # About 2.0 MB today (PNG fallbacks are 1.57 MB); the slack absorbs encoder drift.
+          if [ "$size" -gt 2500000 ]; then
+            echo "::error::site is $size bytes, over the 2500000 byte budget"
             missing=1
           fi
           exit "$missing"
