@@ -14,12 +14,15 @@ interface QueueItem {
   source: 'auto' | 'manual'; added_at: string;
 }
 interface HistoryItem { song: Song; started_at: string; }
+// GET /v1/blocked lists a song whose file left the library by its id alone.
+type BlockedEntry = Song | { id: string; missing: true };
 function formatDuration(secs: number): string {
   if (!secs || secs <= 0) return '--:--';
   return `${Math.floor(secs / 60)}:${Math.floor(secs % 60).toString().padStart(2, '0')}`;
 }
 function songLabel(song: Song) { return song.title || song.filename; }
 function queueItemLabel(item: QueueItem) { return item.song ? songLabel(item.song) : item.song_id; }
+function blockedLabel(entry: BlockedEntry) { return 'missing' in entry ? entry.id : songLabel(entry); }
 
 // fetchQueue replaces every row, which drops keyboard focus. These keep the
 // focused queue control (by item id and action) focused across the re-render.
@@ -58,6 +61,7 @@ export function AdminApp() {
   const [songs, setSongs] = createSignal<Song[]>([]);
   const [queue, setQueue] = createSignal<QueueItem[]>([]);
   const [history, setHistory] = createSignal<HistoryItem[]>([]);
+  const [blocked, setBlocked] = createSignal<BlockedEntry[]>([]);
   const [currentSong, setCurrentSong] = createSignal<Song | null>(null);
   const [connected, setConnected] = createSignal(false);
   // A fresh id per call makes Solid insert a new node, so a repeated message is re-announced.
@@ -67,6 +71,7 @@ export function AdminApp() {
   const [libraryError, setLibraryError] = createSignal(false);
   const [queueError, setQueueError] = createSignal(false);
   const [historyError, setHistoryError] = createSignal(false);
+  const [blockedError, setBlockedError] = createSignal(false);
   const [playerError, setPlayerError] = createSignal(false);
   const [busy, setBusy] = createSignal('');
   let notifTimer = 0;
@@ -75,6 +80,7 @@ export function AdminApp() {
   let searchRequest = 0;
   const queueGate = createLatest();
   const historyGate = createLatest();
+  const blockedGate = createLatest();
   const playerGate = createLatest();
   let disposed = false;
   let clearDialog!: HTMLDialogElement;
@@ -116,6 +122,13 @@ export function AdminApp() {
       const data = await request('/v1/history?limit=10', readJSON);
       if (historyGate.isLatest(id) && !disposed) { setHistory(data.items ?? []); setHistoryError(false); }
     } catch { if (historyGate.isLatest(id) && !disposed) setHistoryError(true); }
+  }
+  async function fetchBlocked() {
+    const id = blockedGate.begin();
+    try {
+      const data = await request('/v1/blocked', readJSON);
+      if (blockedGate.isLatest(id) && !disposed) { setBlocked(data.songs ?? []); setBlockedError(false); }
+    } catch { if (blockedGate.isLatest(id) && !disposed) setBlockedError(true); }
   }
   // The newest entry is the track on air; the now-playing bar already shows it.
   function pastHistory() {
@@ -166,6 +179,17 @@ export function AdminApp() {
     void refetch();
   }
 
+  async function blockSong(song: Song) {
+    await action(`/v1/songs/${encodeURIComponent(song.id)}:block`, `Out of rotation: ${songLabel(song)}`);
+    await fetchBlocked();
+  }
+  async function allowAgain(entry: BlockedEntry) {
+    await action(`/v1/songs/${encodeURIComponent(entry.id)}:unblock`, `Back in rotation: ${blockedLabel(entry)}`);
+    await fetchBlocked();
+    // The row and its button are gone; keep keyboard focus off <body>.
+    if (document.activeElement === document.body) document.getElementById('blocked-heading')?.focus();
+  }
+
   function MoveButton(props: { item: QueueItem; direction: 'up' | 'down'; blocked: boolean }) {
     return <ActionButton class="btn btn-ghost btn-icon" aria-label={`Move ${queueItemLabel(props.item)} ${props.direction}`} title={`Move ${props.direction}`} data-queue-id={props.item.id} data-queue-action={props.direction} inactive={() => props.blocked || !!busy()} onClick={() => void action(`/v1/queue/${props.item.id}:move`, 'Queue order updated.', 'POST', { direction: props.direction })}><span aria-hidden="true">{props.direction === 'up' ? '↑' : '↓'}</span></ActionButton>;
   }
@@ -204,7 +228,7 @@ export function AdminApp() {
       reconnectAttempts = 0;
       lastMessageAt = Date.now();
       setConnected(true);
-      void fetchQueue(); void fetchPlayerState(); void fetchHistory(); void fetchSongs();
+      void fetchQueue(); void fetchPlayerState(); void fetchHistory(); void fetchSongs(); void fetchBlocked();
       window.clearInterval(heartbeatInterval);
       heartbeatInterval = window.setInterval(() => {
         // Half-open socket: no heartbeat_ack or update for too long.
@@ -216,7 +240,7 @@ export function AdminApp() {
       lastMessageAt = Date.now();
       try {
         const msg = JSON.parse(e.data) as { type: string; payload?: { song?: Song; current_song?: Song } };
-        if (msg.type === 'queue_updated') void fetchQueue();
+        if (msg.type === 'queue_updated') { void fetchQueue(); void fetchBlocked(); }
         // A pushed song is newer than any /v1/player reply still in flight.
         if (msg.type === 'now_playing') { playerGate.begin(); setCurrentSong(msg.payload?.song ?? null); void fetchQueue(); void fetchHistory(); }
         if (msg.type === 'state') { playerGate.begin(); setCurrentSong(msg.payload?.current_song ?? null); void fetchQueue(); void fetchHistory(); }
@@ -236,7 +260,7 @@ export function AdminApp() {
     searchTimer = window.setTimeout(() => void fetchSongs(q), 280);
   });
   onMount(() => {
-    void fetchQueue(); void fetchPlayerState(); void fetchHistory(); connectWS();
+    void fetchQueue(); void fetchPlayerState(); void fetchHistory(); void fetchBlocked(); connectWS();
   });
   onCleanup(() => {
     disposed = true;
@@ -279,13 +303,13 @@ export function AdminApp() {
                       <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
                       <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta">{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
                       <span class="song-duration">{formatDuration(song.duration_secs)}</span>
-                      <div class="song-actions"><ActionButton class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} inactive={() => !!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</ActionButton><ActionButton class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} inactive={() => !!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</ActionButton></div>
+                      <div class="song-actions"><ActionButton class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} inactive={() => !!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</ActionButton><ActionButton class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} inactive={() => !!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</ActionButton><ActionButton class="btn btn-ghost btn-icon" title="Don't play this" aria-label={`Don't play ${songLabel(song)}`} inactive={() => !!busy()} onClick={() => void blockSong(song)}><span aria-hidden="true">⊘</span></ActionButton></div>
                     </div>}
                   </For>
                 </Show>
               </Show>
             </div>
-            <div class="panel-footnote"><span class="key-hint">+</span> queue it <span class="key-hint">▶</span> play it now</div>
+            <div class="panel-footnote"><span class="key-hint">+</span> queue it <span class="key-hint">▶</span> play it now <span class="key-hint">⊘</span> don’t play it</div>
           </section>
           <section class="queue-panel" aria-labelledby="queue-heading">
             <div class="panel-header"><h2 id="queue-heading" class="panel-title" tabIndex={-1}>Up next <span class="queue-count">{queue().length}</span></h2><ActionButton class="btn btn-danger" inactive={() => !!busy() || !queue().length} onClick={() => clearDialog.showModal()}>Clear queue</ActionButton></div>
@@ -309,6 +333,18 @@ export function AdminApp() {
                   {entry => <li class="history-item"><div class="queue-info"><div class="queue-title">{songLabel(entry.song)}</div><div class="queue-artist">{entry.song.artist || 'Unknown artist'}</div></div><time class="history-time" datetime={entry.started_at}>{formatClock(entry.started_at)}</time></li>}
                 </For>
               </ol>
+            </Show>
+          </Show>
+        </section>
+        <section class="history-panel" aria-labelledby="blocked-heading">
+          <div class="panel-header"><h2 id="blocked-heading" class="panel-title" tabIndex={-1}>Blocked</h2><span class="panel-meta">{blocked().length} out of rotation</span></div>
+          <Show when={!blockedError()} fallback={<div class="empty-state"><h3>Blocked list unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => retry('blocked-heading', fetchBlocked)}>Retry</button></div>}>
+            <Show when={blocked().length} fallback={<div class="empty-state"><p>Every track is in rotation. Use ⊘ in the library to keep one off the air.</p></div>}>
+              <ul class="history-list">
+                <For each={blocked()}>
+                  {entry => <li class="history-item"><div class="queue-info"><div class="queue-title">{blockedLabel(entry)}</div><div class="queue-artist">{'missing' in entry ? 'File no longer in the library' : entry.artist || 'Unknown artist'}</div></div><ActionButton class="btn" aria-label={`Allow ${blockedLabel(entry)} again`} inactive={() => !!busy()} onClick={() => void allowAgain(entry)}>Allow again</ActionButton></li>}
+                </For>
+              </ul>
             </Show>
           </Show>
         </section>

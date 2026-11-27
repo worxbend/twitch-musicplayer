@@ -299,6 +299,49 @@ test('play-now and skip send the existing backend commands', async ({ page }) =>
   await expect(page.getByRole('status')).toContainText('Skip requested');
 });
 
+// mockBlocklist serves GET /v1/blocked from a list that :block and :unblock edit.
+async function mockBlocklist(page: Page, initial: { id: string; title?: string; missing?: true }[] = []) {
+  let blocked = initial;
+  await page.route(url => url.pathname === '/v1/blocked', route => route.fulfill({ json: { songs: blocked } }));
+  await page.route(url => /^\/v1\/songs\/[^/]+:(un)?block$/.test(url.pathname), route => {
+    const [, id, verb] = new URL(route.request().url()).pathname.match(/^\/v1\/songs\/([^/]+):(block|unblock)$/)!;
+    blocked = verb === 'block' ? [...blocked, songs.find(song => song.id === id)!] : blocked.filter(entry => entry.id !== id);
+    return route.fulfill({ json: { message: `song ${verb}ed` } });
+  });
+}
+
+test('admin blocks a song from the library and allows it again', async ({ page }) => {
+  await mockStation(page);
+  await mockBlocklist(page);
+  await page.goto('/admin');
+  const panel = page.getByRole('region', { name: 'Blocked', exact: true });
+  await expect(panel.getByText('Every track is in rotation.')).toBeVisible();
+  const block = page.waitForRequest(r => r.url().endsWith('/v1/songs/a:block') && r.method() === 'POST');
+  await page.getByRole('button', { name: "Don't play Midnight compiler" }).click();
+  await block;
+  await expect(page.getByRole('status')).toContainText('Out of rotation: Midnight compiler');
+  await expect(panel.getByRole('listitem')).toHaveText([/Midnight compiler/]);
+  const unblock = page.waitForRequest(r => r.url().endsWith('/v1/songs/a:unblock') && r.method() === 'POST');
+  await panel.getByRole('button', { name: 'Allow Midnight compiler again' }).click();
+  await unblock;
+  await expect(panel.getByRole('listitem')).toHaveCount(0);
+  await expect(page.locator('#blocked-heading')).toBeFocused();
+  expect((await new AxeBuilder({ page }).include('[aria-labelledby="blocked-heading"]').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+});
+
+test('admin labels a missing blocked song by id and reports a blocked add', async ({ page }) => {
+  await mockStation(page);
+  await mockBlocklist(page, [{ id: 'gone', missing: true }]);
+  await page.route('**/v1/queue', route => route.request().method() === 'POST'
+    ? route.fulfill({ status: 409, json: { error: 'song is blocked' } })
+    : route.fallback());
+  await page.goto('/admin');
+  const panel = page.getByRole('region', { name: 'Blocked', exact: true });
+  await expect(panel.getByRole('listitem')).toHaveText([/gone.*File no longer in the library/]);
+  await page.getByRole('button', { name: 'Add Midnight compiler to queue' }).click();
+  await expect(page.getByRole('status')).toContainText('Action failed: song is blocked.');
+});
+
 test('audio unlock works by keyboard and reports actual playback', async ({ page }) => {
   await mockStation(page, { requireGesture: true });
   await page.goto('/');

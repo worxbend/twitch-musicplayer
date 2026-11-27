@@ -129,7 +129,9 @@ without configuration.
 ## 🎚️ Controlling The Queue
 
 The admin console at `http://localhost:3000/admin.html` gives you a searchable library, the
-live queue, a recently played list, and buttons to queue, play-now, skip and clear. 🎛️
+live queue, a recently played list, and buttons to queue, play-now, skip and clear. ⊘ next to a
+track means "don't play this": the track leaves rotation, even after a restart, until you press
+**Allow again** in the Blocked list. 🎛️
 
 Anything else can drive it over HTTP:
 
