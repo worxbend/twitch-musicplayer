@@ -84,6 +84,7 @@ DELETE /v1/queue/{queue_item_id}
 ```
 
 Removes a queued item.
+Returns `204` with no body, `404` for an unknown item, and `500` if the queue store fails.
 
 ```http
 POST /v1/queue/{queue_item_id}:move

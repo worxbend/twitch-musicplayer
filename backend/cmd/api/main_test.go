@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -309,4 +310,54 @@ func TestShutdownClosesStalledRequests(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("stalled request still open after shutdown")
 	}
+}
+
+type fakeQueueLister struct {
+	items []*models.QueueItem
+	err   error
+}
+
+func (f fakeQueueLister) ListQueue(context.Context) ([]*models.QueueItem, error) {
+	return f.items, f.err
+}
+
+type capturingBroadcaster struct{ msgs []websocket.Message }
+
+func (c *capturingBroadcaster) Broadcast(msg websocket.Message) { c.msgs = append(c.msgs, msg) }
+
+func assertQueueUpdated(t *testing.T, hub *capturingBroadcaster, wantDepth int, wantReason string) {
+	t.Helper()
+	if len(hub.msgs) != 1 {
+		t.Fatalf("broadcast %d frames, want 1", len(hub.msgs))
+	}
+	msg := hub.msgs[0]
+	if msg.Type != websocket.MsgQueueUpdated {
+		t.Fatalf("frame type = %q, want %q", msg.Type, websocket.MsgQueueUpdated)
+	}
+	var got websocket.QueueUpdatedPayload
+	if err := websocket.DecodePayload(msg, &got); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	want := websocket.QueueUpdatedPayload{QueueDepth: wantDepth, Reason: wantReason}
+	if got != want {
+		t.Errorf("payload = %+v, want %+v", got, want)
+	}
+}
+
+func TestBroadcastQueueUpdatedReportsLiveDepth(t *testing.T) {
+	hub := &capturingBroadcaster{}
+	q := fakeQueueLister{items: []*models.QueueItem{{}, {}, {}}}
+
+	broadcastQueueUpdated(context.Background(), hub, q, "new_file")
+
+	assertQueueUpdated(t, hub, 3, "new_file")
+}
+
+func TestBroadcastQueueUpdatedSendsOnListError(t *testing.T) {
+	hub := &capturingBroadcaster{}
+	q := fakeQueueLister{err: errors.New("store down")}
+
+	broadcastQueueUpdated(context.Background(), hub, q, "file_removed")
+
+	assertQueueUpdated(t, hub, 0, "file_removed")
 }

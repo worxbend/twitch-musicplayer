@@ -143,6 +143,9 @@ Known reasons:
 - `new_file`
 - `file_removed` (a library file or directory was deleted or renamed away)
 - `file_updated` (a library file was rewritten or replaced and its tags changed)
+- `song_started` (the server sent the next song to the player and took it off the queue)
+
+`queue_depth` is the live queue length after the change, for every reason.
 
 ### `error`
 

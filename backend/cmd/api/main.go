@@ -70,17 +70,19 @@ func main() {
 		cfg.Music.Extensions,
 		songRepo,
 		queueMgr,
-		func(_ *models.Song) { broadcastQueueUpdated(hub, "new_file") },
+		func(_ *models.Song) { broadcastQueueUpdated(context.Background(), hub, queueMgr, "new_file") },
 	)
 	if err != nil {
 		log.Fatalf("watcher init failed: %v", err)
 	}
-	fsWatcher.OnRemoved = func(_ []*models.Song) { broadcastQueueUpdated(hub, "file_removed") }
+	fsWatcher.OnRemoved = func(_ []*models.Song) {
+		broadcastQueueUpdated(context.Background(), hub, queueMgr, "file_removed")
+	}
 	fsWatcher.OnUpdated = func(song *models.Song) {
 		if stateTracker.UpdateSong(song) {
 			broadcastNowPlaying(context.Background(), hub, queueMgr, song)
 		}
-		broadcastQueueUpdated(hub, "file_updated")
+		broadcastQueueUpdated(context.Background(), hub, queueMgr, "file_updated")
 	}
 
 	// ── HTTP API handlers ─────────────────────────────────────────────────────
@@ -226,9 +228,25 @@ func setupNowPlayingFile(tracker songSource, obs config.OBSConfig) {
 	log.Printf("obs now-playing file: %s", obs.NowPlayingFile)
 }
 
-// broadcastQueueUpdated tells every client the queue changed for reason.
-func broadcastQueueUpdated(hub *websocket.Hub, reason string) {
-	msg, err := websocket.Encode(websocket.MsgQueueUpdated, websocket.QueueUpdatedPayload{Reason: reason})
+// broadcaster is the part of websocket.Hub the watcher frames go through.
+type broadcaster interface {
+	Broadcast(msg websocket.Message)
+}
+
+// queueLister is the part of queue.Manager that reports the live queue.
+type queueLister interface {
+	ListQueue(ctx context.Context) ([]*models.QueueItem, error)
+}
+
+// broadcastQueueUpdated tells every client the queue changed for reason and
+// how deep it now is. A failed queue read still sends the frame, with depth 0.
+func broadcastQueueUpdated(ctx context.Context, hub broadcaster, q queueLister, reason string) {
+	items, err := q.ListQueue(ctx)
+	if err != nil {
+		log.Printf("list queue for queue_updated (%s): %v", reason, err)
+	}
+	payload := websocket.QueueUpdatedPayload{QueueDepth: len(items), Reason: reason}
+	msg, err := websocket.Encode(websocket.MsgQueueUpdated, payload)
 	if err != nil {
 		log.Printf("encode queue_updated (%s): %v", reason, err)
 		return
