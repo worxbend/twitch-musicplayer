@@ -2,6 +2,7 @@ import { createSignal, createEffect, onMount, onCleanup, splitProps, For, Show, 
 import { getBackendURL, getWebSocketURL } from './config/backend';
 import { reconnectDelay, HEARTBEAT_MS, isStale } from './config/reconnect';
 import { createLatest } from './admin/latestRequest';
+import { HttpError, errorText, fetchWithTimeout, REQUEST_TIMEOUT_MS } from './admin/request';
 import { TerminalHeader } from './components/TerminalHeader';
 
 interface Song {
@@ -39,17 +40,6 @@ function restoreQueueFocus(control: QueueControl | null, items: QueueItem[]) {
   if (!items.length) { document.getElementById('queue-heading')?.focus(); return; }
   const slot = items[Math.min(Math.max(control.index, 0), items.length - 1)];
   document.querySelector<HTMLElement>(`.queue-list [data-queue-id="${CSS.escape(slot.id)}"][data-queue-action="remove"]`)?.focus();
-}
-// HttpError keeps the status and the backend's {"error": msg} text.
-class HttpError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
-}
-async function errorText(res: Response): Promise<string> {
-  try {
-    const body: unknown = await res.json();
-    const text = (body as { error?: unknown } | null)?.error;
-    return typeof text === 'string' ? text.trim() : '';
-  } catch { return ''; }
 }
 // aria-disabled, not disabled: a natively disabled button drops keyboard
 // focus to <body> when it becomes disabled under the cursor.
@@ -89,7 +79,8 @@ export function AdminApp() {
   let clearDialog!: HTMLDialogElement;
 
   async function request(path: string, init?: RequestInit) {
-    const res = await fetch(`${backendURL}${path}`, init);
+    // The wrapper keeps fetch bound to window (a bare reference throws Illegal invocation).
+    const res = await fetchWithTimeout((...args) => fetch(...args), `${backendURL}${path}`, init, REQUEST_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, await errorText(res));
     return res;
   }
@@ -152,7 +143,13 @@ export function AdminApp() {
     } catch (err) {
       // A 4xx carries the backend's reason (e.g. 409 "queue is empty"); network errors and 5xx do not.
       const clientError = err instanceof HttpError && err.status >= 400 && err.status < 500 && err.message;
-      showNotification(clientError ? `Action failed: ${err.message}.` : 'Action failed. Check the backend connection and try again.', true);
+      const timedOut = err instanceof DOMException && err.name === 'TimeoutError';
+      showNotification(
+        clientError ? `Action failed: ${err.message}.`
+          : timedOut ? 'Action timed out. The backend did not respond.'
+          : 'Action failed. Check the backend connection and try again.',
+        true,
+      );
     }
     finally { setBusy(''); }
   }
