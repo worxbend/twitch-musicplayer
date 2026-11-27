@@ -182,3 +182,52 @@ test('each Retry moves focus to its panel heading, not to the page body', async 
   await expect(page.getByText('No songs played yet.')).toBeVisible();
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
 });
+
+test('connection changes are announced once each, and the first connect is silent', async ({ page, context }) => {
+  const sockets: { close: () => Promise<void> }[] = [];
+  let refused = 0;
+  let refuse = false;
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
+    // No backend listens on the real URL, so passing through fails the socket.
+    if (refuse) { refused++; ws.connectToServer(); return; }
+    sockets.push(ws);
+  });
+  await page.route('**/v1/**', route => route.fulfill({ json: { songs: [song], items: [], current_song: song } }));
+  await page.goto('/admin');
+  const label = page.locator('.connection-box .status');
+  const status = page.getByRole('status');
+  await expect(label).toHaveText('Backend connected');
+  await page.evaluate(() => {
+    const region = document.querySelector<HTMLElement>('[role="status"]')!;
+    region.dataset.notices = '0';
+    new MutationObserver(records => {
+      const added = records.flatMap(r => Array.from(r.addedNodes)).filter(n => n instanceof Element && n.matches('.notification')).length;
+      region.dataset.notices = String(Number(region.dataset.notices) + added);
+    }).observe(region, { childList: true, subtree: true });
+  });
+  const notices = () => status.evaluate(el => Number(el.dataset.notices));
+  await expect(status).not.toContainText('Backend connected');
+
+  await sockets.at(-1)!.close();
+  await expect(status).toContainText('Backend connection lost. Reconnecting.');
+  await expect(label).toHaveText('Reconnecting to backend');
+  // The first retry waits reconnectDelay(0), under a second.
+  await expect(status).toContainText('Backend connected. Live sync resumed.', { timeout: 10000 });
+  await expect(label).toHaveText('Backend connected');
+  expect(await notices()).toBe(2);
+
+  await context.setOffline(true);
+  refuse = true;
+  await sockets.at(-1)!.close();
+  await expect(status).toContainText('Backend offline. Waiting for the network.');
+  await expect(label).toHaveText('Backend offline');
+  // Three failed retries (0.9 + 1.8 + 3.6 s) push the next backoff past the
+  // expect timeout, so only the online handler can reconnect in time.
+  await expect.poll(() => refused, { timeout: 20000 }).toBe(3);
+  await expect(label).toHaveText('Backend offline');
+  refuse = false;
+  await context.setOffline(false);
+  await expect(status).toContainText('Backend connected. Live sync resumed.');
+  await expect(label).toHaveText('Backend connected');
+  expect(await notices()).toBe(4);
+});

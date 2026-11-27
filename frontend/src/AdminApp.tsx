@@ -1,7 +1,8 @@
-import { createSignal, createEffect, onMount, onCleanup, splitProps, For, Show, type JSX } from 'solid-js';
+import { createSignal, createEffect, on, onMount, onCleanup, splitProps, For, Show, type JSX } from 'solid-js';
 import { getBackendURL, getWebSocketURL } from './config/backend';
 import { reconnectDelay, HEARTBEAT_MS, isStale, armHandshakeTimeout } from './config/reconnect';
 import { createLatest } from './admin/latestRequest';
+import { connectionAnnouncement, connectionLabel, type AdminConnection } from './admin/connection';
 import { HttpError, errorText, fetchWithTimeout, REQUEST_TIMEOUT_MS } from './admin/request';
 import { TerminalHeader } from './components/TerminalHeader';
 
@@ -82,7 +83,7 @@ export function AdminApp() {
   const [history, setHistory] = createSignal<HistoryItem[]>([]);
   const [blocked, setBlocked] = createSignal<BlockedEntry[]>([]);
   const [currentSong, setCurrentSong] = createSignal<Song | null>(null);
-  const [connected, setConnected] = createSignal(false);
+  const [conn, setConn] = createSignal<AdminConnection>('connecting');
   // A fresh id per call makes Solid insert a new node, so a repeated message is re-announced.
   const [notice, setNotice] = createSignal<{ id: number; text: string; error: boolean } | null>(null);
   const [searchQuery, setSearchQuery] = createSignal('');
@@ -259,7 +260,7 @@ export function AdminApp() {
       socket.close();
       socket = null;
     }
-    setConnected(false);
+    setConn(navigator.onLine === false ? 'offline' : 'reconnecting');
   }
   function scheduleReconnect() {
     window.clearTimeout(reconnectTimeout);
@@ -282,7 +283,7 @@ export function AdminApp() {
       cancelHandshake();
       reconnectAttempts = 0;
       lastMessageAt = Date.now();
-      setConnected(true);
+      setConn('connected');
       void fetchQueue(); void fetchPlayerState(); void fetchHistory(); void fetchSongs(); void fetchBlocked();
       window.clearInterval(heartbeatInterval);
       heartbeatInterval = window.setInterval(() => {
@@ -307,6 +308,22 @@ export function AdminApp() {
     };
     ws.onerror = () => ws.close();
   }
+  // An open socket can outlive a network flap (e.g. a localhost backend), so
+  // offline only acts on a socket that is not open; the heartbeat catches the rest.
+  function handleOffline() {
+    if (socket?.readyState !== WebSocket.OPEN) setConn('offline');
+  }
+  // Skip the backoff: the network is back, so try now.
+  function handleOnline() {
+    reconnectAttempts = 0;
+    window.clearTimeout(reconnectTimeout);
+    connectWS();
+  }
+  // Solid skips equal values, so repeated drops while reconnecting announce once.
+  createEffect(on(conn, (next, prev) => {
+    const text = connectionAnnouncement(prev ?? 'connecting', next);
+    if (text && !disposed) showNotification(text, next !== 'connected');
+  }, { defer: true }));
   createEffect(() => {
     const q = searchQuery();
     window.clearTimeout(searchTimer);
@@ -315,10 +332,14 @@ export function AdminApp() {
     searchTimer = window.setTimeout(() => void fetchSongs(q), 280);
   });
   onMount(() => {
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
     void fetchQueue(); void fetchPlayerState(); void fetchHistory(); void fetchBlocked(); connectWS();
   });
   onCleanup(() => {
     disposed = true;
+    window.removeEventListener('offline', handleOffline);
+    window.removeEventListener('online', handleOnline);
     window.clearInterval(heartbeatInterval);
     window.clearTimeout(reconnectTimeout);
     window.clearTimeout(notifTimer);
@@ -332,7 +353,7 @@ export function AdminApp() {
       <main id="main" class="admin-content" tabIndex={-1}>
         <header class="console-intro">
           <div><p class="console-caption">The broadcast studio</p><h1>Station control</h1><p>Keep the music moving. You’re at the controls.</p></div>
-          <div class="connection-box"><span class="status" classList={{'status--live': connected()}}><span class="status-dot" />{connected() ? 'Backend connected' : 'Reconnecting to backend'}</span><span>Live library &amp; queue sync</span></div>
+          <div class="connection-box"><span class="status" classList={{'status--live': conn() === 'connected'}}><span class="status-dot" />{connectionLabel(conn())}</span><span>Live library &amp; queue sync</span></div>
         </header>
         <section class="now-playing-bar" aria-labelledby="now-playing-heading">
           <div class="broadcast-mark" aria-hidden="true"><span /></div>
