@@ -91,7 +91,8 @@ footage, and `pill` puts the text on a dark rounded backing for the brightest sc
 `/now-playing?next=1&align=center`. The line is hidden while the queue is empty, and it
 follows the same `hold` fade as the title. If the connection drops silently, the overlay
 notices within about a minute and reconnects by itself; a connection that has not
-opened within 10 seconds is retried. It plays no
+opened within 10 seconds is retried. When the backend shuts down, the title clears and
+comes back once the backend is up again. It plays no
 audio, so pair it with the audio source page. It only listens to the backend and never
 advances the queue, so it is safe to add alongside a playing page.
 

@@ -132,6 +132,14 @@ export function progressTiming(
   return { durationSecs, elapsedSecs };
 }
 
+/** WebSocket close code the backend hub sends on graceful shutdown. */
+export const GOING_AWAY = 1001;
+
+/** True when a socket close means the server stopped, so the overlay clears its title; network drops keep it. */
+export function clearsOnClose(code: number): boolean {
+  return code === GOING_AWAY;
+}
+
 /** What the overlay last showed: `key` is the start id, or the title when the frame had none. */
 export interface ShownKey { key: string; title: string }
 

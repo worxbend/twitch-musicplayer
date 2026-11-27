@@ -2,6 +2,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from
 import { coverURL, getWebSocketURL } from './config/backend';
 import { HEARTBEAT_MS, armHandshakeTimeout, isStale, reconnectDelay } from './config/reconnect';
 import {
+  clearsOnClose,
   nextShown,
   progressTiming,
   reduceNowPlaying,
@@ -107,7 +108,12 @@ export function NowPlayingOverlay(props: Props) {
       }
       setUpNext(prev => reduceUpNext(prev, raw));
     };
-    ws.onclose = () => {
+    ws.onclose = event => {
+      // A graceful shutdown clears now-playing server side; the reconnect `state` frame shows it again.
+      if (clearsOnClose(event.code)) {
+        setSong(null);
+        setUpNext(null);
+      }
       closeSocket();
       if (running) scheduleReconnect();
     };

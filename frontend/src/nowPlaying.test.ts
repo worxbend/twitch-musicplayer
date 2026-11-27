@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  clearsOnClose,
   nextShown,
   nowPlayingFonts,
   nowPlayingPath,
@@ -92,6 +93,19 @@ test('nextShown re-arms after an idle clear', () => {
   const cleared = nextShown(shownRain, null);
   assert.deepEqual(cleared, { show: false, shown: { key: '', title: '' } });
   assert.equal(nextShown(cleared.shown, { title: 'Rainy Day', artist: '' }).show, true);
+});
+
+test('clearsOnClose is true only for 1001 Going Away', () => {
+  assert.equal(clearsOnClose(1001), true);
+  for (const code of [1000, 1006, 1011]) assert.equal(clearsOnClose(code), false, String(code));
+});
+
+test('nextShown shows the same title again after a Going Away clear', () => {
+  const rain: NowPlayingSong = { title: 'Rainy Day', artist: '' };
+  const first = nextShown({ key: '', title: '' }, rain);
+  assert.equal(first.show, true);
+  const cleared = nextShown(first.shown, null);
+  assert.equal(nextShown(cleared.shown, rain).show, true);
 });
 
 test('nextShown keeps a hidden title hidden on a reconnect state frame', () => {

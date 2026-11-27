@@ -799,6 +799,39 @@ test('now-playing hold re-shows a repeated title on a new history_id; a dry-queu
   await expect(overlay).not.toHaveClass(/np-hidden/);
 });
 
+test('now-playing clears the title on 1001 Going Away and shows it again on reconnect', async ({ page }) => {
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { sockets.push(ws); });
+  const title = page.locator('.np-title');
+  await page.goto('/now-playing');
+  await expect.poll(() => sockets.length).toBe(1);
+
+  sockets[0].send(JSON.stringify({ type: 'now_playing', payload: { song: songs[0], history_id: 'h1', queue_depth: 1 } }));
+  await expect(title).toBeVisible();
+  await sockets[0].close({ code: 1001, reason: 'server shutting down' });
+  await expect(title).toBeHidden();
+
+  // The first reconnect waits about 900ms; its state frame brings the title back.
+  await expect.poll(() => sockets.length).toBe(2);
+  sockets[1].send(JSON.stringify({ type: 'state', payload: { current_song: songs[0] } }));
+  await expect(title).toBeVisible();
+});
+
+test('now-playing keeps the title on an abnormal close', async ({ page }) => {
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { sockets.push(ws); });
+  const title = page.locator('.np-title');
+  await page.goto('/now-playing');
+  await expect.poll(() => sockets.length).toBe(1);
+
+  sockets[0].send(JSON.stringify({ type: 'now_playing', payload: { song: songs[0], history_id: 'h1', queue_depth: 1 } }));
+  await expect(title).toBeVisible();
+  await sockets[0].close({ code: 1006, reason: 'network blip' });
+  // The overlay reconnects without blanking the title.
+  await expect.poll(() => sockets.length).toBe(2);
+  await expect(title).toBeVisible();
+});
+
 // A half-open socket delivers nothing. Without heartbeat_ack the overlay must reconnect,
 // and with acks it must keep the healthy socket (6df6ecb).
 test('now-playing overlay reconnects a silent socket', async ({ page }) => {
