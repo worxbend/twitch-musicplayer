@@ -71,6 +71,8 @@ jobs:
         run: npm test
       - name: build
         run: npm run build
+      - name: default config.js is shipped
+        run: test -f dist/config.js
 
   ui:
     runs-on: ubuntu-latest

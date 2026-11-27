@@ -1,4 +1,5 @@
-/* Tests for docker-entrypoint.d/20-lofi-config.sh.
+/* Tests for docker-entrypoint.d/20-lofi-config.sh and the default
+ * public/config.js that static hosts serve.
  *
  * Run with:  npm test          (node --test, no extra dependencies)
  *
@@ -16,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 const script = fileURLToPath(new URL('../../docker-entrypoint.d/20-lofi-config.sh', import.meta.url));
+const defaultConfig = fileURLToPath(new URL('../../public/config.js', import.meta.url));
 
 let tmpDir: string;
 let target: string;
@@ -40,8 +42,8 @@ function runScript(backendUrl: string | undefined) {
   });
 }
 
-function evaluateConfig(code: string): Record<string, unknown> {
-  const context = { window: {} as Record<string, unknown> };
+function evaluateConfig(code: string, window: Record<string, unknown> = {}): Record<string, unknown> {
+  const context = { window };
   vm.runInNewContext(code, context);
   const config = context.window.__LOFI_CONFIG__;
   assert.equal(typeof config, 'object');
@@ -93,3 +95,13 @@ for (const url of hostileUrls) {
     assert.equal(fs.existsSync(target), false);
   });
 }
+
+test('default public/config.js yields an empty config', () => {
+  assert.deepEqual(evaluateConfig(fs.readFileSync(defaultConfig, 'utf8')), {});
+});
+
+test('default public/config.js keeps a config that is already set', () => {
+  const preset = { backendUrl: 'https://x' };
+  const code = fs.readFileSync(defaultConfig, 'utf8');
+  assert.deepEqual(evaluateConfig(code, { __LOFI_CONFIG__: preset }), preset);
+});
