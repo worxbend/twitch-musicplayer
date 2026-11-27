@@ -162,17 +162,19 @@ Object.assign(globalThis, {
     AudioContext: FakeAudioContext,
     setTimeout: (fn: () => void, ms?: number) => globalThis.setTimeout(fn, ms),
     clearTimeout: (id?: ReturnType<typeof setTimeout>) => globalThis.clearTimeout(id),
+    setInterval: (fn: () => void, ms?: number) => globalThis.setInterval(fn, ms),
+    clearInterval: (id?: ReturnType<typeof setInterval>) => globalThis.clearInterval(id),
   },
 });
 
-const { AudioEngine, PLAY_START_TIMEOUT_MS } = await import('./AudioEngine.ts');
+const { AudioEngine, PLAY_START_TIMEOUT_MS, STALL_TIMEOUT_MS, STALL_CHECK_MS } = await import('./AudioEngine.ts');
 
 const FADE_MS = 2500;
 
 let engine: Engine;
 
 beforeEach(() => {
-  mock.timers.enable({ apis: ['setTimeout'] });
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   engine = new AudioEngine({ allowAutoplay: true });
 });
 
@@ -726,4 +728,100 @@ test('dispose during a crossfade leaves the released elements alone', async () =
 
   assert.equal(first.src, '');
   assert.equal(first.loads, loadsAfterDispose);
+});
+
+// Plays a first track with an onStall spy; the context clock stays at 10 s.
+async function playWithStallSpy() {
+  const onStall = mock.fn();
+  const first = engine.playStream('/stream/a', 'A', { onStall });
+  await flush();
+  ctx().currentTime = 10;
+  mock.timers.tick(FADE_MS);
+  await first;
+  return { el: activeElement(), onStall };
+}
+
+// Ticks in check-sized steps so every watchdog check runs. A check sees a stall
+// up to STALL_CHECK_MS late, so "before" asserts stop one step short of the limit
+// and "after" asserts run one step past it.
+function elapse(ms: number) {
+  for (let elapsed = 0; elapsed < ms; elapsed += STALL_CHECK_MS) mock.timers.tick(STALL_CHECK_MS);
+}
+const JUST_BEFORE_STALL = STALL_TIMEOUT_MS - STALL_CHECK_MS;
+const PAST_STALL = 2 * STALL_CHECK_MS;
+
+test('a playing track whose position stays frozen fires onStall once', async () => {
+  const { onStall } = await playWithStallSpy();
+
+  elapse(JUST_BEFORE_STALL);
+  assert.equal(onStall.mock.callCount(), 0, 'no stall before the limit');
+  elapse(PAST_STALL);
+  assert.equal(onStall.mock.callCount(), 1);
+  elapse(STALL_TIMEOUT_MS * 2);
+  assert.equal(onStall.mock.callCount(), 1);
+});
+
+test('a paused track never fires onStall', async () => {
+  const { onStall } = await playWithStallSpy();
+  engine.pause();
+  elapse(STALL_TIMEOUT_MS * 2);
+  assert.equal(onStall.mock.callCount(), 0);
+});
+
+test('paused time does not count toward a stall after resume', async () => {
+  const { onStall } = await playWithStallSpy();
+  engine.pause();
+  elapse(STALL_TIMEOUT_MS * 2);
+  engine.play();
+
+  elapse(JUST_BEFORE_STALL);
+  assert.equal(onStall.mock.callCount(), 0);
+  elapse(PAST_STALL);
+  assert.equal(onStall.mock.callCount(), 1);
+});
+
+test('a position that advances before the limit resets the stall timer', async () => {
+  const { el, onStall } = await playWithStallSpy();
+  elapse(JUST_BEFORE_STALL);
+  el.currentTime = 25;
+  el.dispatch('timeupdate');
+
+  elapse(JUST_BEFORE_STALL);
+  assert.equal(onStall.mock.callCount(), 0);
+  elapse(PAST_STALL);
+  assert.equal(onStall.mock.callCount(), 1);
+});
+
+test('dispose clears the stall watchdog', async () => {
+  const { onStall } = await playWithStallSpy();
+  const clearInterval = mock.method(window, 'clearInterval');
+  engine.dispose();
+  assert.equal(clearInterval.mock.callCount(), 1);
+  elapse(STALL_TIMEOUT_MS * 2);
+  assert.equal(onStall.mock.callCount(), 0);
+});
+
+test('a superseding track clears the old stall watchdog', async () => {
+  const { el, onStall } = await playWithStallSpy();
+  const clearInterval = mock.method(window, 'clearInterval');
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+  mock.timers.tick(FADE_MS);
+  await second;
+  assert.equal(el.src, '', 'old channel released');
+  assert.equal(clearInterval.mock.callCount(), 1);
+
+  elapse(STALL_TIMEOUT_MS * 2);
+  assert.equal(onStall.mock.callCount(), 0);
+});
+
+test('a frozen channel fading out does not fire onStall', async () => {
+  const { onStall } = await playWithStallSpy();
+  elapse(JUST_BEFORE_STALL);
+  const second = engine.playStream('/stream/b', 'B');
+  await flush();
+
+  elapse(PAST_STALL);
+  assert.equal(onStall.mock.callCount(), 0);
+  await second;
 });

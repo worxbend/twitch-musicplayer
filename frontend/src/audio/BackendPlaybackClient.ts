@@ -316,6 +316,7 @@ export class BackendPlaybackClient {
       await this.audio.playStream(resolveStreamURL(payload.stream_url), songName, {
         onEnded: () => this.handleEnded(payload),
         onError: () => this.retryStream(payload),
+        onStall: () => this.retryStream(payload),
         onPrefetch: () => this.handlePrefetch(payload),
         onNearEnd: () => this.handleNearEnd(payload),
         // Show the title as soon as the track is audible, not after the crossfade.

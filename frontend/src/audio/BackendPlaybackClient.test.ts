@@ -62,6 +62,7 @@ interface Deferred {
 interface PlayCallbacks {
   onEnded: () => void;
   onError: () => void;
+  onStall: () => void;
   onNearEnd: () => void;
   onPrefetch?: () => void;
   onStarted?: () => void;
@@ -381,6 +382,29 @@ test('a song that starts and then fails every time is skipped after 3 retries', 
   }
 
   audio.plays[3].callbacks.onError();
+  assert.equal(needSongCount(ws), 2);
+  assert.equal(statuses.at(-1)?.message, 'stream unplayable, skipping');
+  mock.timers.tick(5000);
+  assert.equal(audio.plays.length, 4, 'no fifth attempt');
+});
+
+test('a song that stalls every time is replayed, then skipped after 3 retries', async () => {
+  const ws = socket();
+  ws.open();
+  ws.message(playSong('a'));
+  audio.plays[0].settle.resolve();
+  await flush();
+  for (let retry = 1; retry <= 3; retry += 1) {
+    audio.plays[retry - 1].callbacks.onStall();
+    assert.equal(needSongCount(ws), 1, `no skip before retry ${retry}`);
+    mock.timers.tick(5000);
+    assert.equal(audio.plays.length, retry + 1);
+    assert.equal(audio.plays[retry].url, audio.plays[0].url, 'the same song is replayed');
+    audio.plays[retry].settle.resolve();
+    await flush();
+  }
+
+  audio.plays[3].callbacks.onStall();
   assert.equal(needSongCount(ws), 2);
   assert.equal(statuses.at(-1)?.message, 'stream unplayable, skipping');
   mock.timers.tick(5000);

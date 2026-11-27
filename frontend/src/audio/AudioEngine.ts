@@ -7,6 +7,10 @@ const DEFAULT_FADE_OUT_MS = 2500;
 const DEFAULT_FADE_IN_MS = 2500;
 // A stream whose play() has not settled by then is treated as failed.
 export const PLAY_START_TIMEOUT_MS = 20_000;
+// A started stream whose position has not moved for this long while playing is
+// treated as failed: a half-open connection fires neither error nor ended.
+export const STALL_TIMEOUT_MS = 30_000;
+export const STALL_CHECK_MS = 5_000;
 // Seconds before end to fire onNearEnd (triggers actual crossfade): fade + 0.5s network margin
 const NEAR_END_THRESHOLD_SECS = DEFAULT_FADE_OUT_MS / 1000 + 0.5; // 3.0s
 // Seconds before end to fire onPrefetch (triggers peek_next + audio preload)
@@ -47,6 +51,7 @@ interface PlaybackChannel {
   mediaSource: MediaElementAudioSourceNode;
   gain: GainNode;
   _nearEndCleanup: (() => void) | null;
+  _stallCleanup: (() => void) | null;
 }
 
 export class AudioEngine {
@@ -169,7 +174,7 @@ export class AudioEngine {
       audioEl.addEventListener(type, () => this._emitPlayState());
     }
 
-    return { audioEl, mediaSource, gain, _nearEndCleanup: null };
+    return { audioEl, mediaSource, gain, _nearEndCleanup: null, _stallCleanup: null };
   }
 
   // Reads the active channel only, so the outgoing channel stopping after a crossfade
@@ -248,8 +253,7 @@ export class AudioEngine {
 
   // Detaches handlers and the current source from a channel's <audio> element.
   private _releaseElement(channel: PlaybackChannel) {
-    channel._nearEndCleanup?.();
-    channel._nearEndCleanup = null;
+    this._stopWatching(channel);
     channel.audioEl.pause();
     channel.audioEl.onended = null;
     channel.audioEl.onerror = null;
@@ -278,8 +282,7 @@ export class AudioEngine {
 
   private _loadIntoChannel(ch: PlaybackChannel, url: string) {
     if (ch.audioEl.src === url && ch.audioEl.error === null) return;
-    ch._nearEndCleanup?.();
-    ch._nearEndCleanup = null;
+    this._stopWatching(ch);
     ch.audioEl.pause();
     ch.audioEl.onended = null;
     ch.audioEl.onerror = null;
@@ -303,6 +306,7 @@ export class AudioEngine {
       onPrefetch?: () => void;   // fired PREFETCH_THRESHOLD_SECS before end — request next song URL
       onNearEnd?: () => void;    // fired NEAR_END_THRESHOLD_SECS before end — start crossfade
       onStarted?: () => void;    // fired once the new track is audible, before the crossfade completes
+      onStall?: () => void;      // fired once if the started track stops progressing for STALL_TIMEOUT_MS
     } = {},
   ): Promise<void> {
     await this.resume();
@@ -317,9 +321,8 @@ export class AudioEngine {
     // A new play may claim the channel an older crossfade is still fading out.
     this._releaseFadeClaim(incoming);
 
-    // Clean up any stale near-end listener on the incoming channel.
-    incoming._nearEndCleanup?.();
-    incoming._nearEndCleanup = null;
+    // Clean up any stale watchers on the incoming channel.
+    this._stopWatching(incoming);
 
     this._setChannelGain(incoming, 0);
     incoming.audioEl.onended = null;
@@ -350,6 +353,7 @@ export class AudioEngine {
       handlers.onStarted?.();
 
       this._watchNearEnd(incoming, handlers);
+      this._watchStall(incoming, handlers);
 
       if (outgoingHasSource) this._fadingOut = outgoing;
       const fadeIn = this._fadeChannelTo(incoming, 1, DEFAULT_FADE_IN_MS);
@@ -373,6 +377,7 @@ export class AudioEngine {
         this.playing = !incoming.audioEl.paused;
         handlers.onStarted?.();
         this._watchNearEnd(incoming, handlers);
+        this._watchStall(incoming, handlers);
         this._emitPlayState();
         return;
       }
@@ -426,6 +431,45 @@ export class AudioEngine {
       el.addEventListener('timeupdate', timeHandler);
       incoming._nearEndCleanup = () => el.removeEventListener('timeupdate', timeHandler);
     }
+  }
+
+  // Removes a channel's near-end and stall watchers.
+  private _stopWatching(channel: PlaybackChannel) {
+    channel._nearEndCleanup?.();
+    channel._nearEndCleanup = null;
+    channel._stallCleanup?.();
+    channel._stallCleanup = null;
+  }
+
+  // Fires onStall once when the active channel plays but its position stops moving.
+  // Paused time never counts, and a channel fading out is left to the stop path.
+  private _watchStall(channel: PlaybackChannel, handlers: { onStall?: () => void }) {
+    const { onStall } = handlers;
+    if (!onStall) return;
+    const el = channel.audioEl;
+    let lastTime = el.currentTime;
+    let lastProgressAt = Date.now();
+    const onTimeUpdate = () => {
+      if (el.currentTime === lastTime) return;
+      lastTime = el.currentTime;
+      lastProgressAt = Date.now();
+    };
+    const onPlay = () => { lastProgressAt = Date.now(); };
+    const stop = () => {
+      window.clearInterval(timer);
+      el.removeEventListener('timeupdate', onTimeUpdate);
+      el.removeEventListener('play', onPlay);
+      channel._stallCleanup = null;
+    };
+    const timer = window.setInterval(() => {
+      const stalled = !el.paused && !el.ended && !!el.src && Date.now() - lastProgressAt >= STALL_TIMEOUT_MS;
+      if (!stalled || channel !== this._activeChannel) return;
+      stop();
+      onStall();
+    }, STALL_CHECK_MS);
+    el.addEventListener('timeupdate', onTimeUpdate);
+    el.addEventListener('play', onPlay);
+    channel._stallCleanup = stop;
   }
 
   // Rejects with TimeoutError when a stream never starts, e.g. a stalled proxy.
