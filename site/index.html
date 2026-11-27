@@ -104,8 +104,14 @@
           </div>
           <div>
             <dt>Chat knows what's playing</dt>
-            <dd>A transparent now-playing overlay, a text file for OBS Text sources, and
-              <code>/v1/now-playing.txt</code> for Nightbot or StreamElements.</dd>
+            <dd>A transparent now-playing overlay that can show the album cover, a text file
+              for OBS Text sources, and <code>/v1/now-playing.txt</code> (with an
+              <code>?idle=</code> line for quiet moments) for Nightbot or StreamElements.</dd>
+          </div>
+          <div>
+            <dt>Cover art comes along</dt>
+            <dd>Embedded MP3 covers show in the track deck, the now-playing overlay and your
+              OS media controls.</dd>
           </div>
           <div>
             <dt>No repeats, no artist pile-ups</dt>
@@ -126,8 +132,10 @@
             <ol>
               <li><code>/</code><span>The listening room, with a floating track deck</span></li>
               <li><code>/scenes</code><span>Every visualizer, with copyable OBS links</span></li>
-              <li><code>/admin</code><span>Library search, live queue, skip and play now</span></li>
+              <li><code>/admin</code><span>Library search, live queue, skip, play now and block</span></li>
               <li><code>/now-playing</code><span>Transparent title text that fades on cue</span></li>
+              <li><code>/now-playing?art=1</code><span>The title card with its album cover</span></li>
+              <li><code>/v1/now-playing.txt</code><span>Plain text for chat bots, with an ?idle= fallback</span></li>
               <li><code>/overlay</code><span>The ambient scene with the chrome stripped off</span></li>
             </ol>
           </div>
@@ -154,6 +162,8 @@
           <p>Search your library, queue a track, play one right now, move it up or down, or
             skip the current song. Recently played sits right there, so you can answer
             "what was that?" in chat without guessing.</p>
+          <p>Hit Don't play this and a song leaves rotation. The Blocked list lets you allow
+            it again.</p>
           <p>It works from the keyboard, and screen readers hear every status change.</p>
         </div>
         <picture>
