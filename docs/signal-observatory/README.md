@@ -77,5 +77,5 @@ Implementation used three independent file-owning agents for meter/prism scenes,
 
 - Actual OBS embedding, Firefox/Safari, physical audio output, and screen readers were not tested.
 - Existing dependency audit findings were not remediated by this redesign.
-- Vite's runtime `/config.js` bundling warning remains expected; Docker supplies that configuration at container startup.
+- Vite no longer warns about the runtime `/config.js` script: a default `public/config.js` ships with the build, and the Docker entrypoint overwrites it at container startup.
 - An empty music folder means there is no track to play. Add MP3 files to your configured music directory; the idle study is only visual.

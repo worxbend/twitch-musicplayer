@@ -53,7 +53,6 @@ Example: `backend/.env.example`.
 
 ```bash
 PORT=8080
-APP_ENV=local
 BLOOM_PATH=./lofi-radio.bloom
 MUSIC_DIR=./music
 BASE_URL=http://localhost:8080
@@ -71,7 +70,6 @@ Environment variables override TOML values:
 | `MUSIC_DIR` | `music.dir` | `./music` |
 | `BLOOM_PATH` | `bloom.path` | `./lofi-radio.bloom` |
 
-`APP_ENV` appears in `.env.example` for convention but is not read by the service.
 Shuffle and queue settings are TOML-only — there is no environment override for them.
 
 ## ✅ Validation

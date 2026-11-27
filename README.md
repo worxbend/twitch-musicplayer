@@ -399,7 +399,7 @@ back-to-back — as long as an alternative exists.
 
 ```bash
 cd backend
-make check              # gofmt, go mod tidy -diff, go vet, staticcheck,
+make check              # toolchains, gofmt, go mod tidy -diff, go vet, staticcheck,
                         # go test -race, govulncheck, go build
 
 cd ../frontend

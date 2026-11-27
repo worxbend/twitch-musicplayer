@@ -62,6 +62,6 @@ Tests start an isolated Vite server on port 3100 and mock the backend. No music 
 ## Remaining issues and boundaries
 
 - `npm audit` reports 10 existing dependency findings: two critical, six high, and two moderate, including Solid/seroval and Vite. Dependency remediation needs a separate compatibility review; this redesign doesn't claim to resolve them.
-- Vite retains its warning about the runtime `/config.js` script not being bundled. Docker generates that script; the local development and preview servers supply an empty fallback.
+- Vite no longer warns about the runtime `/config.js` script: a default `public/config.js` ships with the build, and the Docker entrypoint overwrites it at container startup.
 - Headless Chromium reported GPU `ReadPixels` performance warnings during screenshot capture. No JavaScript application errors occurred in the live checks.
 - Actual OBS embedding, Firefox/Safari, and screen-reader testing weren't performed. Browser-source transparency and absence of UI chrome were verified in Chromium.

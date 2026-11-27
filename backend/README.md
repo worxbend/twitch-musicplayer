@@ -27,7 +27,7 @@ picked up live by the filesystem watcher — including files added to nested sub
 ## 🔨 Make Targets
 
 ```bash
-make check      # CI gates: fmt-check, tidy-check, vet, staticcheck, test, vulncheck, build
+make check      # CI gates: toolchains, fmt-check, tidy-check, vet, staticcheck, test, vulncheck, build
 make build      # compile the binary
 make run        # build and run
 make test       # go test -race ./...
@@ -63,6 +63,7 @@ Shuffle and queue strategies are TOML-only. See `.env.example` and `config.examp
 | Method | Path | Purpose |
 |:--|:--|:--|
 | `GET` | `/health` | Liveness probe |
+| `HEAD` | `/health` | Liveness probe without a body (`wget --spider`) |
 | `GET` | `/ws` | WebSocket playback channel |
 | `GET` | `/swagger` | Interactive API explorer |
 | `GET` | `/openapi.yaml` | Raw OpenAPI spec |
@@ -75,6 +76,10 @@ Shuffle and queue strategies are TOML-only. See `.env.example` and `config.examp
 | `GET` | `/v1/songs/{id}` | One song's metadata |
 | `GET` | `/v1/songs/{id}/content` | Stream audio bytes — supports HTTP Range, so seeking works |
 | `GET` | `/v1/songs/{id}:stream` | Alias of `/content` |
+| `GET` | `/v1/songs/{id}/cover` | Embedded album art (`404` when the file has none) |
+| `POST` | `/v1/songs/{id}:block` | Pull a song out of rotation, persisted across restarts |
+| `POST` | `/v1/songs/{id}:unblock` | Put a blocked song back in rotation |
+| `GET` | `/v1/blocked` | List blocked songs |
 
 **Queue**
 
@@ -83,6 +88,7 @@ Shuffle and queue strategies are TOML-only. See `.env.example` and `config.examp
 | `GET` | `/v1/queue` | Current queue, song metadata included |
 | `POST` | `/v1/queue` | Append a song — body `{"song_id":"..."}` |
 | `DELETE` | `/v1/queue/{id}` | Remove one queue entry by **queue item** ID |
+| `POST` | `/v1/queue/{id}:move` | Move one queue entry up or down one place — body `{"direction":"up"}` |
 | `POST` | `/v1/queue:skip` | Broadcast `skip_now` and return the upcoming song (no dequeue) |
 | `POST` | `/v1/queue:clear` | Empty the queue |
 | `POST` | `/v1/queue:play-next` | Jump a song to the front and broadcast `skip_now` |
@@ -93,6 +99,8 @@ Shuffle and queue strategies are TOML-only. See `.env.example` and `config.examp
 |:--|:--|:--|
 | `GET` | `/v1/player` | Current song, queue length, library size |
 | `POST` | `/v1/player:skip` | Broadcast `skip_now` to every audio client |
+| `GET` | `/v1/history` | Recently played songs, newest first (`?limit=`) |
+| `GET` | `/v1/now-playing.txt` | Current track as one plain-text line for chat bots |
 
 ## 🔌 WebSocket Flow
 

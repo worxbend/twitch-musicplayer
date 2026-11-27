@@ -22,9 +22,11 @@ http://localhost:8080
 
 ```http
 GET /health
+HEAD /health
 ```
 
-Returns `200` when the HTTP process is alive.
+Returns `200` when the HTTP process is alive. `HEAD` returns the same status without a body,
+for probes such as `wget --spider`.
 
 ## 🎵 Songs
 
