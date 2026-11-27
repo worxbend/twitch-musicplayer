@@ -85,6 +85,10 @@ type Watcher struct {
 	settleWait func(ctx context.Context, path string) error
 	// resyncing collapses back-to-back event overflows into one resync.
 	resyncing atomic.Bool
+	// rewatchRunning and rewatchAgain coalesce re-watch requests: a request
+	// that arrives during a walk causes exactly one more walk after it.
+	rewatchRunning atomic.Bool
+	rewatchAgain   atomic.Bool
 
 	// OnRemoved, when set before Start, is notified after songs are dropped.
 	OnRemoved OnSongsRemoved
@@ -223,17 +227,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-				// A rename's new path arrives separately as a Create event.
-				w.unregisterPath(ctx, event.Name)
-				continue
-			}
-			if event.Has(fsnotify.Create) {
-				w.handleCreate(ctx, event.Name)
-			} else if event.Has(fsnotify.Write) && w.isMusicFile(event.Name) {
-				// An in-place tag save; claim collapses the burst of Writes.
-				w.registerWhenSettled(ctx, event.Name)
-			}
+			w.handleEvent(ctx, event)
 
 		case err, ok := <-w.fsWatcher.Errors:
 			if !ok {
@@ -245,6 +239,62 @@ func (w *Watcher) Start(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+// handleEvent applies one filesystem event to the library.
+func (w *Watcher) handleEvent(ctx context.Context, event fsnotify.Event) {
+	if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+		// A rename's new path arrives separately as a Create event.
+		w.unregisterPath(ctx, event.Name)
+		if !w.isMusicFile(event.Name) {
+			// inotify gives a moved folder its old watch descriptor, and
+			// fsnotify then removes that shared watch for the old path, so
+			// the folder's new path can silently stop reporting files.
+			w.requestRewatch(ctx, "removed "+event.Name)
+		}
+		return
+	}
+	if event.Has(fsnotify.Create) {
+		w.handleCreate(ctx, event.Name)
+	} else if event.Has(fsnotify.Write) && w.isMusicFile(event.Name) {
+		// An in-place tag save; claim collapses the burst of Writes.
+		w.registerWhenSettled(ctx, event.Name)
+	}
+}
+
+// requestRewatch re-walks the library in the background to re-add every
+// folder watch and index files a lost watch missed. It runs in w.settling so
+// Start waits for it. A request during a walk triggers one more walk, since
+// the watch removal it answers can land after the running walk re-added it.
+func (w *Watcher) requestRewatch(ctx context.Context, reason string) {
+	w.rewatchAgain.Store(true)
+	if !w.rewatchRunning.CompareAndSwap(false, true) {
+		return
+	}
+	w.settling.Go(func() {
+		for {
+			for w.rewatchAgain.Swap(false) {
+				w.rewatch(ctx, reason)
+			}
+			w.rewatchRunning.Store(false)
+			// A request between the last Swap and Store saw the walk running
+			// and left; pick it up unless a new walker already did.
+			if !w.rewatchAgain.Load() || !w.rewatchRunning.CompareAndSwap(false, true) {
+				return
+			}
+		}
+	})
+}
+
+func (w *Watcher) rewatch(ctx context.Context, reason string) {
+	watched, err := w.rescanTree(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			w.logger.Printf("rewatch after %s: %v", reason, err)
+		}
+		return
+	}
+	w.logger.Printf("rewatch after %s: %d folders", reason, watched)
 }
 
 // handleError logs a watcher error. After an event-queue overflow, Create,
@@ -266,18 +316,7 @@ func (w *Watcher) resync(ctx context.Context) {
 	}
 	w.settling.Go(func() {
 		defer w.resyncing.Store(false)
-		_, err := w.walkTree(ctx, w.dir, func(path string) error {
-			indexed, err := w.songRepo.ExistsByPath(ctx, path)
-			if err != nil {
-				w.logger.Printf("resync %s: %v", path, err)
-				return nil
-			}
-			if !indexed {
-				w.registerWhenSettled(ctx, path)
-			}
-			return nil
-		})
-		if err != nil {
+		if _, err := w.rescanTree(ctx); err != nil {
 			w.logger.Printf("resync scan: %v", err)
 		}
 		removed, err := w.sweepMissing(ctx)
@@ -285,6 +324,22 @@ func (w *Watcher) resync(ctx context.Context) {
 			w.logger.Printf("resync sweep: %v", err)
 		}
 		w.logger.Printf("resync after event overflow: removed %d", removed)
+	})
+}
+
+// rescanTree watches every folder in the library and queues each music file
+// that is not indexed yet for registration. It returns the watched folders.
+func (w *Watcher) rescanTree(ctx context.Context) (int, error) {
+	return w.walkTree(ctx, w.dir, func(path string) error {
+		indexed, err := w.songRepo.ExistsByPath(ctx, path)
+		if err != nil {
+			w.logger.Printf("rescan %s: %v", path, err)
+			return nil
+		}
+		if !indexed {
+			w.registerWhenSettled(ctx, path)
+		}
+		return nil
 	})
 }
 

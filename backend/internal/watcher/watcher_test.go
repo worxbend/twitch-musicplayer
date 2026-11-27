@@ -220,6 +220,55 @@ func TestWatcherDropsMovedFolderNamedLikeMusicFile(t *testing.T) {
 	}
 }
 
+func TestWatcherRewatchesAfterDirectoryRemoval(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(sub, "a.mp3"))
+	h := startWatcher(t, dir)
+	// Stands in for fsnotify dropping the watch a renamed folder shares by wd.
+	if err := h.w.fsWatcher.Remove(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	h.w.handleEvent(t.Context(), fsnotify.Event{Name: filepath.Join(dir, "old"), Op: fsnotify.Rename})
+
+	waitFor(t, 3*time.Second, "sub watched again", func() bool {
+		return slices.Contains(h.w.fsWatcher.WatchList(), sub)
+	})
+	writeFile(t, filepath.Join(sub, "new.mp3"))
+	waitFor(t, 3*time.Second, "sub/new.mp3 indexed", func() bool {
+		return h.indexed(t, filepath.Join("sub", "new.mp3"))
+	})
+}
+
+func TestWatcherIndexesFileInRepeatedlyRenamedFolder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("stress test")
+	}
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "r0")
+	if err := os.Mkdir(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := startWatcher(t, dir)
+
+	for i := 1; i <= 10; i++ {
+		next := filepath.Join(dir, fmt.Sprintf("r%d", i))
+		if err := os.Rename(folder, next); err != nil {
+			t.Fatal(err)
+		}
+		folder = next
+	}
+	writeFile(t, filepath.Join(folder, "new.mp3"))
+
+	waitFor(t, 5*time.Second, "new.mp3 indexed", func() bool {
+		return h.indexed(t, filepath.Join("r10", "new.mp3"))
+	})
+}
+
 // chdirMusic switches into a fresh temp dir holding an empty "music" folder,
 // matching the default relative config dir.
 func chdirMusic(t *testing.T) {
