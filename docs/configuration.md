@@ -44,6 +44,9 @@ Set `LOFI_CONFIG` to use a custom TOML file:
 LOFI_CONFIG=/etc/lofi/config.toml ./lofi-radio-backend
 ```
 
+When `LOFI_CONFIG` is set, the file must exist and be readable, or startup fails. Without it,
+a missing `config.toml` means built-in defaults.
+
 ## 🌱 Backend Environment
 
 Example: `backend/.env.example`.
@@ -74,9 +77,10 @@ Shuffle and queue settings are TOML-only — there is no environment override fo
 ## ✅ Validation
 
 The backend checks its config at startup. If anything is wrong, it exits non-zero
-and prints every problem it found, each one naming its TOML key. A missing TOML
-file is fine: defaults are used. These fail startup:
+and prints every problem it found, each one naming its TOML key. A missing
+`config.toml` is fine: defaults are used. These fail startup:
 
+- A `LOFI_CONFIG` file that is missing, or a config file that cannot be read.
 - A TOML file that does not parse.
 - Unknown keys or sections (a typo such as `queue.min_ahed`); the error names each one.
 - A `PORT` that is not an integer, or a `server.port` outside `1..65535`.
@@ -87,8 +91,8 @@ file is fine: defaults are used. These fail startup:
 - An `obs.now_playing_format` with neither `{title}` nor `{artist}` (always checked), or an
   `obs.now_playing_file` whose directory does not exist or that is itself a directory
   (checked only when the file is set).
-- A `bloom.path` (or `BLOOM_PATH`) that names an existing directory. A missing file is fine;
-  it is created on the first save.
+- A `bloom.path` (or `BLOOM_PATH`) whose directory does not exist, or that names an existing
+  directory. A missing file is fine; it is created on the first save.
 - A `server.base_url` (or `BASE_URL`) that is not an `http://` or `https://` URL with a host,
   or that has a `?query` or `#fragment`. Empty is allowed: stream URLs then stay relative and
   the frontend resolves them against `VITE_BACKEND_URL`.

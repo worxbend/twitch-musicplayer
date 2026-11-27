@@ -27,7 +27,7 @@ func missingPath(t *testing.T) string {
 }
 
 func TestLoadFromDefaults(t *testing.T) {
-	cfg, err := loadFrom(missingPath(t), fakeEnv(nil))
+	cfg, err := loadFrom(missingPath(t), false, fakeEnv(nil))
 	if err != nil {
 		t.Fatalf("loadFrom: %v", err)
 	}
@@ -58,7 +58,7 @@ strategy = "least_played"
 strategy = "preload"
 preload_size = 5
 `)
-	cfg, err := loadFrom(path, fakeEnv(nil))
+	cfg, err := loadFrom(path, true, fakeEnv(nil))
 	if err != nil {
 		t.Fatalf("loadFrom: %v", err)
 	}
@@ -83,16 +83,17 @@ dir = "/toml/music"
 [bloom]
 path = "/toml/bloom"
 `)
-	cfg, err := loadFrom(path, fakeEnv(map[string]string{
+	envBloom := filepath.Join(t.TempDir(), "env.bloom")
+	cfg, err := loadFrom(path, true, fakeEnv(map[string]string{
 		"PORT":       "9100",
 		"MUSIC_DIR":  "/env/music",
 		"BASE_URL":   "http://env",
-		"BLOOM_PATH": "/env/bloom",
+		"BLOOM_PATH": envBloom,
 	}))
 	if err != nil {
 		t.Fatalf("loadFrom: %v", err)
 	}
-	if cfg.Port != 9100 || cfg.MusicDir != "/env/music" || cfg.BaseURL != "http://env" || cfg.BloomPath != "/env/bloom" {
+	if cfg.Port != 9100 || cfg.MusicDir != "/env/music" || cfg.BaseURL != "http://env" || cfg.BloomPath != envBloom {
 		t.Errorf("got port=%d dir=%q base=%q bloom=%q", cfg.Port, cfg.MusicDir, cfg.BaseURL, cfg.BloomPath)
 	}
 }
@@ -117,7 +118,7 @@ func TestLoadFromErrors(t *testing.T) {
 			if tt.body != "" {
 				path = writeConfig(t, tt.body)
 			}
-			_, err := loadFrom(path, fakeEnv(tt.env))
+			_, err := loadFrom(path, tt.body != "", fakeEnv(tt.env))
 			if err == nil {
 				t.Fatal("loadFrom succeeded, want error")
 			}
@@ -127,6 +128,38 @@ func TestLoadFromErrors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLoadFromMissingFile(t *testing.T) {
+	_, err := loadFrom(missingPath(t), true, fakeEnv(nil))
+	if err == nil || !strings.Contains(err.Error(), "LOFI_CONFIG") {
+		t.Fatalf("explicit missing file: error = %v, want one naming LOFI_CONFIG", err)
+	}
+	cfg, err := loadFrom(missingPath(t), false, fakeEnv(nil))
+	if err != nil {
+		t.Fatalf("implicit missing file: %v", err)
+	}
+	if cfg.Port != 8080 {
+		t.Errorf("port = %d, want default 8080", cfg.Port)
+	}
+}
+
+func TestLoadFromUnreadableDirFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	path := writeConfig(t, "[server]\nport = 9000\n")
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	for _, explicit := range []bool{true, false} {
+		_, err := loadFrom(path, explicit, fakeEnv(nil))
+		if err == nil || !strings.Contains(err.Error(), "config "+path) {
+			t.Errorf("explicit=%v: error = %v, want one naming %s", explicit, err, path)
+		}
 	}
 }
 
@@ -150,6 +183,8 @@ func TestValidate(t *testing.T) {
 		{name: "blank extension", mutate: func(c *Config) { c.Music.Extensions = []string{""} }, wantSub: []string{"music.extensions"}},
 		{name: "bloom path is a directory", mutate: func(c *Config) { c.Bloom.Path = t.TempDir() },
 			wantSub: []string{"bloom.path", "is a directory"}},
+		{name: "bloom path directory missing", mutate: func(c *Config) { c.Bloom.Path = filepath.Join(t.TempDir(), "absent", "x.bloom") },
+			wantSub: []string{"bloom.path: directory", "does not exist"}},
 		{name: "multiple problems", mutate: func(c *Config) {
 			c.Server.Port = 0
 			c.Queue.Strategy = "nope"
@@ -186,7 +221,7 @@ func TestLoadFromNormalizesBaseURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := writeConfig(t, "[server]\nbase_url = \""+tt.toml+"\"\n")
-			cfg, err := loadFrom(path, fakeEnv(map[string]string{"BASE_URL": tt.env}))
+			cfg, err := loadFrom(path, true, fakeEnv(map[string]string{"BASE_URL": tt.env}))
 			if err != nil {
 				t.Fatalf("loadFrom: %v", err)
 			}
@@ -201,7 +236,7 @@ func TestLoadFromRejectsBadBaseURL(t *testing.T) {
 	for _, bad := range []string{"localhost:8080", "ftp://x", "http://", "http://h?x=1", "http://h#f", "http://h?", "http://h/%zz"} {
 		t.Run(bad, func(t *testing.T) {
 			path := writeConfig(t, "[server]\nbase_url = \""+bad+"\"\n")
-			_, err := loadFrom(path, fakeEnv(nil))
+			_, err := loadFrom(path, true, fakeEnv(nil))
 			if err == nil || !strings.Contains(err.Error(), "server.base_url: ") {
 				t.Errorf("loadFrom error = %v, want one naming server.base_url", err)
 			}
@@ -226,7 +261,7 @@ func TestValidateDefaultsOK(t *testing.T) {
 func TestShippedConfigsValidate(t *testing.T) {
 	for _, name := range []string{"config.toml", "config.example.toml"} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := loadFrom(filepath.Join("..", "..", name), fakeEnv(nil)); err != nil {
+			if _, err := loadFrom(filepath.Join("..", "..", name), true, fakeEnv(nil)); err != nil {
 				t.Fatalf("loadFrom %s: %v", name, err)
 			}
 		})
@@ -313,7 +348,7 @@ func TestLoadFromExpandsOBSFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	path := writeConfig(t, "[obs]\nnow_playing_file = \"~/np.txt\"\n")
-	cfg, err := loadFrom(path, fakeEnv(nil))
+	cfg, err := loadFrom(path, true, fakeEnv(nil))
 	if err != nil {
 		t.Fatalf("loadFrom: %v", err)
 	}
@@ -339,7 +374,7 @@ func TestLoadFromAllowedOrigins(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := writeConfig(t, "[server]\n"+tt.toml+"\n")
-			cfg, err := loadFrom(path, fakeEnv(map[string]string{"ALLOWED_ORIGINS": tt.env}))
+			cfg, err := loadFrom(path, true, fakeEnv(map[string]string{"ALLOWED_ORIGINS": tt.env}))
 			if err != nil {
 				t.Fatalf("loadFrom: %v", err)
 			}
@@ -353,7 +388,7 @@ func TestLoadFromAllowedOrigins(t *testing.T) {
 func TestLoadFromRejectsBadAllowedOrigin(t *testing.T) {
 	for _, bad := range []string{"*", "localhost:3000", "ftp://x", "http://", "http://h/path", "http://h?x", "http://h#f", "http://u@h", "null"} {
 		t.Run(bad, func(t *testing.T) {
-			_, err := loadFrom(missingPath(t), fakeEnv(map[string]string{"ALLOWED_ORIGINS": bad}))
+			_, err := loadFrom(missingPath(t), false, fakeEnv(map[string]string{"ALLOWED_ORIGINS": bad}))
 			if err == nil || !strings.Contains(err.Error(), "server.allowed_origins: ") {
 				t.Errorf("loadFrom error = %v, want one naming server.allowed_origins", err)
 			}

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/url"
 	"os"
@@ -98,11 +99,12 @@ var (
 // validates the result and ensures the music directory exists.
 func Load() (*Config, error) {
 	configPath := os.Getenv("LOFI_CONFIG")
-	if configPath == "" {
+	explicit := configPath != ""
+	if !explicit {
 		configPath = "config.toml"
 	}
 
-	cfg, err := loadFrom(configPath, os.Getenv)
+	cfg, err := loadFrom(configPath, explicit, os.Getenv)
 	if err != nil {
 		return nil, err
 	}
@@ -113,12 +115,16 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// loadFrom builds a validated Config from the TOML file at path (a missing
-// file is not an error) overlaid with environment values read via getenv.
-func loadFrom(path string, getenv func(string) string) (*Config, error) {
+// loadFrom builds a validated Config from the TOML file at path overlaid with
+// environment values read via getenv. A missing file means defaults, unless
+// explicit (the path came from LOFI_CONFIG): then a typo must fail startup.
+// Any other stat error, such as EACCES on a parent directory, always fails.
+func loadFrom(path string, explicit bool, getenv func(string) string) (*Config, error) {
 	cfg := defaults()
 
-	if _, err := os.Stat(path); err == nil {
+	_, err := os.Stat(path)
+	switch {
+	case err == nil:
 		md, err := toml.DecodeFile(path, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -127,6 +133,10 @@ func loadFrom(path string, getenv func(string) string) (*Config, error) {
 			return nil, err
 		}
 		log.Printf("config loaded from %s", path)
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("config %s: %w", path, err)
+	case explicit:
+		return nil, fmt.Errorf("LOFI_CONFIG: %s does not exist", path)
 	}
 
 	// Env vars take precedence (container-friendly overrides).
@@ -193,6 +203,7 @@ func (c *Config) Validate() error {
 		checkNonNegative("queue.preload_size", c.Queue.PreloadSize),
 		checkBaseURL("server.base_url", c.Server.BaseURL),
 		checkNotDir("bloom.path", c.Bloom.Path),
+		checkParentDir("bloom.path", c.Bloom.Path),
 	)
 	for _, origin := range c.Server.AllowedOrigins {
 		errs = append(errs, checkOrigin("server.allowed_origins", origin))
@@ -212,14 +223,27 @@ func checkOBS(obs OBSConfig) []error {
 	if obs.NowPlayingFile == "" {
 		return errs
 	}
-	dir := filepath.Dir(obs.NowPlayingFile)
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		errs = append(errs, fmt.Errorf("obs.now_playing_file: directory %q does not exist", dir))
+	if err := checkParentDir("obs.now_playing_file", obs.NowPlayingFile); err != nil {
+		errs = append(errs, err)
 	}
 	if err := checkNotDir("obs.now_playing_file", obs.NowPlayingFile); err != nil {
 		errs = append(errs, err)
 	}
 	return errs
+}
+
+// checkParentDir rejects a file path whose directory is missing: the atomic
+// temp-file-and-rename writes would fail at runtime with only a log line.
+// An empty path is skipped; callers that allow it treat it as disabled.
+func checkParentDir(key, path string) error {
+	if path == "" {
+		return nil
+	}
+	dir := filepath.Dir(path)
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("%s: directory %q does not exist", key, dir)
+	}
+	return nil
 }
 
 // checkNotDir rejects a file path that names an existing directory: writes to
