@@ -534,11 +534,11 @@ for (const slug of ['spectrum', 'bars', 'mirror', 'dots', 'ribbon', 'line', 'len
 
 test('original overlays and forced transparency preserve browser-source mode', async ({ page }) => {
   await mockStation(page, { empty: true });
-  for (const route of ['/overlay', '/logo-overlay', '/bars?transparent=1']) {
+  for (const route of ['/overlay', '/overlay/', '/logo-overlay', '/logo-overlay/', '/bars?transparent=1']) {
     await page.goto(route);
     await expect(page.locator('#stage canvas')).toBeVisible();
     await expect(page.getByRole('navigation')).toHaveCount(0);
-    if (route !== '/overlay') {
+    if (!route.startsWith('/overlay')) {
       expect(await page.locator('body').evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
     }
   }

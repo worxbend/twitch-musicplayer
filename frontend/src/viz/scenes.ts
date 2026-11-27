@@ -98,23 +98,3 @@ export const SCENES: SceneDef[] = [
     create: (app, audio, o) => new LensWaveVisualizer(app, audio, o),
   },
 ];
-
-export interface SceneRoute {
-  scene: SceneDef;
-  transparent: boolean;
-}
-
-/**
- * Matches a pathname to a scene. `/bars` is the opaque page and `/bars-overlay`
- * the transparent one; `?transparent=1` forces transparency on either.
- */
-export function matchScene(pathname: string, search: string): SceneRoute | null {
-  const slug = pathname.replace(/^\/+|\/+$/g, '');
-  const forced = new URLSearchParams(search).get('transparent') === '1';
-
-  for (const scene of SCENES) {
-    if (slug === scene.slug) return { scene, transparent: forced };
-    if (slug === `${scene.slug}-overlay`) return { scene, transparent: true };
-  }
-  return null;
-}
