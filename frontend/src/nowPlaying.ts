@@ -13,8 +13,19 @@
  */
 export type NowPlayingSong = { title: string; artist: string; startId?: string; coverId?: string };
 export type NowPlayingAlign = 'left' | 'center' | 'right';
+/** `shadow` is the soft default; `outline` and `pill` stay readable over bright footage. */
+export type NowPlayingTheme = 'shadow' | 'outline' | 'pill';
+/** `sans` is the page font; `mono` is the bundled JetBrains Mono. */
+export type NowPlayingFont = 'sans' | 'mono';
 /** `hold` is seconds the title stays visible after each change; 0 keeps it visible. `art` shows the cover. */
-export type NowPlayingOptions = { align: NowPlayingAlign; size: number; hold: number; art: boolean };
+export type NowPlayingOptions = {
+  align: NowPlayingAlign;
+  size: number;
+  hold: number;
+  art: boolean;
+  theme: NowPlayingTheme;
+  font: NowPlayingFont;
+};
 
 type JsonObject = Record<string, unknown>;
 
@@ -86,7 +97,10 @@ export function nextShown(shown: ShownKey, song: NowPlayingSong | null): { show:
   return { show: false, shown };
 }
 
+// The first entry of each list is the default that parsing falls back to.
 export const nowPlayingAlignments: readonly NowPlayingAlign[] = ['left', 'center', 'right'];
+export const nowPlayingThemes: readonly NowPlayingTheme[] = ['shadow', 'outline', 'pill'];
+export const nowPlayingFonts: readonly NowPlayingFont[] = ['sans', 'mono'];
 const defaultSizePx = 32;
 const minSizePx = 12;
 const maxSizePx = 120;
@@ -96,19 +110,26 @@ function parseWholeNumber(raw: string | null): number {
   return raw !== null && /^\d+$/.test(raw) ? Number(raw) : NaN;
 }
 
+/** The entry of `allowed` that equals `raw` exactly, else the first entry (the default). */
+function pick<T extends string>(allowed: readonly T[], raw: unknown): T {
+  return allowed.find(value => value === raw) ?? allowed[0];
+}
+
 /**
- * Reads `?align=`, `?size=` (px), `?hold=` (seconds, 1..600) and `?art=1`. Anything
- * invalid falls back to left / 32 / 0 / no art, where hold 0 means always visible.
+ * Reads `?align=`, `?size=` (px), `?hold=` (seconds, 1..600), `?art=1`, `?theme=` and
+ * `?font=`. Anything invalid falls back to left / 32 / 0 / no art / shadow / sans,
+ * where hold 0 means always visible.
  */
 export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const params = new URLSearchParams(search);
-  const rawAlign = params.get('align');
-  const align = nowPlayingAlignments.find(value => value === rawAlign) ?? 'left';
+  const align = pick(nowPlayingAlignments, params.get('align'));
   const px = parseWholeNumber(params.get('size'));
   const size = px >= minSizePx && px <= maxSizePx ? px : defaultSizePx;
   const secs = parseWholeNumber(params.get('hold'));
   const hold = secs >= 1 && secs <= maxHoldSecs ? secs : 0;
-  return { align, size, hold, art: params.get('art') === '1' };
+  const theme = pick(nowPlayingThemes, params.get('theme'));
+  const font = pick(nowPlayingFonts, params.get('font'));
+  return { align, size, hold, art: params.get('art') === '1', theme, font };
 }
 
 /** Rounds to a whole number inside min..max; a missing or non-numeric value gives `fallback`. */
@@ -122,7 +143,9 @@ function clampWhole(value: number | undefined, min: number, max: number, fallbac
  * clamped to the accepted ranges and defaults are left out of the query.
  */
 export function nowPlayingPath(opts: Partial<NowPlayingOptions>): string {
-  const align = nowPlayingAlignments.find(value => value === opts.align) ?? 'left';
+  const align = pick(nowPlayingAlignments, opts.align);
+  const theme = pick(nowPlayingThemes, opts.theme);
+  const font = pick(nowPlayingFonts, opts.font);
   const size = clampWhole(opts.size, minSizePx, maxSizePx, defaultSizePx);
   const hold = clampWhole(opts.hold, 0, maxHoldSecs, 0);
   const params = new URLSearchParams();
@@ -130,6 +153,8 @@ export function nowPlayingPath(opts: Partial<NowPlayingOptions>): string {
   if (size !== defaultSizePx) params.set('size', String(size));
   if (hold !== 0) params.set('hold', String(hold));
   if (opts.art === true) params.set('art', '1');
+  if (theme !== 'shadow') params.set('theme', theme);
+  if (font !== 'sans') params.set('font', font);
   const query = params.toString();
   return query ? `/now-playing?${query}` : '/now-playing';
 }

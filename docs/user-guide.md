@@ -81,14 +81,18 @@ Plus the two original pages:
 `right` (default `left`); `size` is the title size in px from 12 to 120 (default 32);
 `hold` is seconds from 1 to 600: the title shows for that long after each song change,
 then fades out (default 0, always visible); `art=1` shows the track's embedded cover art
-beside the title when it has one. If the connection drops silently, the overlay
+beside the title when it has one. `theme` sets the look: `shadow` (default) is a soft
+glow for dark scenes, `outline` adds a crisp dark edge that holds up over bright or busy
+footage, and `pill` puts the text on a dark rounded backing for the brightest scenes.
+`font` is `sans` (default) or `mono` (the bundled JetBrains Mono), for example
+`/now-playing?align=center&theme=pill&font=mono`. If the connection drops silently, the overlay
 notices within about a minute and reconnects by itself; a connection that has not
 opened within 10 seconds is retried. It plays no
 audio, so pair it with the audio source page. It only listens to the backend and never
 advances the queue, so it is safe to add alongside a playing page.
 
-The **Now playing text** card on the Scenes page builds this URL from align, size and hold
-controls and copies it for you.
+The **Now playing text** card on the Scenes page builds this URL from align, size, hold,
+theme, font and album-art controls and copies it for you.
 
 ### 🎨 Recolouring
 

@@ -114,9 +114,11 @@ test('now playing overlay URL builder copies the configured URL', async ({ page,
   await page.getByLabel('Size (px)').fill('48');
   await page.getByLabel('Hold (s)').fill('8');
   await page.getByLabel('Album art').check();
+  await page.getByLabel('Theme').selectOption('pill');
+  await page.getByLabel('Font').selectOption('mono');
   await page.getByRole('button', { name: 'Copy now playing overlay URL' }).click();
   await expect(page.getByRole('status')).toContainText('Browser-source URL copied');
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1&theme=pill&font=mono');
 });
 
 test('library search, queue add/remove, and keyboard-safe clear confirmation', async ({ page }) => {
@@ -619,6 +621,20 @@ test('now-playing hold fades the title out; no hold keeps it visible', async ({ 
   await expect(page.getByText('Midnight compiler')).toBeVisible();
   await page.waitForTimeout(1500);
   await expect(overlay).not.toHaveClass(/np-hidden/);
+});
+
+test('now-playing applies ?theme= and ?font= classes; no params adds none', async ({ page }) => {
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
+    ws.send(JSON.stringify({ type: 'now_playing', payload: { song: songs[0], queue_depth: 1 } }));
+  });
+  const overlay = page.locator('.now-playing-overlay');
+  await page.goto('/now-playing?theme=pill&font=mono');
+  await expect(page.getByText('Midnight compiler')).toBeVisible();
+  await expect(overlay).toHaveClass(/\bnp-theme-pill\b/);
+  await expect(overlay).toHaveClass(/\bnp-font-mono\b/);
+  await page.goto('/now-playing');
+  await expect(page.getByText('Midnight compiler')).toBeVisible();
+  await expect(overlay).toHaveAttribute('class', 'now-playing-overlay');
 });
 
 test('now-playing shows cover art only with ?art=1', async ({ page }) => {

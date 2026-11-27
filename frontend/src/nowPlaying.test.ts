@@ -4,7 +4,17 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nextShown, nowPlayingPath, parseNowPlayingOptions, reduceNowPlaying, type NowPlayingSong, type ShownKey } from './nowPlaying.ts';
+import {
+  nextShown,
+  nowPlayingFonts,
+  nowPlayingPath,
+  nowPlayingThemes,
+  parseNowPlayingOptions,
+  reduceNowPlaying,
+  type NowPlayingOptions,
+  type NowPlayingSong,
+  type ShownKey,
+} from './nowPlaying.ts';
 
 const prev: NowPlayingSong = { title: 'Old Song', artist: 'Old Artist' };
 
@@ -128,18 +138,18 @@ test('nowPlayingPath emits art=1 only when art is on', () => {
 });
 
 test('options default to left and 32px', () => {
-  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0, art: false });
+  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans' });
 });
 
 test('options accept valid align and size values', () => {
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0, art: false });
-  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0, art: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0, art: false, theme: 'shadow', font: 'sans' });
+  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0, art: false, theme: 'shadow', font: 'sans' });
   assert.equal(parseNowPlayingOptions('?size=120').size, 120);
 });
 
 test('invalid options fall back to the defaults', () => {
   for (const search of ['?align=middle&size=11', '?align=LEFT&size=121', '?size=40.5', '?size=-20', '?size=abc', '?size=']) {
-    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0, art: false }, search);
+    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans' }, search);
   }
 });
 
@@ -147,7 +157,7 @@ test('hold accepts whole seconds from 1 to 600', () => {
   assert.equal(parseNowPlayingOptions('?hold=5').hold, 5);
   assert.equal(parseNowPlayingOptions('?hold=1').hold, 1);
   assert.equal(parseNowPlayingOptions('?hold=600').hold, 600);
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10, art: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10, art: false, theme: 'shadow', font: 'sans' });
 });
 
 test('invalid or missing hold means always visible', () => {
@@ -166,13 +176,13 @@ test('nowPlayingPath orders params align, size, hold', () => {
 });
 
 test('nowPlayingPath round-trips through parseNowPlayingOptions', () => {
-  const cases = [
-    { align: 'center', size: 48, hold: 8, art: true },
-    { align: 'right', size: 12, hold: 600, art: false },
-    { align: 'left', size: 120, hold: 1, art: false },
-    { align: 'left', size: 32, hold: 0, art: false },
-    { align: 'left', size: 32, hold: 0, art: true },
-  ] as const;
+  const cases: NowPlayingOptions[] = [
+    { align: 'center', size: 48, hold: 8, art: true, theme: 'shadow', font: 'sans' },
+    { align: 'right', size: 12, hold: 600, art: false, theme: 'outline', font: 'sans' },
+    { align: 'left', size: 120, hold: 1, art: false, theme: 'pill', font: 'mono' },
+    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans' },
+    { align: 'left', size: 32, hold: 0, art: true, theme: 'shadow', font: 'mono' },
+  ];
   for (const opts of cases) {
     assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts);
   }
@@ -189,4 +199,31 @@ test('nowPlayingPath rounds non-integers and ignores bad input', () => {
   assert.equal(nowPlayingPath({ size: 47.6, hold: 7.5 }), '/now-playing?size=48&hold=8');
   assert.equal(nowPlayingPath({ size: NaN, hold: NaN }), '/now-playing');
   assert.equal(nowPlayingPath({ align: 'middle' as never }), '/now-playing');
+});
+
+test('theme and font accept each preset by exact match', () => {
+  for (const theme of nowPlayingThemes) assert.equal(parseNowPlayingOptions(`?theme=${theme}`).theme, theme);
+  for (const font of nowPlayingFonts) assert.equal(parseNowPlayingOptions(`?font=${font}`).font, font);
+});
+
+test('invalid, empty or wrong-case theme and font fall back to shadow and sans', () => {
+  for (const search of ['', '?theme=', '?theme=Pill', '?theme=OUTLINE', '?theme=neon', '?theme=pill%20', '?font=', '?font=Mono', '?font=serif']) {
+    const opts = parseNowPlayingOptions(search);
+    assert.deepEqual([opts.theme, opts.font], ['shadow', 'sans'], search);
+  }
+});
+
+test('nowPlayingPath emits theme and font only when not the default', () => {
+  assert.equal(nowPlayingPath({ theme: 'shadow', font: 'sans' }), '/now-playing');
+  assert.equal(nowPlayingPath({ theme: 'pill', font: 'mono' }), '/now-playing?theme=pill&font=mono');
+  assert.equal(nowPlayingPath({ theme: 'neon' as never, font: 'serif' as never }), '/now-playing');
+});
+
+test('every theme and font round-trips with the other params', () => {
+  for (const theme of nowPlayingThemes) {
+    for (const font of nowPlayingFonts) {
+      const opts: NowPlayingOptions = { align: 'center', size: 40, hold: 10, art: true, theme, font };
+      assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts, `${theme}/${font}`);
+    }
+  }
 });

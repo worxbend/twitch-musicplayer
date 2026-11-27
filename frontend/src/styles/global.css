@@ -233,6 +233,12 @@ html.player-page body { overflow-y: auto; }
 .now-playing-overlay .np-art { width: calc(var(--np-size) * 2.4); height: calc(var(--np-size) * 2.4); flex: none; object-fit: cover; border-radius: calc(var(--np-size) * .2); box-shadow: 0 2px 12px rgba(0, 0, 0, .6); }
 .now-playing-overlay .np-title { font-size: var(--np-size); font-weight: 600; line-height: 1.15; overflow-wrap: anywhere; }
 .now-playing-overlay .np-artist { margin-top: .3em; font-size: calc(var(--np-size) * .6); color: var(--muted); line-height: 1.2; overflow-wrap: anywhere; }
+/* ?theme= presets for bright footage. --ink and --muted on #080c18 both clear 4.5:1. */
+.now-playing-overlay.np-theme-outline { text-shadow: 1px 0 0 #080c18, -1px 0 0 #080c18, 0 1px 0 #080c18, 0 -1px 0 #080c18, 1px 1px 0 #080c18, -1px -1px 0 #080c18, 1px -1px 0 #080c18, -1px 1px 0 #080c18; -webkit-text-stroke: .04em #080c18; paint-order: stroke fill; }
+.now-playing-overlay.np-theme-pill { text-shadow: none; }
+.now-playing-overlay.np-theme-pill .np-track { display: inline-block; max-width: 100%; padding: .35em .7em; background: rgba(8, 12, 24, .82); border-radius: 999px; }
+.now-playing-overlay.np-theme-pill .np-track--art { display: inline-flex; border-radius: calc(var(--np-size) * .4); }
+.now-playing-overlay.np-font-mono { font-family: var(--mono); }
 @keyframes np-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .now-playing-overlay { transition: none; }

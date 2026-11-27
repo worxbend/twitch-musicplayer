@@ -3,7 +3,15 @@ import { SCENES } from './viz/scenes';
 import { RAMPS, type RampName } from './viz/palette';
 import { TerminalHeader } from './components/TerminalHeader';
 import { SignalPreview } from './components/SignalPreview';
-import { nowPlayingAlignments, nowPlayingPath, type NowPlayingAlign } from './nowPlaying';
+import {
+  nowPlayingAlignments,
+  nowPlayingFonts,
+  nowPlayingPath,
+  nowPlayingThemes,
+  type NowPlayingAlign,
+  type NowPlayingFont,
+  type NowPlayingTheme,
+} from './nowPlaying';
 
 const studies: Record<string, { medium: string; description: string }> = {
   spectrum: { medium: 'Phosphor / phase', description: 'A luminous laboratory trace, paired with a dancing Lissajous orbit. An intimate view inside the signal.' },
@@ -15,6 +23,8 @@ const studies: Record<string, { medium: string; description: string }> = {
   lens: { medium: 'Frequency / refraction', description: 'A dimensional array of prisms catches the signal in translucent, colour-shifting planes.' },
 };
 
+const capitalize = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
+
 export function ScenesIndex() {
   const [ramp, setRamp] = createSignal<RampName>('SPECTRUM');
   const [notice, setNotice] = createSignal('');
@@ -24,7 +34,9 @@ export function ScenesIndex() {
   const [size, setSize] = createSignal(32);
   const [hold, setHold] = createSignal(0);
   const [art, setArt] = createSignal(false);
-  const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold(), art: art() });
+  const [theme, setTheme] = createSignal<NowPlayingTheme>('shadow');
+  const [font, setFont] = createSignal<NowPlayingFont>('sans');
+  const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold(), art: art(), theme: theme(), font: font() });
   let timer = 0;
   onMount(() => {
     document.documentElement.classList.add('scenes-index-page');
@@ -127,6 +139,16 @@ export function ScenesIndex() {
                   <input type="number" min="0" max="600" step="1" value={hold()} aria-describedby="hold-help" onInput={e => setHold(e.currentTarget.valueAsNumber)} />
                 </label>
                 <small id="hold-help">0 = always visible</small>
+                <label>Theme
+                  <select value={theme()} onChange={e => setTheme(e.currentTarget.value as NowPlayingTheme)}>
+                    <For each={nowPlayingThemes}>{value => <option value={value}>{capitalize(value)}</option>}</For>
+                  </select>
+                </label>
+                <label>Font
+                  <select value={font()} onChange={e => setFont(e.currentTarget.value as NowPlayingFont)}>
+                    <For each={nowPlayingFonts}>{value => <option value={value}>{capitalize(value)}</option>}</For>
+                  </select>
+                </label>
                 <label class="overlay-check">
                   <input type="checkbox" checked={art()} onChange={e => setArt(e.currentTarget.checked)} />
                   Album art

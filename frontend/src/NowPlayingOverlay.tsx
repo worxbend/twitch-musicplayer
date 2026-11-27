@@ -116,7 +116,12 @@ export function NowPlayingOverlay(props: Props) {
   });
 
   return (
-    <div class="now-playing-overlay" classList={{ 'np-hidden': !visible() }} style={{ 'text-align': props.align, '--np-size': `${props.size}px` }}>
+    <div class="now-playing-overlay" classList={{
+        'np-hidden': !visible(),
+        'np-theme-outline': props.theme === 'outline',
+        'np-theme-pill': props.theme === 'pill',
+        'np-font-mono': props.font === 'mono',
+      }} style={{ 'text-align': props.align, '--np-size': `${props.size}px` }}>
       <Show when={song()?.title} keyed>
         {title => (
           <div class="np-track" classList={{ 'np-track--art': cover() !== '' }}>
