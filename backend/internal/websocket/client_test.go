@@ -367,8 +367,10 @@ func (emptyLibraryQueueManager) NextSong(context.Context) (*models.Song, error) 
 	return nil, fmt.Errorf("auto-select: %w", queue.ErrLibraryEmpty)
 }
 
-// testDryClearGrace replaces the hub's 4s dry-queue clear grace in tests.
-const testDryClearGrace = 50 * time.Millisecond
+// testDryClearGrace replaces the hub's 4s dry-queue clear grace in tests. It
+// must outlast the steps a test runs between song_finished and its "still on
+// air" check, even on a loaded host under -race.
+const testDryClearGrace = 250 * time.Millisecond
 
 // newDryTestClient builds an unconnected client, like newSendTestClient, whose
 // tracker is already playing song-1 and whose queue manager is mgr. Its hub
