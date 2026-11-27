@@ -5,7 +5,7 @@ import { BackendPlaybackClient } from './audio/BackendPlaybackClient';
 import type { ConnectionStatus, PlaybackStatus } from './audio/BackendPlaybackClient';
 import type { AudioEngine } from './audio/AudioEngine';
 import type { SceneDef } from './viz/scenes';
-import { bindMediaSession, getMediaSession, setMediaPlayState, updateMediaMetadata } from './audio/mediaSession';
+import { bindMediaSession, getMediaSession, setMediaPlayState, setMediaPosition, updateMediaMetadata } from './audio/mediaSession';
 
 interface Props {
   scene: SceneDef;
@@ -77,7 +77,13 @@ export function SceneApp(props: Props) {
     // The OS play/pause state follows the audio element, not the radio's connection reports.
     // PlayerUI reads it too, so a media-key pause shows as Paused.
     audio.onPlayStateChange = (state) => { setMediaPlayState(session, state); setMediaState(state); };
-    unbindMediaSession = () => { audio.onPlayStateChange = undefined; setMediaState('none'); unbindHandlers(); };
+    audio.onPositionChange = (state) => setMediaPosition(session, state);
+    unbindMediaSession = () => {
+      audio.onPlayStateChange = undefined;
+      audio.onPositionChange = undefined;
+      setMediaState('none');
+      unbindHandlers();
+    };
     backendClient.start();
   };
 

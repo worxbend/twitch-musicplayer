@@ -8,7 +8,9 @@ import {
   bindMediaSession,
   getMediaSession,
   mediaStateOf,
+  positionStateOf,
   setMediaPlayState,
+  setMediaPosition,
   updateMediaMetadata,
   type MediaSessionLike,
 } from './mediaSession.ts';
@@ -30,6 +32,10 @@ class FakeSession {
   handlers = new Map<string, MediaSessionActionHandler | null>();
   setActionHandler(action: MediaSessionAction, handler: MediaSessionActionHandler | null) {
     this.handlers.set(action, handler);
+  }
+  positions: Array<MediaPositionState | undefined> = [];
+  setPositionState(state?: MediaPositionState) {
+    this.positions.push(state);
   }
 }
 
@@ -98,6 +104,7 @@ test('unbind nulls both handlers and clears the metadata and state', () => {
   assert.equal(session.handlers.get('pause'), null);
   assert.equal(session.metadata, null);
   assert.equal(session.playbackState, 'none');
+  assert.deepEqual(session.positions, [undefined]);
 });
 
 test('a setActionHandler that throws does not escape', () => {
@@ -132,4 +139,62 @@ test('setMediaPlayState writes the state and ignores a null session', () => {
   setMediaPlayState(session, 'paused');
   assert.equal(session.playbackState, 'paused');
   assert.doesNotThrow(() => setMediaPlayState(null, 'playing'));
+});
+
+const track = { duration: 180, currentTime: 42, playbackRate: 1, hasSource: true, ended: false };
+
+const noPositionCases: Array<[string, Parameters<typeof positionStateOf>[0]]> = [
+  ['no element', null],
+  ['a NaN duration', { ...track, duration: Number.NaN }],
+  ['an infinite duration', { ...track, duration: Infinity }],
+  ['a zero duration', { ...track, duration: 0 }],
+  ['no source', { ...track, hasSource: false }],
+  ['an ended track', { ...track, ended: true }],
+];
+
+for (const [name, el] of noPositionCases) {
+  test(`positionStateOf: ${name} has no position`, () => {
+    assert.equal(positionStateOf(el), null);
+  });
+}
+
+test('positionStateOf reports duration, position and rate', () => {
+  assert.deepEqual(positionStateOf(track), { duration: 180, position: 42, playbackRate: 1 });
+});
+
+test('positionStateOf clamps the position into the track', () => {
+  assert.equal(positionStateOf({ ...track, currentTime: 181 })?.position, 180);
+  assert.equal(positionStateOf({ ...track, currentTime: -1 })?.position, 0);
+});
+
+test('positionStateOf turns a zero or NaN rate into 1', () => {
+  assert.equal(positionStateOf({ ...track, playbackRate: 0 })?.playbackRate, 1);
+  assert.equal(positionStateOf({ ...track, playbackRate: Number.NaN })?.playbackRate, 1);
+});
+
+test('setMediaPosition passes the state and clears on null', () => {
+  setMediaPosition(session, { duration: 180, position: 42, playbackRate: 1 });
+  setMediaPosition(session, null);
+  assert.deepEqual(session.positions, [{ duration: 180, position: 42, playbackRate: 1 }, undefined]);
+});
+
+test('setMediaPosition ignores a session without setPositionState, or none', () => {
+  const bare: MediaSessionLike = { metadata: null, playbackState: 'none', setActionHandler() {} };
+  assert.doesNotThrow(() => setMediaPosition(bare, null));
+  assert.doesNotThrow(() => setMediaPosition(null, null));
+});
+
+test('setMediaPosition swallows a TypeError from setPositionState', () => {
+  const throwing: MediaSessionLike = {
+    metadata: null,
+    playbackState: 'none',
+    setActionHandler() {},
+    setPositionState() { throw new TypeError('position exceeds duration'); },
+  };
+  assert.doesNotThrow(() => setMediaPosition(throwing, { duration: 1, position: 2, playbackRate: 1 }));
+});
+
+test('bindMediaSession registers no seekto handler', () => {
+  bindMediaSession(session, { onPlay() {}, onPause() {} });
+  assert.equal(session.handlers.has('seekto'), false);
 });

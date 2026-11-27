@@ -1,6 +1,6 @@
 import { clamp, lerp } from '../viz/util.ts';
 import type { AudioBands } from '../viz/types';
-import { mediaStateOf } from './mediaSession.ts';
+import { mediaStateOf, positionStateOf } from './mediaSession.ts';
 
 const BINS = 512;
 const DEFAULT_FADE_OUT_MS = 2500;
@@ -17,6 +17,9 @@ const NEAR_END_THRESHOLD_SECS = DEFAULT_FADE_OUT_MS / 1000 + 0.5; // 3.0s
 const PREFETCH_THRESHOLD_SECS = 15;
 const userGestureRequiredMessage = 'audio requires a user gesture';
 const CROSSFADE_CURVE_STEPS = 64;
+// Events that change what the OS progress bar should show. timeupdate is left out:
+// the OS extrapolates the position from playbackRate.
+const POSITION_EVENTS = ['loadedmetadata', 'durationchange', 'play', 'pause', 'ratechange', 'seeked', 'ended', 'emptied'];
 
 // Builds an equal-power gain envelope from `from` to `to`. A rising envelope
 // follows sin(s·π/2); a falling one follows cos(s·π/2). Paired rising/falling
@@ -68,6 +71,8 @@ export class AudioEngine {
   sourceName = '';
   // Called when the active track's OS media state changes; feeds navigator.mediaSession.
   onPlayStateChange?: (state: MediaSessionPlaybackState) => void;
+  // Called when the active track's progress changes; null clears it.
+  onPositionChange?: (state: MediaPositionState | null) => void;
 
   private _playState: MediaSessionPlaybackState = 'none';
   private _bassAvg = 0;
@@ -173,6 +178,11 @@ export class AudioEngine {
     for (const type of ['play', 'pause', 'ended', 'emptied']) {
       audioEl.addEventListener(type, () => this._emitPlayState());
     }
+    for (const type of POSITION_EVENTS) {
+      audioEl.addEventListener(type, () => {
+        if (audioEl === this._activeAudioElement()) this._emitPosition();
+      });
+    }
 
     return { audioEl, mediaSource, gain, _nearEndCleanup: null, _stallCleanup: null };
   }
@@ -185,6 +195,17 @@ export class AudioEngine {
     if (state === this._playState) return;
     this._playState = state;
     this.onPlayStateChange?.(state);
+  }
+
+  private _emitPosition() {
+    const el = this._activeAudioElement();
+    this.onPositionChange?.(positionStateOf(el && {
+      duration: el.duration,
+      currentTime: el.currentTime,
+      playbackRate: el.playbackRate,
+      hasSource: !!el.src,
+      ended: el.ended,
+    }));
   }
 
   private _nextChannel(): PlaybackChannel {
@@ -347,6 +368,7 @@ export class AudioEngine {
       const started = incoming.audioEl.play();
       // play() clears paused at once, so a track change reports 'playing' with no 'paused' blip.
       this._emitPlayState();
+      this._emitPosition();
       await this._withStartTimeout(started);
       if (superseded()) return;
       this.playing = true;
@@ -379,6 +401,7 @@ export class AudioEngine {
         this._watchNearEnd(incoming, handlers);
         this._watchStall(incoming, handlers);
         this._emitPlayState();
+        this._emitPosition();
         return;
       }
       if (superseded()) {
@@ -395,6 +418,7 @@ export class AudioEngine {
       }
       this.mode = hadSource ? 'backend' : 'idle';
       this._emitPlayState();
+      this._emitPosition();
       throw error;
     }
   }
@@ -651,5 +675,6 @@ export class AudioEngine {
     const ctx = this.ctx;
     this.ctx = null;
     if (ctx && ctx.state !== 'closed') void ctx.close();
+    this.onPositionChange?.(null);
   }
 }

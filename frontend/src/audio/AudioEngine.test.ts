@@ -115,6 +115,7 @@ class FakeAudioElement {
   loop = false;
   currentTime = 0;
   duration = Number.NaN;
+  playbackRate = 1;
   onended: (() => void) | null = null;
   onerror: (() => void) | null = null;
   error: { code: number } | null = null;
@@ -676,6 +677,37 @@ test('the same play state is reported once', async () => {
   engine.pause();
   el.dispatch('pause');
   assert.deepEqual(states, ['playing', 'paused']);
+});
+
+function recordPositions() {
+  const positions: Array<MediaPositionState | null> = [];
+  engine.onPositionChange = state => positions.push(state);
+  return positions;
+}
+
+test('a duration change on the active track reports its position', async () => {
+  const el = await playFirstTrack();
+  const positions = recordPositions();
+  el.duration = 180;
+  el.currentTime = 5;
+  el.dispatch('durationchange');
+  assert.deepEqual(positions, [{ duration: 180, position: 5, playbackRate: 1 }]);
+});
+
+test('a duration change on the inactive channel reports nothing', async () => {
+  await playFirstTrack();
+  const positions = recordPositions();
+  const other = inactiveElement();
+  other.duration = 180;
+  other.dispatch('durationchange');
+  assert.deepEqual(positions, []);
+});
+
+test('dispose clears the position', async () => {
+  await playFirstTrack();
+  const positions = recordPositions();
+  engine.dispose();
+  assert.equal(positions.at(-1), null);
 });
 
 test('a play() that resolves after dispose does not start the disposed engine', async () => {
