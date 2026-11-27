@@ -114,6 +114,12 @@ func main() {
 	if err != nil {
 		log.Printf("warning: scan existing failed: %v", err)
 	}
+	if n, err := songRepo.Count(ctx); err != nil {
+		log.Printf("warning: count songs failed, keeping bloom filter size: %v", err)
+	} else {
+		playedTracker.EnsureCapacity(uint(n))
+		log.Printf("bloom filter sized for %d songs (library: %d)", playedTracker.Capacity(), n)
+	}
 	queuedAdded, err := queueMgr.PrepareInitialQueue(ctx)
 	if err != nil {
 		log.Printf("warning: initial queue prepare failed: %v", err)

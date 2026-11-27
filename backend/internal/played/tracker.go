@@ -22,10 +22,14 @@ import (
 type Tracker struct {
 	mu     sync.RWMutex
 	f      *bloom.BloomFilter
+	legacy *bloom.BloomFilter // read-only filter outgrown by EnsureCapacity; nil after Reset
 	cap    uint
 	fpRate float64
 	dirty  bool // filter changed since the last successful SaveIfDirty or Load
 }
+
+// minCapacity is the smallest filter EnsureCapacity sizes for.
+const minCapacity = 10_000
 
 // New creates a Tracker sized for n estimated items at the given false-positive rate.
 func New(n uint, fpRate float64) *Tracker {
@@ -48,14 +52,51 @@ func (t *Tracker) MarkPlayed(songID string) {
 func (t *Tracker) HasPlayed(songID string) bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.f.TestString(songID)
+	return t.f.TestString(songID) || (t.legacy != nil && t.legacy.TestString(songID))
 }
 
-// Reset clears all play records, beginning a new cycle.
+// EnsureCapacity sizes the tracker for a library of n songs with 2x headroom
+// (at least minCapacity), so the false-positive rate stays near the configured
+// one as the library grows. It never shrinks the tracker.
+//
+// When the current filter is too small, it becomes a read-only legacy filter
+// and new marks go to a right-sized one. History in the legacy filter is
+// honoured until the next Reset. Save writes only the new filter, so a restart
+// before then forgets that history and those songs show as unplayed again.
+// That is the safe direction: an early repeat, never a skipped song.
+func (t *Tracker) EnsureCapacity(n uint) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	target := max(minCapacity, 2*n)
+	if target <= t.cap {
+		return
+	}
+	t.cap = target
+	wantM, _ := bloom.EstimateParameters(target, t.fpRate)
+	if t.f.Cap() >= wantM {
+		return
+	}
+	if t.legacy == nil {
+		t.legacy = t.f
+	}
+	t.f = bloom.NewWithEstimates(t.cap, t.fpRate)
+	t.dirty = true
+}
+
+// Capacity returns the number of songs the tracker is sized for.
+func (t *Tracker) Capacity() uint {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.cap
+}
+
+// Reset clears all play records, beginning a new cycle. The new filter is
+// sized for the current capacity, replacing an outgrown or oversized one.
 func (t *Tracker) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.f = bloom.NewWithEstimates(t.cap, t.fpRate)
+	t.legacy = nil
 	t.dirty = true
 }
 
@@ -165,6 +206,7 @@ func (t *Tracker) Load(path string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.f = f
+	t.legacy = nil
 	t.dirty = false
 	return nil
 }

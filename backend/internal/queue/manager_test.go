@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -974,5 +975,43 @@ func TestBlockSongFailedSaveReportsPurge(t *testing.T) {
 	}
 	if items := listQueue(t, m); len(items) != 0 {
 		t.Fatalf("queue = %+v, want empty after the purge", items)
+	}
+}
+
+// callLogTracker records EnsureCapacity and Reset calls in order.
+type callLogTracker struct {
+	*played.Tracker
+	calls []string
+}
+
+func (c *callLogTracker) EnsureCapacity(n uint) {
+	c.calls = append(c.calls, fmt.Sprintf("ensure(%d)", n))
+	c.Tracker.EnsureCapacity(n)
+}
+
+func (c *callLogTracker) Reset() {
+	c.calls = append(c.calls, "reset")
+	c.Tracker.Reset()
+}
+
+// TestCycleResetSizesTrackerForLibrary: a cycle reset sizes the tracker for
+// the current library first, so songs added at runtime are covered next cycle.
+func TestCycleResetSizesTrackerForLibrary(t *testing.T) {
+	ctx := context.Background()
+	songRepo := repository.NewMemSongRepo()
+	for _, s := range sameArtistLibrary(3) {
+		if err := songRepo.Create(ctx, s); err != nil {
+			t.Fatalf("seed song %s: %v", s.ID, err)
+		}
+	}
+	tracker := &callLogTracker{Tracker: played.New(1000, 0.01)}
+	m := New(songRepo, tracker, repository.NewMemQueueRepo(songRepo), autoRefillCfg(ShuffleRoundRobin))
+	for i := 0; i < 4; i++ {
+		if _, err := m.NextSong(ctx); err != nil {
+			t.Fatalf("NextSong[%d]: %v", i, err)
+		}
+	}
+	if got := strings.Join(tracker.calls, ","); got != "ensure(3),reset" {
+		t.Fatalf("tracker calls = %q, want %q", got, "ensure(3),reset")
 	}
 }

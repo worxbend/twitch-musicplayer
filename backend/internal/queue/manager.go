@@ -97,6 +97,8 @@ type PlayedTracker interface {
 	MarkPlayed(songID string)
 	HasPlayed(songID string) bool
 	Reset()
+	// EnsureCapacity sizes the tracker for a library of n songs.
+	EnsureCapacity(n uint)
 }
 
 // Blocklist is the persisted set of song IDs the streamer pulled out of
@@ -452,6 +454,8 @@ func (m *Manager) resetCycleIfComplete(allSongs []*models.Song, inFlight map[str
 			return
 		}
 	}
+	// Size the next cycle for songs the watcher added since startup.
+	m.tracker.EnsureCapacity(uint(len(allSongs)))
 	m.tracker.Reset()
 	m.carryover = maps.Clone(inFlight)
 }

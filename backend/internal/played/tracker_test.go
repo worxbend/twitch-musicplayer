@@ -3,6 +3,7 @@ package played
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,5 +282,101 @@ func TestLoadAcceptsFileWithPartialLastWord(t *testing.T) {
 	}
 	if tr.HasPlayed("a") {
 		t.Error("HasPlayed(a) = true on an empty filter")
+	}
+}
+
+func markIDs(tr *Tracker, prefix string, n int) {
+	for i := range n {
+		tr.MarkPlayed(fmt.Sprintf("%s-%d", prefix, i))
+	}
+}
+
+func playedCount(tr *Tracker, prefix string, n int) int {
+	count := 0
+	for i := range n {
+		if tr.HasPlayed(fmt.Sprintf("%s-%d", prefix, i)) {
+			count++
+		}
+	}
+	return count
+}
+
+func TestEnsureCapacityKeepsHistoryUntilReset(t *testing.T) {
+	tr := New(minCapacity, 0.01)
+	markIDs(tr, "old", 100)
+	tr.EnsureCapacity(30_000)
+	if tr.Capacity() != 60_000 {
+		t.Fatalf("Capacity = %d, want 60000", tr.Capacity())
+	}
+	if got := playedCount(tr, "old", 100); got != 100 {
+		t.Fatalf("after grow, %d of 100 marks still played, want 100", got)
+	}
+	tr.Reset()
+	if tr.legacy != nil {
+		t.Fatal("legacy filter survives Reset")
+	}
+	if got := playedCount(tr, "old", 100); got != 0 {
+		t.Fatalf("after Reset, %d of 100 marks still played, want 0", got)
+	}
+}
+
+func TestEnsureCapacityBelowCurrentIsNoOp(t *testing.T) {
+	tr := New(minCapacity, 0.01)
+	tr.MarkPlayed("a")
+	before := tr.f
+	tr.EnsureCapacity(100)
+	tr.EnsureCapacity(minCapacity / 2)
+	if tr.f != before || tr.legacy != nil || tr.Capacity() != minCapacity {
+		t.Fatalf("EnsureCapacity below capacity changed the tracker (cap %d)", tr.Capacity())
+	}
+	if !tr.HasPlayed("a") {
+		t.Fatal("HasPlayed(a) = false after a no-op EnsureCapacity")
+	}
+}
+
+// fpRateAfterFill loads a saved 10k filter, optionally grows it for 30k songs,
+// marks 30k songs, and returns the false-positive rate over 10k fresh IDs.
+func fpRateAfterFill(t *testing.T, path string, grow bool) float64 {
+	t.Helper()
+	tr := New(minCapacity, 0.01)
+	if err := tr.Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if grow {
+		tr.EnsureCapacity(30_000)
+	}
+	markIDs(tr, "song", 30_000)
+	return float64(playedCount(tr, "fresh", 10_000)) / 10_000
+}
+
+func TestEnsureCapacityKeepsFalsePositivesLowPast10k(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.bloom")
+	if err := New(minCapacity, 0.01).Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if rate := fpRateAfterFill(t, path, true); rate >= 0.02 {
+		t.Errorf("grown filter FP rate = %.3f, want < 0.02", rate)
+	}
+	// Control: without growing, a 10k filter holding 30k songs hides many
+	// unplayed songs. This is the bug EnsureCapacity fixes.
+	if rate := fpRateAfterFill(t, path, false); rate <= 0.05 {
+		t.Errorf("ungrown filter FP rate = %.3f, want > 0.05", rate)
+	}
+}
+
+func TestSaveAfterGrowKeepsNewMarks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.bloom")
+	src := New(minCapacity, 0.01)
+	src.EnsureCapacity(30_000)
+	markIDs(src, "new", 100)
+	if err := src.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	dst := New(minCapacity, 0.01)
+	if err := dst.Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := playedCount(dst, "new", 100); got != 100 {
+		t.Fatalf("after Save/Load, %d of 100 marks played, want 100", got)
 	}
 }
