@@ -254,8 +254,10 @@ Recolour any instrument, including the ambient scene, with
 `/spectrum-overlay?ramp=NEON`. Scene switching preserves the selected ramp.
 
 `/now-playing` takes `?align=left|center|right`, `?size=12–120` (title size in px),
-`?art=1` (embedded cover art beside the title), `?theme=shadow|outline|pill` (outline and
-pill stay readable over bright footage) and `?font=sans|mono`, for example `http://<host>/now-playing?align=center&size=40`. It plays no audio, so pair it with
+`?hold=1–600` (seconds the title stays after each change, then fades), `?art=1` (embedded
+cover art beside the title), `?theme=shadow|outline|pill` (outline and pill stay readable
+over bright footage), `?font=sans|mono`, `?next=1` (an "Up next" line) and `?progress=1`
+(a thin track progress bar), for example `http://<host>/now-playing?align=center&size=40`. It plays no audio, so pair it with
 one audio source page. It only listens to the backend, so it never takes songs off the queue.
 
 > 💡 **Pro tip:** append `?transparent=1` to force transparency on any of the seven scene routes.

@@ -1,7 +1,15 @@
-import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { coverURL, getWebSocketURL } from './config/backend';
 import { HEARTBEAT_MS, armHandshakeTimeout, isStale, reconnectDelay } from './config/reconnect';
-import { nextShown, reduceNowPlaying, reduceUpNext, type NowPlayingOptions, type NowPlayingSong, type ShownKey } from './nowPlaying';
+import {
+  nextShown,
+  progressTiming,
+  reduceNowPlaying,
+  reduceUpNext,
+  type NowPlayingOptions,
+  type NowPlayingSong,
+  type ShownKey,
+} from './nowPlaying';
 
 type Props = NowPlayingOptions;
 
@@ -13,7 +21,9 @@ const heartbeatFrame = JSON.stringify({ type: 'heartbeat' });
  * it can never advance the queue. Silence past STALE_AFTER_MS (no heartbeat_ack)
  * means a half-open socket, so it reconnects. With `hold` > 0 the text fades out
  * that many seconds after each new song start or title change. With `next` it
- * also shows the next queued title from the frames it already receives.
+ * also shows the next queued title from the frames it already receives. With
+ * `progress` it draws a progress bar as a CSS animation started at the server's
+ * elapsed time on each song frame, so it needs no timer or polling.
  */
 export function NowPlayingOverlay(props: Props) {
   const [song, setSong] = createSignal<NowPlayingSong | null>(null);
@@ -27,6 +37,8 @@ export function NowPlayingOverlay(props: Props) {
     return url !== failedCover() ? url : '';
   };
   let shown: ShownKey = { key: '', title: '' };
+  // When the frame that last changed the song arrived; elapsed_secs was measured then.
+  let songReceivedAt = 0;
   let hideTimer = 0;
   let lastMessageAt = 0;
   let socket: WebSocket | null = null;
@@ -87,7 +99,12 @@ export function NowPlayingOverlay(props: Props) {
       lastMessageAt = Date.now();
       if (typeof event.data !== 'string') return;
       const raw = event.data;
-      setSong(prev => reduceNowPlaying(prev, raw));
+      const current = song();
+      const next = reduceNowPlaying(current, raw);
+      if (next !== current) {
+        songReceivedAt = Date.now();
+        setSong(next);
+      }
       setUpNext(prev => reduceUpNext(prev, raw));
     };
     ws.onclose = () => {
@@ -106,6 +123,9 @@ export function NowPlayingOverlay(props: Props) {
     window.clearTimeout(hideTimer);
     if (props.hold > 0) hideTimer = window.setTimeout(() => setVisible(false), props.hold * 1000);
   });
+
+  // A new object on every song frame, so the keyed <Show> below remounts the bar and restarts its animation.
+  const progress = createMemo(() => (props.progress ? progressTiming(song(), songReceivedAt, Date.now()) : null));
 
   onMount(() => {
     document.documentElement.classList.add('logo-overlay-page');
@@ -140,6 +160,17 @@ export function NowPlayingOverlay(props: Props) {
               </Show>
               <Show when={props.next && upNext()?.title}>
                 <p class="np-next">Up next: {upNext()?.title}</p>
+              </Show>
+              <Show when={progress()} keyed>
+                {timing => (
+                  <div class="np-progress-track" aria-hidden="true">
+                    <div class="np-progress-fill" style={{
+                        'transform-origin': props.align,
+                        '--np-progress-duration': `${timing.durationSecs}s`,
+                        '--np-progress-delay': `-${timing.elapsedSecs}s`,
+                      }} />
+                  </div>
+                )}
               </Show>
             </div>
           </div>

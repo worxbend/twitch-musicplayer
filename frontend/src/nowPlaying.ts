@@ -11,8 +11,16 @@
 /**
  * `startId` is now_playing's history_id: set on a real song start, absent on a retag or `state` frame.
  * `coverId` is the song id when the song has embedded cover art; the overlay turns it into a URL.
+ * `durationSecs` is the song length (> 0); `elapsedSecs` is the server's play time when the frame was built.
  */
-export type NowPlayingSong = { title: string; artist: string; startId?: string; coverId?: string };
+export type NowPlayingSong = {
+  title: string;
+  artist: string;
+  startId?: string;
+  coverId?: string;
+  durationSecs?: number;
+  elapsedSecs?: number;
+};
 export type NowPlayingAlign = 'left' | 'center' | 'right';
 /** `shadow` is the soft default; `outline` and `pill` stay readable over bright footage. */
 export type NowPlayingTheme = 'shadow' | 'outline' | 'pill';
@@ -20,7 +28,7 @@ export type NowPlayingTheme = 'shadow' | 'outline' | 'pill';
 export type NowPlayingFont = 'sans' | 'mono';
 /**
  * `hold` is seconds the title stays visible after each change; 0 keeps it visible. `art` shows the cover.
- * `next` shows an "Up next" line with the next queued title.
+ * `next` shows an "Up next" line with the next queued title. `progress` shows a track progress bar.
  */
 export type NowPlayingOptions = {
   align: NowPlayingAlign;
@@ -30,6 +38,7 @@ export type NowPlayingOptions = {
   theme: NowPlayingTheme;
   font: NowPlayingFont;
   next: boolean;
+  progress: boolean;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -40,6 +49,11 @@ function isObject(value: unknown): value is JsonObject {
 
 function asText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+/** A finite number >= 0, else undefined. */
+function asSeconds(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 function stripExtension(filename: string): string {
@@ -54,7 +68,16 @@ function toSong(raw: unknown): NowPlayingSong | null {
   if (!title) return null;
   const song: NowPlayingSong = { title, artist: asText(raw.artist) };
   const coverId = raw.has_cover === true ? asText(raw.id) : '';
-  return coverId ? { ...song, coverId } : song;
+  if (coverId) song.coverId = coverId;
+  const durationSecs = asSeconds(raw.duration_secs);
+  if (durationSecs) song.durationSecs = durationSecs;
+  return song;
+}
+
+/** Copies the payload's `elapsed_secs` onto `song` when it is a usable number. */
+function withElapsed(song: NowPlayingSong | null, payload: JsonObject): NowPlayingSong | null {
+  const elapsedSecs = asSeconds(payload.elapsed_secs);
+  return song && elapsedSecs !== undefined ? { ...song, elapsedSecs } : song;
 }
 
 function parse(raw: string): JsonObject | null {
@@ -71,8 +94,9 @@ export function reduceNowPlaying(prev: NowPlayingSong | null, raw: string): NowP
   const msg = parse(raw);
   if (!msg || !isObject(msg.payload)) return prev;
 
-  if (msg.type === 'state') return toSong(msg.payload.current_song);
-  if (msg.type === 'now_playing') return withStartId(toSong(msg.payload.song), asText(msg.payload.history_id)) ?? prev;
+  const payload = msg.payload;
+  if (msg.type === 'state') return withElapsed(toSong(payload.current_song), payload);
+  if (msg.type === 'now_playing') return withElapsed(withStartId(toSong(payload.song), asText(payload.history_id)), payload) ?? prev;
   return prev;
 }
 
@@ -89,6 +113,23 @@ export function reduceUpNext(prev: NowPlayingSong | null, raw: string): NowPlayi
 
 function withStartId(song: NowPlayingSong | null, startId: string): NowPlayingSong | null {
   return song && startId ? { ...song, startId } : song;
+}
+
+/**
+ * Where the progress bar is `nowMs` after the frame carrying `song` arrived at `receivedAtMs`:
+ * the server's elapsed time plus the local time since, clamped to 0..duration. Null when the
+ * song lacks a duration or an elapsed time, so the bar is hidden.
+ */
+export function progressTiming(
+  song: NowPlayingSong | null,
+  receivedAtMs: number,
+  nowMs: number,
+): { durationSecs: number; elapsedSecs: number } | null {
+  const durationSecs = song?.durationSecs;
+  const startSecs = song?.elapsedSecs;
+  if (durationSecs === undefined || startSecs === undefined) return null;
+  const elapsedSecs = Math.min(durationSecs, Math.max(0, startSecs + (nowMs - receivedAtMs) / 1000));
+  return { durationSecs, elapsedSecs };
 }
 
 /** What the overlay last showed: `key` is the start id, or the title when the frame had none. */
@@ -133,8 +174,8 @@ function pick<T extends string>(allowed: readonly T[], raw: unknown): T {
 
 /**
  * Reads `?align=`, `?size=` (px), `?hold=` (seconds, 1..600), `?art=1`, `?theme=`,
- * `?font=` and `?next=1`. Anything invalid falls back to left / 32 / 0 / no art / shadow /
- * sans / no up-next line, where hold 0 means always visible.
+ * `?font=`, `?next=1` and `?progress=1`. Anything invalid falls back to left / 32 / 0 / no art /
+ * shadow / sans / no up-next line / no progress bar, where hold 0 means always visible.
  */
 export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const params = new URLSearchParams(search);
@@ -145,7 +186,16 @@ export function parseNowPlayingOptions(search: string): NowPlayingOptions {
   const hold = secs >= 1 && secs <= maxHoldSecs ? secs : 0;
   const theme = pick(nowPlayingThemes, params.get('theme'));
   const font = pick(nowPlayingFonts, params.get('font'));
-  return { align, size, hold, art: params.get('art') === '1', theme, font, next: params.get('next') === '1' };
+  return {
+    align,
+    size,
+    hold,
+    art: params.get('art') === '1',
+    theme,
+    font,
+    next: params.get('next') === '1',
+    progress: params.get('progress') === '1',
+  };
 }
 
 /** Rounds to a whole number inside min..max; a missing or non-numeric value gives `fallback`. */
@@ -172,6 +222,7 @@ export function nowPlayingPath(opts: Partial<NowPlayingOptions>): string {
   if (theme !== 'shadow') params.set('theme', theme);
   if (font !== 'sans') params.set('font', font);
   if (opts.next === true) params.set('next', '1');
+  if (opts.progress === true) params.set('progress', '1');
   const query = params.toString();
   return query ? `/now-playing?${query}` : '/now-playing';
 }

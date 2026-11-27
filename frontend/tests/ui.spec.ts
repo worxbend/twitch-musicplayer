@@ -127,9 +127,10 @@ test('now playing overlay URL builder copies the configured URL', async ({ page,
   await page.getByLabel('Theme').selectOption('pill');
   await page.getByLabel('Font').selectOption('mono');
   await page.getByLabel('Up next').check();
+  await page.getByLabel('Progress bar').check();
   await page.getByRole('button', { name: 'Copy now playing overlay URL' }).click();
   await expect(page.getByRole('status')).toContainText('Browser-source URL copied');
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1&theme=pill&font=mono&next=1');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1&theme=pill&font=mono&next=1&progress=1');
 });
 
 test('library search, queue add/remove, and keyboard-safe clear confirmation', async ({ page }) => {
@@ -729,6 +730,27 @@ test('now-playing ?next=1 shows the next queued title; an empty queue hides it',
   send({ type: 'queue_updated', payload: { queue_depth: 0, reason: 'song_started' } });
   await expect(upNext).toHaveCount(0);
   await expect(page.getByText('Midnight compiler')).toBeVisible();
+});
+
+test('now-playing ?progress=1 starts the bar at the server elapsed time; no flag shows none', async ({ page }) => {
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => {
+    ws.send(JSON.stringify({ type: 'state', payload: { current_song: songs[0], elapsed_secs: 90, queue_length: 1, total_songs: 2 } }));
+  });
+  const fill = page.locator('.np-progress-fill');
+  await page.goto('/now-playing?progress=1');
+  await expect(fill).toBeAttached();
+  await expect(fill).toHaveCSS('animation-duration', '180s');
+  // The delay is the server's 90s plus the few ms until the memo ran.
+  await expect(fill).toHaveCSS('animation-delay', /^-90(\.\d+)?s$/);
+  await expect(fill).toHaveCSS('animation-timing-function', 'linear');
+  // Reduced motion keeps the bar but moves it in steps, past the global animation reset.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(fill).toHaveCSS('animation-timing-function', 'steps(40)');
+  await expect(fill).toHaveCSS('animation-duration', '180s');
+  await page.emulateMedia({ reducedMotion: null });
+  await page.goto('/now-playing');
+  await expect(page.getByText('Midnight compiler')).toBeVisible();
+  await expect(page.locator('.np-progress-track')).toHaveCount(0);
 });
 
 test('now-playing without ?next=1 shows no up-next line', async ({ page }) => {

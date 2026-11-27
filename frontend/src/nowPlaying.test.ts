@@ -10,6 +10,7 @@ import {
   nowPlayingPath,
   nowPlayingThemes,
   parseNowPlayingOptions,
+  progressTiming,
   reduceNowPlaying,
   reduceUpNext,
   type NowPlayingOptions,
@@ -24,7 +25,7 @@ function frame(type: string, payload?: unknown): string {
 }
 
 function song(fields: Record<string, unknown>) {
-  return { id: 's1', filename: 'rainy-day.mp3', title: 'Rainy Day', artist: 'Lofi Cat', album: '', duration_secs: 120, ...fields };
+  return { id: 's1', filename: 'rainy-day.mp3', title: 'Rainy Day', artist: 'Lofi Cat', album: '', ...fields };
 }
 
 test('state with a current song returns that song', () => {
@@ -139,18 +140,18 @@ test('nowPlayingPath emits art=1 only when art is on', () => {
 });
 
 test('options default to left and 32px', () => {
-  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false });
+  assert.deepEqual(parseNowPlayingOptions(''), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false });
 });
 
 test('options accept valid align and size values', () => {
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false });
-  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40'), { align: 'center', size: 40, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=right&size=12'), { align: 'right', size: 12, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false });
   assert.equal(parseNowPlayingOptions('?size=120').size, 120);
 });
 
 test('invalid options fall back to the defaults', () => {
   for (const search of ['?align=middle&size=11', '?align=LEFT&size=121', '?size=40.5', '?size=-20', '?size=abc', '?size=']) {
-    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false }, search);
+    assert.deepEqual(parseNowPlayingOptions(search), { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false }, search);
   }
 });
 
@@ -158,7 +159,7 @@ test('hold accepts whole seconds from 1 to 600', () => {
   assert.equal(parseNowPlayingOptions('?hold=5').hold, 5);
   assert.equal(parseNowPlayingOptions('?hold=1').hold, 1);
   assert.equal(parseNowPlayingOptions('?hold=600').hold, 600);
-  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10, art: false, theme: 'shadow', font: 'sans', next: false });
+  assert.deepEqual(parseNowPlayingOptions('?align=center&size=40&hold=10'), { align: 'center', size: 40, hold: 10, art: false, theme: 'shadow', font: 'sans', next: false, progress: false });
 });
 
 test('invalid or missing hold means always visible', () => {
@@ -178,12 +179,13 @@ test('nowPlayingPath orders params align, size, hold', () => {
 
 test('nowPlayingPath round-trips through parseNowPlayingOptions', () => {
   const cases: NowPlayingOptions[] = [
-    { align: 'center', size: 48, hold: 8, art: true, theme: 'shadow', font: 'sans', next: false },
-    { align: 'right', size: 12, hold: 600, art: false, theme: 'outline', font: 'sans', next: false },
-    { align: 'left', size: 120, hold: 1, art: false, theme: 'pill', font: 'mono', next: false },
-    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false },
-    { align: 'left', size: 32, hold: 0, art: true, theme: 'shadow', font: 'mono', next: false },
-    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: true },
+    { align: 'center', size: 48, hold: 8, art: true, theme: 'shadow', font: 'sans', next: false, progress: false },
+    { align: 'right', size: 12, hold: 600, art: false, theme: 'outline', font: 'sans', next: false, progress: false },
+    { align: 'left', size: 120, hold: 1, art: false, theme: 'pill', font: 'mono', next: false, progress: false },
+    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: false },
+    { align: 'left', size: 32, hold: 0, art: true, theme: 'shadow', font: 'mono', next: false, progress: false },
+    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: true, progress: false },
+    { align: 'left', size: 32, hold: 0, art: false, theme: 'shadow', font: 'sans', next: false, progress: true },
   ];
   for (const opts of cases) {
     assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts);
@@ -224,7 +226,7 @@ test('nowPlayingPath emits theme and font only when not the default', () => {
 test('every theme and font round-trips with the other params', () => {
   for (const theme of nowPlayingThemes) {
     for (const font of nowPlayingFonts) {
-      const opts: NowPlayingOptions = { align: 'center', size: 40, hold: 10, art: true, theme, font, next: true };
+      const opts: NowPlayingOptions = { align: 'center', size: 40, hold: 10, art: true, theme, font, next: true, progress: false };
       assert.deepEqual(parseNowPlayingOptions(new URL(nowPlayingPath(opts), 'http://x').search), opts, `${theme}/${font}`);
     }
   }
@@ -238,9 +240,9 @@ test('next is on only for next=1', () => {
 });
 
 test('nowPlayingPath emits next=1 only when next is on, after the other params', () => {
-  assert.equal(nowPlayingPath({ next: true }), '/now-playing?next=1');
-  assert.equal(nowPlayingPath({ next: false }), '/now-playing');
-  assert.equal(nowPlayingPath({ align: 'center', next: true }), '/now-playing?align=center&next=1');
+  assert.equal(nowPlayingPath({ next: true, progress: false }), '/now-playing?next=1');
+  assert.equal(nowPlayingPath({ next: false, progress: false }), '/now-playing');
+  assert.equal(nowPlayingPath({ align: 'center', next: true, progress: false }), '/now-playing?align=center&next=1');
 });
 
 test('reduceUpNext takes next_song from queue_updated', () => {
@@ -262,4 +264,55 @@ test('reduceUpNext keeps prev on now_playing and on garbage', () => {
   assert.equal(reduceUpNext(prev, frame('now_playing', { song: song({}), queue_depth: 1 })), prev);
   assert.equal(reduceUpNext(prev, 'not json'), prev);
   assert.equal(reduceUpNext(prev, frame('queue_updated')), prev);
+});
+
+test('progress is on only for progress=1', () => {
+  assert.equal(parseNowPlayingOptions('?progress=1').progress, true);
+  for (const search of ['', '?progress=', '?progress=0', '?progress=true']) {
+    assert.equal(parseNowPlayingOptions(search).progress, false, search);
+  }
+});
+
+test('nowPlayingPath emits progress=1 only when progress is on, after next', () => {
+  assert.equal(nowPlayingPath({ progress: true }), '/now-playing?progress=1');
+  assert.equal(nowPlayingPath({ progress: false }), '/now-playing');
+  assert.equal(nowPlayingPath({ next: true, progress: true }), '/now-playing?next=1&progress=1');
+});
+
+test('duration_secs and elapsed_secs become durationSecs and elapsedSecs', () => {
+  const now = frame('now_playing', { song: song({ duration_secs: 180 }), history_id: 'h1', elapsed_secs: 0 });
+  assert.deepEqual(reduceNowPlaying(null, now), { title: 'Rainy Day', artist: 'Lofi Cat', startId: 'h1', durationSecs: 180, elapsedSecs: 0 });
+  const state = frame('state', { current_song: song({ duration_secs: 180 }), elapsed_secs: 42.5 });
+  assert.deepEqual(reduceNowPlaying(null, state), { title: 'Rainy Day', artist: 'Lofi Cat', durationSecs: 180, elapsedSecs: 42.5 });
+});
+
+test('unusable duration_secs and elapsed_secs are left out', () => {
+  // JSON has no NaN; an out-of-range literal such as 1e999 parses to Infinity.
+  for (const bad of ['-1', '"42"', 'null', '1e999']) {
+    const raw = `{"type":"state","payload":{"current_song":{"title":"t","duration_secs":${bad}},"elapsed_secs":${bad}}}`;
+    const got = reduceNowPlaying(null, raw);
+    assert.equal(got?.durationSecs, undefined, bad);
+    assert.equal(got?.elapsedSecs, undefined, bad);
+  }
+  const missing = reduceNowPlaying(null, frame('now_playing', { song: song({}) }));
+  assert.equal(missing?.durationSecs, undefined);
+  assert.equal(missing?.elapsedSecs, undefined);
+  const zero = reduceNowPlaying(null, frame('state', { current_song: song({ duration_secs: 0 }), elapsed_secs: 0 }));
+  assert.equal(zero?.durationSecs, undefined, 'a zero duration is unknown');
+  assert.equal(zero?.elapsedSecs, 0, 'a zero elapsed is a fresh start');
+});
+
+test('progressTiming is null without a duration or an elapsed time', () => {
+  assert.equal(progressTiming(null, 0, 0), null);
+  assert.equal(progressTiming({ title: 't', artist: '', elapsedSecs: 3 }, 0, 0), null);
+  assert.equal(progressTiming({ title: 't', artist: '', durationSecs: 120 }, 0, 0), null);
+});
+
+test('progressTiming advances with local time and clamps to 0..duration', () => {
+  const base: NowPlayingSong = { title: 't', artist: '', durationSecs: 120, elapsedSecs: 42 };
+  assert.deepEqual(progressTiming(base, 1_000, 1_000), { durationSecs: 120, elapsedSecs: 42 });
+  assert.deepEqual(progressTiming(base, 1_000, 3_500), { durationSecs: 120, elapsedSecs: 44.5 });
+  assert.deepEqual(progressTiming({ ...base, elapsedSecs: 130 }, 0, 0), { durationSecs: 120, elapsedSecs: 120 });
+  assert.deepEqual(progressTiming(base, 1_000, 1_000 + 200_000), { durationSecs: 120, elapsedSecs: 120 });
+  assert.deepEqual(progressTiming({ ...base, elapsedSecs: 0 }, 5_000, 1_000), { durationSecs: 120, elapsedSecs: 0 });
 });

@@ -95,8 +95,16 @@ opened within 10 seconds is retried. It plays no
 audio, so pair it with the audio source page. It only listens to the backend and never
 advances the queue, so it is safe to add alongside a playing page.
 
+`progress=1` adds a thin progress bar under the text, for example
+`/now-playing?progress=1&align=center`. It follows the elapsed time the server sends with
+each song, so it is also in the right place after an OBS reload mid-track, restarts on each
+new song and keeps going through a tag edit. It is hidden when the song has no known
+duration, fades with `hold` like the text, and moves in discrete steps when the system asks
+for reduced motion. Its position is approximate: it counts from when the server sent the
+song, a moment before the audio is heard.
+
 The **Now playing text** card on the Scenes page builds this URL from align, size, hold,
-theme, font, album-art and up-next controls and copies it for you.
+theme, font, album-art, up-next and progress-bar controls and copies it for you.
 
 ### 🎨 Recolouring
 
