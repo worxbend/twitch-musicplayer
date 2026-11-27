@@ -40,6 +40,8 @@ export function Stage(props: Props) {
     let audio: AudioEngine | null = null;
     let viz: Visualizer | null = null;
     let ro: ResizeObserver | null = null;
+    let onScroll: (() => void) | null = null;
+    let scrollFrame = 0;
     let tickerUpdate: (() => void) | null = null;
     const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
     let needsVisualFrame = true;
@@ -53,6 +55,8 @@ export function Stage(props: Props) {
       disposed = true;
       motionPreference.removeEventListener('change', onMotionChange);
       ro?.disconnect();
+      if (onScroll) window.removeEventListener('scroll', onScroll, { capture: true });
+      cancelAnimationFrame(scrollFrame);
       if (tickerUpdate && initialized) app.ticker.remove(tickerUpdate);
       viz?.dispose();
       audio?.dispose();
@@ -143,7 +147,15 @@ export function Stage(props: Props) {
         needsVisualFrame = true;
       });
       ro.observe(stageRef);
-      if (sceneArea) ro.observe(sceneArea);
+      if (!sceneArea) return;
+      ro.observe(sceneArea);
+      // The player body scrolls (400% zoom) without resizing anything, so only
+      // the inset moves. Scroll does not bubble from body; listen in capture.
+      onScroll = () => {
+        if (scrollFrame) return;
+        scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; fitStage(); });
+      };
+      window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     })().catch(err => console.error('Stage init failed', err));
   });
 

@@ -497,6 +497,19 @@ test('reduced motion freezes the composition without preventing playback', async
   await expect.poll(async () => Number(await page.getByRole('progressbar').getAttribute('aria-valuenow'))).toBeGreaterThan(progress);
 });
 
+test('the player canvas follows its frame when the page scrolls', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 256 });
+  await mockStation(page, { requireGesture: true });
+  await page.goto('/');
+  await page.locator('#stage canvas').waitFor({ state: 'attached' });
+  await page.evaluate(() => document.body.scrollTo(0, 200));
+  expect(await page.evaluate(() => document.body.scrollTop)).toBeGreaterThan(0);
+  const offset = () => page.evaluate(() => Math.abs(
+    document.querySelector('#stage')!.getBoundingClientRect().top
+    - document.querySelector('.performance-space')!.getBoundingClientRect().top));
+  await expect.poll(offset).toBeLessThanOrEqual(1);
+});
+
 test('audio starts when PixiJS has no renderer at all', async ({ page }) => {
   await page.addInitScript(() => {
     // Pixi falls back to Canvas2D without WebGL/WebGPU, so deny that too to make init reject.
