@@ -407,7 +407,7 @@ test('player status stays in one live region from blocked to on air', async ({ p
 
 type MediaHandlerWindow = Window & { __mediaHandlers: Record<string, () => void> };
 
-test('media-key pause shows the paused state and Resume restarts playback', async ({ page }) => {
+test('media-key pause shows the paused state, Resume, the deck toggle and K restart playback', async ({ page }) => {
   // The audio elements are never in the DOM, so the media key's pause handler is the real trigger.
   await page.addInitScript(() => {
     if (!('mediaSession' in navigator)) return;
@@ -426,18 +426,31 @@ test('media-key pause shows the paused state and Resume restarts playback', asyn
   await page.keyboard.press('Enter');
   await expect(page.locator('.status')).toHaveText('On air', {timeout: 10000});
   const playbackState = () => page.evaluate(() => navigator.mediaSession.playbackState);
+  const deckToggle = page.getByRole('button', { name: 'Pause', exact: true });
+  await expect(deckToggle).toHaveAttribute('aria-pressed', 'false');
 
   await page.evaluate(() => (window as unknown as MediaHandlerWindow).__mediaHandlers.pause());
   await expect(page.getByRole('status')).toContainText('Paused');
   const resume = page.getByRole('button', { name: 'Resume ▶' });
   await expect(resume).toBeVisible();
   await expect.poll(playbackState).toBe('paused');
+  await expect(deckToggle).toHaveAttribute('aria-pressed', 'true');
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
 
   await resume.click();
   await expect(resume).toHaveCount(0);
   await expect(page.locator('.status')).toHaveText('On air');
   await expect.poll(playbackState).toBe('playing');
+  await expect(deckToggle).toHaveAttribute('aria-pressed', 'false');
+
+  await deckToggle.focus();
+  await page.keyboard.press('k');
+  await expect.poll(playbackState).toBe('paused');
+  await expect(deckToggle).toHaveAttribute('aria-pressed', 'true');
+  await deckToggle.click();
+  await expect(page.locator('.status')).toHaveText('On air');
+  await expect.poll(playbackState).toBe('playing');
+  await expect(deckToggle).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('volume shortcuts change the slider, mute toggles, and the level survives reload', async ({ page }) => {

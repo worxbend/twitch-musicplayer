@@ -3,7 +3,7 @@ import type { AudioEngine } from '../audio/AudioEngine';
 import { loadVolume, saveVolume, shouldIgnoreVolumeKey, stepVolume, VOLUME_STEP } from '../audio/volumeStore';
 import type { ConnectionStatus, PlaybackStatus } from '../audio/BackendPlaybackClient';
 import { TerminalHeader } from './TerminalHeader';
-import { playerStatus } from './playerStatus';
+import { playerStatus, playToggle } from './playerStatus';
 import { SCENES } from '../viz/scenes';
 
 interface Props {
@@ -39,6 +39,13 @@ export function PlayerUI(props: Props) {
     try { await props.onEnableAudio(); }
     finally { setEnabling(false); }
   };
+  // No local state: the paused prop follows the audio element, so media keys stay in sync.
+  const toggle = () => playToggle(props.playbackStatus(), props.paused?.() ?? false);
+  const onPlayToggle = () => {
+    const { action } = toggle();
+    if (action === 'enable') void enableAudio();
+    else if (action === 'toggle') props.audio()?.togglePlay();
+  };
   const [fraction, setFraction] = createSignal(0);
   const [elapsed, setElapsed] = createSignal('0:00');
   const [remaining, setRemaining] = createSignal('0:00');
@@ -71,6 +78,7 @@ export function PlayerUI(props: Props) {
       // WCAG 2.1.4: bare-key shortcuts act only while focus is in the deck.
       if (!(e.target instanceof Element) || !e.target.closest('.player-deck')) return;
       if (e.key === 'm' || e.key === 'M') setMuted(m => !m);
+      else if (e.key === 'k' || e.key === 'K') onPlayToggle();
       else if (e.key === '-') storeVolume(stepVolume(volume(), -VOLUME_STEP));
       else if (e.key === '=' || e.key === '+') unmuteAt(stepVolume(volume(), VOLUME_STEP));
       else return;
@@ -119,7 +127,7 @@ export function PlayerUI(props: Props) {
           </Show>
           <div class="np-info"><span class="np-label">{status().live ? 'Now playing' : 'Current track'}</span><span id="np-title" title={props.trackName()}>{props.trackName()}</span><span id="np-artist">{props.trackArtist()}</span></div>
           <div class="np-progress"><div class="np-times"><span>{elapsed()}</span><span>{remaining()}</span></div><div class="np-bar" role="progressbar" aria-label="Track progress" aria-valuenow={Math.round(fraction() * 100)} aria-valuetext={valueText()} aria-valuemin={0} aria-valuemax={100}><div class="np-bar-fill" style={{width: `${fraction() * 100}%`}} /></div><span class="progress-caption">Continuous playback</span></div>
-          <div class="np-volume"><button type="button" class="btn btn-icon" aria-pressed={muted()} aria-label="Mute" title="Mute (M)" onClick={() => setMuted(m => !m)}>{muted() ? '×' : '♪'}</button><input type="range" min="0" max="100" step="1" aria-label="Volume" title="Volume (- / +)" value={Math.round(volume() * 100)} onInput={e => unmuteAt(Number(e.currentTarget.value) / 100)} /></div>
+          <div class="np-volume"><button type="button" class="btn btn-icon" aria-pressed={toggle().pressed} aria-label="Pause" aria-disabled={toggle().action === 'none' ? 'true' : undefined} title="Pause (K)" onClick={onPlayToggle}><span aria-hidden="true">{toggle().pressed ? '▶' : '❚❚'}</span></button><button type="button" class="btn btn-icon" aria-pressed={muted()} aria-label="Mute" title="Mute (M)" onClick={() => setMuted(m => !m)}>{muted() ? '×' : '♪'}</button><input type="range" min="0" max="100" step="1" aria-label="Volume" title="Volume (- / +)" value={Math.round(volume() * 100)} onInput={e => unmuteAt(Number(e.currentTarget.value) / 100)} /></div>
           <a class="btn deck-link" href="/scenes">Change scene ↗</a>
         </section>
         </div>

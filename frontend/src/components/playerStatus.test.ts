@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { playerStatus } = await import('./playerStatus.ts');
+const { playerStatus, playToggle } = await import('./playerStatus.ts');
 
 const OFFLINE_DETAIL = 'Waiting for the backend. Reconnecting automatically.';
 
@@ -45,4 +45,22 @@ test('paused does not override blocked or offline', () => {
   assert.equal(playerStatus('connected', 'blocked', true).label, 'Standby');
   assert.equal(playerStatus('disconnected', 'playing', true).label, 'Offline');
   assert.equal(playerStatus('reconnecting', 'playing', true).label, 'Reconnecting');
+});
+
+test('the deck toggle enables audio while the browser blocks it', () => {
+  assert.deepEqual(playToggle('blocked', false), { action: 'enable', pressed: false });
+  assert.deepEqual(playToggle('blocked', true), { action: 'enable', pressed: false });
+});
+
+test('the deck toggle pauses and resumes while playing, pressed when paused', () => {
+  assert.deepEqual(playToggle('playing', false), { action: 'toggle', pressed: false });
+  assert.deepEqual(playToggle('playing', true), { action: 'toggle', pressed: true });
+});
+
+test('the deck toggle does nothing while idle or in error', () => {
+  for (const playback of ['idle', 'error'] as const) {
+    for (const paused of [false, true]) {
+      assert.deepEqual(playToggle(playback, paused), { action: 'none', pressed: false });
+    }
+  }
 });

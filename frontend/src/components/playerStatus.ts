@@ -26,3 +26,16 @@ export function playerStatus(ws: ConnectionStatus, playback: PlaybackStatus, pau
   if (paused) return { live: false, label: 'Paused', detail: 'Paused. Press play or a media key to resume.' };
   return { live: true, label: 'On air', detail: 'Your library, on a continuous frequency.' };
 }
+
+export interface PlayToggle {
+  action: 'enable' | 'toggle' | 'none';
+  pressed: boolean;
+}
+
+// The deck's play/pause toggle. Pressed mirrors the audio element's paused state,
+// so a media key and the button move it the same way.
+export function playToggle(playback: PlaybackStatus, paused: boolean): PlayToggle {
+  if (playback === 'blocked') return { action: 'enable', pressed: false };
+  if (playback === 'playing') return { action: 'toggle', pressed: paused };
+  return { action: 'none', pressed: false };
+}
