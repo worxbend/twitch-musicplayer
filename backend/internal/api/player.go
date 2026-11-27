@@ -178,17 +178,17 @@ func writeSetlist(w http.ResponseWriter, newestFirst []player.PlayEntry) {
 }
 
 // setlistLine renders one entry as "2006-01-02 15:04 UTC  Artist - Title\n".
-// An empty title falls back to the filename without its extension; a song
-// without an artist renders the title alone. Control characters become spaces
+// A blank title falls back to the filename without its extension; a song
+// with a blank artist renders the title alone. Control characters become spaces
 // so a tag cannot split the line.
 func setlistLine(e player.PlayEntry) string {
-	label := e.Song.Title
+	label := strings.TrimSpace(player.OneLine(e.Song.Title))
 	if label == "" {
 		label = strings.TrimSuffix(e.Song.Filename, filepath.Ext(e.Song.Filename))
 	}
 	text := label
-	if e.Song.Artist != "" {
-		text = e.Song.Artist + " - " + label
+	if artist := strings.TrimSpace(player.OneLine(e.Song.Artist)); artist != "" {
+		text = artist + " - " + label
 	}
 	return e.StartedAt.UTC().Format("2006-01-02 15:04 UTC") + "  " + player.OneLine(text) + "\n"
 }

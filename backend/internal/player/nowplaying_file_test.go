@@ -55,6 +55,15 @@ func TestFormatNowPlayingReplacesControlCharacters(t *testing.T) {
 	}
 }
 
+func TestFormatNowPlayingBlankArtistRendersTitle(t *testing.T) {
+	for _, artist := range []string{"  ", "\x00", " \t\x00 "} {
+		song := &models.Song{Title: "Rain", Artist: artist}
+		if got := FormatNowPlaying("{artist} - {title}", song); got != "Rain" {
+			t.Errorf("FormatNowPlaying with artist %q = %q, want %q", artist, got, "Rain")
+		}
+	}
+}
+
 func TestOneLine(t *testing.T) {
 	tests := []struct {
 		name string

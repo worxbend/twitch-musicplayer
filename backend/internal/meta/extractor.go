@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	id3 "github.com/bogem/id3v2/v2"
 )
@@ -66,11 +67,11 @@ func Extract(path string) Info {
 
 	_, _, info.HasCover = coverPicture(tag)
 
-	if t := strings.TrimSpace(tag.Title()); t != "" {
+	if t := cleanTag(tag.Title()); t != "" {
 		info.Title = t
 	}
-	info.Artist = strings.TrimSpace(tag.Artist())
-	info.Album = strings.TrimSpace(tag.Album())
+	info.Artist = cleanTag(tag.Artist())
+	info.Album = cleanTag(tag.Album())
 
 	// TLEN frame encodes duration in milliseconds.
 	if frames := tag.GetFrames(tag.CommonID("Length")); len(frames) > 0 {
@@ -83,6 +84,29 @@ func Extract(path string) Info {
 	}
 
 	return withDuration(info, path)
+}
+
+// cleanTag turns raw ID3 text into one display line. id3v2 strips only one
+// trailing terminator, so ID3v2.4 multi-value frames ("A\x00B") and padded
+// frames keep NULs. Each NUL-separated value is trimmed, with other control
+// characters read as spaces; empty values are dropped and the rest joined
+// with ", ". All-NUL or blank text becomes "".
+func cleanTag(s string) string {
+	values := strings.Split(s, "\x00")
+	kept := values[:0]
+	for _, v := range values {
+		if v = strings.TrimSpace(strings.Map(controlToSpace, v)); v != "" {
+			kept = append(kept, v)
+		}
+	}
+	return strings.Join(kept, ", ")
+}
+
+func controlToSpace(r rune) rune {
+	if unicode.IsControl(r) {
+		return ' '
+	}
+	return r
 }
 
 // Cover returns the embedded cover image of the file at path and its sniffed

@@ -114,6 +114,19 @@ func TestExtract(t *testing.T) {
 			wantDuration: 1,
 		},
 		{
+			name:        "NUL separators are cleaned and an all-NUL title falls back to filename",
+			fillerBytes: 16_000,
+			tagger: func(tag *id3.Tag) {
+				tag.SetTitle("\x00\x00")
+				tag.SetArtist("Lofi Cat\x00Rain Fox")
+				tag.SetAlbum("Night Tapes\x00\x00")
+			},
+			wantTitle:    "song-name",
+			wantArtist:   "Lofi Cat, Rain Fox",
+			wantAlbum:    "Night Tapes",
+			wantDuration: 1,
+		},
+		{
 			name:        "cover art is excluded from estimate",
 			fillerBytes: 160_000,
 			tagger: func(tag *id3.Tag) {
@@ -305,5 +318,28 @@ func TestCover_MissingFile(t *testing.T) {
 	_, _, err := Cover(filepath.Join(t.TempDir(), "gone.mp3"))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("Cover() error = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestCleanTag(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "lone NUL", in: "\x00", want: ""},
+		{name: "multi-value", in: "A\x00B", want: "A, B"},
+		{name: "trailing NUL run", in: "A\x00\x00", want: "A"},
+		{name: "spaces around NUL", in: " A \x00 ", want: "A"},
+		{name: "inner tab", in: "A\tB", want: "A B"},
+		{name: "plain text unchanged", in: "Lofi Cat", want: "Lofi Cat"},
+		{name: "empty", in: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cleanTag(tt.in); got != tt.want {
+				t.Errorf("cleanTag(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }

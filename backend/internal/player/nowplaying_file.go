@@ -41,14 +41,14 @@ func OneLine(s string) string {
 }
 
 // FormatNowPlaying renders song with format's {title}, {artist} and {album}
-// placeholders. A nil song renders "". A song without an artist renders just
-// its title, so the format's separator never dangles. Control characters
+// placeholders. A nil song renders "". A song without an artist (empty, or
+// only spaces and control characters) renders just its title, so the format's separator never dangles. Control characters
 // become spaces (see OneLine), so the result is one line.
 func FormatNowPlaying(format string, song *models.Song) string {
 	if song == nil {
 		return ""
 	}
-	if song.Artist == "" {
+	if strings.TrimSpace(OneLine(song.Artist)) == "" {
 		return OneLine(song.Title)
 	}
 	return OneLine(strings.NewReplacer(

@@ -299,7 +299,9 @@ func TestPlayerHistoryText(t *testing.T) {
 		{name: "limit clamped", target: "/v1/history?format=text&limit=999", songs: manySongs, wantCode: http.StatusOK, wantTexts: manyTexts},
 		{name: "no artist", target: "/v1/history?format=text", songs: []models.Song{{Title: "solo"}}, wantCode: http.StatusOK, wantTexts: []string{"solo"}},
 		{name: "empty title uses filename", target: "/v1/history?format=text", songs: []models.Song{{Artist: "A", Filename: "rainy.day.mp3"}}, wantCode: http.StatusOK, wantTexts: []string{"A - rainy.day"}},
-		{name: "control chars stay on one line", target: "/v1/history?format=text", songs: []models.Song{{Artist: "A\r", Title: "x\ny\u2028z"}, {Title: "next"}}, wantCode: http.StatusOK, wantTexts: []string{"A  - x y z", "next"}},
+		{name: "control chars stay on one line", target: "/v1/history?format=text", songs: []models.Song{{Artist: "A\r", Title: "x\ny\u2028z"}, {Title: "next"}}, wantCode: http.StatusOK, wantTexts: []string{"A - x y z", "next"}},
+		{name: "blank artist renders the title alone", target: "/v1/history?format=text", songs: []models.Song{{Artist: "  ", Title: "one"}, {Artist: "\x00", Title: "two"}}, wantCode: http.StatusOK, wantTexts: []string{"one", "two"}},
+		{name: "blank title uses filename", target: "/v1/history?format=text", songs: []models.Song{{Artist: "A", Title: " \x00 ", Filename: "rainy.day.mp3"}}, wantCode: http.StatusOK, wantTexts: []string{"A - rainy.day"}},
 		{name: "zero limit", target: "/v1/history?format=text&limit=0", wantCode: http.StatusBadRequest, wantError: "limit must be a positive integer"},
 		{name: "unknown format", target: "/v1/history?format=xml", wantCode: http.StatusBadRequest, wantError: "format must be json or text"},
 	}
