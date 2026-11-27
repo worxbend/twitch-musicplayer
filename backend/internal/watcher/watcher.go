@@ -39,8 +39,9 @@ type QueueManager interface {
 // OnNewSong is called after a newly discovered song is registered.
 type OnNewSong func(song *models.Song)
 
-// OnSongsRemoved is called once per filesystem event that dropped songs
-// from the library (file deleted, renamed away, or directory removed).
+// OnSongsRemoved is called once per filesystem event or overflow resync that
+// dropped songs from the library (file deleted, renamed away, or directory
+// removed).
 type OnSongsRemoved func(songs []*models.Song)
 
 // ScanSummary describes the startup folder scan.
@@ -287,24 +288,39 @@ func (w *Watcher) resync(ctx context.Context) {
 	})
 }
 
-// sweepMissing unregisters every indexed song whose file no longer exists and
-// returns how many it found.
+// sweepMissing unregisters every indexed song whose file no longer exists,
+// with one OnRemoved call for the whole sweep, and returns how many it dropped.
 func (w *Watcher) sweepMissing(ctx context.Context) (int, error) {
 	songs, err := w.songRepo.List(ctx)
 	if err != nil {
 		return 0, err
 	}
-	removed := 0
+	stale, err := w.deleteMissing(ctx, songs)
+	w.dropSongs(ctx, stale)
+	return len(stale), err
+}
+
+// deleteMissing deletes every song in songs whose file is gone from the
+// repository and returns the deleted songs, even when ctx ends midway.
+func (w *Watcher) deleteMissing(ctx context.Context, songs []*models.Song) ([]*models.Song, error) {
+	var stale []*models.Song
 	for _, song := range songs {
 		if err := ctx.Err(); err != nil {
-			return removed, err
+			return stale, err
 		}
-		if _, err := os.Stat(song.Path); errors.Is(err, fs.ErrNotExist) {
-			w.unregisterPath(ctx, song.Path)
-			removed++
+		if _, err := os.Stat(song.Path); !errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		deleted, found, err := w.songRepo.DeleteByPath(ctx, song.Path)
+		if err != nil {
+			w.logger.Printf("unregister %s: %v", song.Path, err)
+			continue
+		}
+		if found {
+			stale = append(stale, deleted)
 		}
 	}
-	return removed, nil
+	return stale, nil
 }
 
 // handleCreate queues a new music file for indexing, or, for a new directory
@@ -515,37 +531,47 @@ func (w *Watcher) refreshFile(ctx context.Context, path string) (*models.Song, e
 	return &updated, nil
 }
 
-// unregisterPath drops songs for a path that no longer exists, purges them
-// from the queue so they are never handed to clients, and notifies OnRemoved.
+// unregisterPath drops songs for a path that no longer exists.
 func (w *Watcher) unregisterPath(ctx context.Context, path string) {
 	removed, err := w.removeFromLibrary(ctx, path)
 	if err != nil {
 		w.logger.Printf("unregister %s: %v", path, err)
 		return
 	}
-	if len(removed) == 0 {
+	w.dropSongs(ctx, removed)
+}
+
+// dropSongs purges songs already deleted from the repository from the queue,
+// so they are never handed to clients, then notifies OnRemoved once.
+func (w *Watcher) dropSongs(ctx context.Context, songs []*models.Song) {
+	if len(songs) == 0 {
 		return
 	}
-	for _, song := range removed {
+	for _, song := range songs {
 		if _, err := w.queueMgr.RemoveSong(ctx, song.ID); err != nil {
 			w.logger.Printf("dequeue %s: %v", song.Filename, err)
 		}
 		w.logger.Printf("removed: %s", song.Path)
 	}
 	if w.OnRemoved != nil {
-		w.OnRemoved(removed)
+		w.OnRemoved(songs)
 	}
 }
 
 // removeFromLibrary deletes the song at path, or every song under path when it
-// is not a music file (a removed directory). The path is gone, so no Stat.
+// is a removed directory. A directory can carry a music extension (a folder
+// named "Beats.mp3"), so a music path that matches no song is also treated as
+// one. The path is gone, so no Stat.
 func (w *Watcher) removeFromLibrary(ctx context.Context, path string) ([]*models.Song, error) {
 	if !w.isMusicFile(path) {
 		return w.songRepo.DeleteUnderDir(ctx, path)
 	}
 	song, found, err := w.songRepo.DeleteByPath(ctx, path)
-	if err != nil || !found {
+	if err != nil {
 		return nil, err
+	}
+	if !found {
+		return w.songRepo.DeleteUnderDir(ctx, path)
 	}
 	return []*models.Song{song}, nil
 }

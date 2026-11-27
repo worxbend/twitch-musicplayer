@@ -29,7 +29,14 @@ type harness struct {
 	mgr      *queue.Manager
 	w        *Watcher
 	removals atomic.Int32
-	updates  atomic.Int32
+	// removedSongs sums the songs carried by every OnRemoved call.
+	removedSongs atomic.Int32
+	updates      atomic.Int32
+}
+
+func (h *harness) recordRemoval(songs []*models.Song) {
+	h.removals.Add(1)
+	h.removedSongs.Add(int32(len(songs)))
 }
 
 // startWatcher indexes dir, then runs Start until the test ends.
@@ -51,7 +58,7 @@ func startWatcherWith(t *testing.T, dir string, configure func(*Watcher)) *harne
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	w.OnRemoved = func(_ []*models.Song) { h.removals.Add(1) }
+	w.OnRemoved = h.recordRemoval
 	w.OnUpdated = func(_ *models.Song) { h.updates.Add(1) }
 	w.settlePoll = 300 * time.Millisecond
 	if configure != nil {
@@ -177,6 +184,39 @@ func TestWatcherDropsRemovedDirectory(t *testing.T) {
 	waitFor(t, 2*time.Second, "sub/x.mp3 removed", func() bool { return h.count(t) == 1 })
 	if ok, _ := h.songs.ExistsByPath(context.Background(), filepath.Join(dir, "keep.mp3")); !ok {
 		t.Fatal("keep.mp3 was dropped with the removed directory")
+	}
+}
+
+func TestWatcherDropsMovedFolderNamedLikeMusicFile(t *testing.T) {
+	moves := map[string]func(t *testing.T, folder string) error{
+		"removed": func(_ *testing.T, folder string) error { return os.RemoveAll(folder) },
+		"renamed out": func(t *testing.T, folder string) error {
+			return os.Rename(folder, filepath.Join(t.TempDir(), "Beats.mp3"))
+		},
+	}
+	for name, move := range moves {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			folder := filepath.Join(dir, "Beats.mp3")
+			if err := os.Mkdir(folder, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(folder, "a.mp3"))
+			h := startWatcher(t, dir)
+			if n := h.count(t); n != 1 {
+				t.Fatalf("indexed %d songs, want 1", n)
+			}
+
+			if err := move(t, folder); err != nil {
+				t.Fatal(err)
+			}
+
+			waitFor(t, 3*time.Second, "Beats.mp3/a.mp3 removed", func() bool { return h.count(t) == 0 })
+			time.Sleep(3 * h.w.settlePoll)
+			if n := h.removals.Load(); n != 1 {
+				t.Fatalf("OnRemoved fired %d times, want 1", n)
+			}
+		})
 	}
 }
 
@@ -648,14 +688,19 @@ func TestWatcherRegisterFileQueuesNewSongOnce(t *testing.T) {
 	}
 }
 
-// overflowHarness indexes a.mp3 and b.mp3 with a watcher that is never
-// started, so no fsnotify event is consumed, then deletes b.mp3, adds c.mp3
-// and adds sub/d.mp3 behind its back.
+// overflowGone lists the files overflowHarness deletes behind the watcher.
+var overflowGone = []string{"b.mp3", "e.mp3", "f.mp3"}
+
+// overflowHarness indexes and queues a.mp3 and overflowGone with a watcher
+// that is never started, so no fsnotify event is consumed, then deletes
+// overflowGone, adds c.mp3 and adds sub/d.mp3 behind its back.
 func overflowHarness(t *testing.T) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.mp3"))
-	writeFile(t, filepath.Join(dir, "b.mp3"))
+	for _, rel := range overflowGone {
+		writeFile(t, filepath.Join(dir, rel))
+	}
 	h := &harness{dir: dir, songs: repository.NewMemSongRepo()}
 	h.queue = repository.NewMemQueueRepo(h.songs)
 	h.mgr = queue.New(h.songs, played.New(100, 0.01), h.queue, queue.ManagerConfig{
@@ -666,15 +711,18 @@ func overflowHarness(t *testing.T) *harness {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() { w.fsWatcher.Close() }) // Start, which owns the close, never runs.
-	w.OnRemoved = func(_ []*models.Song) { h.removals.Add(1) }
+	w.OnRemoved = h.recordRemoval
 	w.settleWait = func(context.Context, string) error { return nil }
 	h.w = w
 	if _, err := w.ScanExisting(context.Background()); err != nil {
 		t.Fatalf("ScanExisting: %v", err)
 	}
+	h.queueAll(t)
 
-	if err := os.Remove(filepath.Join(dir, "b.mp3")); err != nil {
-		t.Fatal(err)
+	for _, rel := range overflowGone {
+		if err := os.Remove(filepath.Join(dir, rel)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	writeFile(t, filepath.Join(dir, "c.mp3"))
 	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
@@ -697,7 +745,7 @@ func TestOverflowResync(t *testing.T) {
 	h := overflowHarness(t)
 	ctx := context.Background()
 
-	// A second overflow while the first resync runs must not double-remove b.
+	// A second overflow while the first resync runs must not double-remove.
 	h.w.handleError(ctx, fsnotify.ErrEventOverflow)
 	h.w.handleError(ctx, fsnotify.ErrEventOverflow)
 	h.w.settling.Wait()
@@ -707,14 +755,35 @@ func TestOverflowResync(t *testing.T) {
 			t.Errorf("%s not indexed after resync", rel)
 		}
 	}
-	if h.indexed(t, "b.mp3") {
-		t.Error("deleted b.mp3 still indexed after resync")
+	for _, rel := range overflowGone {
+		if h.indexed(t, rel) {
+			t.Errorf("deleted %s still indexed after resync", rel)
+		}
 	}
 	if n := h.removals.Load(); n != 1 {
-		t.Errorf("OnRemoved fired %d times, want 1", n)
+		t.Errorf("OnRemoved fired %d times, want 1 for the whole sweep", n)
 	}
+	if n := h.removedSongs.Load(); n != int32(len(overflowGone)) {
+		t.Errorf("OnRemoved carried %d songs, want %d", n, len(overflowGone))
+	}
+	h.assertNotQueued(t, overflowGone...)
 	if sub := filepath.Join(h.dir, "sub"); !slices.Contains(h.w.fsWatcher.WatchList(), sub) {
 		t.Errorf("%s not watched after resync", sub)
+	}
+}
+
+// assertNotQueued fails if any song at a path relative to h.dir is queued.
+func (h *harness) assertNotQueued(t *testing.T, rels ...string) {
+	t.Helper()
+	items, err := h.mgr.ListQueue(context.Background())
+	if err != nil {
+		t.Fatalf("ListQueue: %v", err)
+	}
+	for _, rel := range rels {
+		id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(filepath.Join(h.dir, rel))).String()
+		if slices.ContainsFunc(items, func(it *models.QueueItem) bool { return it.SongID == id }) {
+			t.Errorf("%s still queued", rel)
+		}
 	}
 }
 
