@@ -400,9 +400,12 @@ test('player status stays in one live region from blocked to on air', async ({ p
   await expect(status).toHaveCount(1);
   await expect(status).toHaveAttribute('aria-live', 'polite');
   await expect(status).toContainText('click');
-  await page.getByRole('button', { name: 'Enable audio' }).click();
+  const deckToggle = page.getByRole('button', { name: 'Pause', exact: true });
+  await expect(deckToggle).toHaveAttribute('aria-pressed', 'true');
+  await deckToggle.click();
   await expect(status).toContainText('On air', {timeout: 10000});
   await expect(status).toHaveCount(1);
+  await expect(deckToggle).toHaveAttribute('aria-pressed', 'false');
 });
 
 type MediaHandlerWindow = Window & { __mediaHandlers: Record<string, () => void> };

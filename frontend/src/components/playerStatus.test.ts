@@ -47,9 +47,9 @@ test('paused does not override blocked or offline', () => {
   assert.equal(playerStatus('reconnecting', 'playing', true).label, 'Reconnecting');
 });
 
-test('the deck toggle enables audio while the browser blocks it', () => {
-  assert.deepEqual(playToggle('blocked', false), { action: 'enable', pressed: false });
-  assert.deepEqual(playToggle('blocked', true), { action: 'enable', pressed: false });
+test('the deck toggle reads as paused and enables audio while the browser blocks it', () => {
+  assert.deepEqual(playToggle('blocked', false), { action: 'enable', pressed: true });
+  assert.deepEqual(playToggle('blocked', true), { action: 'enable', pressed: true });
 });
 
 test('the deck toggle pauses and resumes while playing, pressed when paused', () => {

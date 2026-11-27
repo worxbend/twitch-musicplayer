@@ -33,9 +33,10 @@ export interface PlayToggle {
 }
 
 // The deck's play/pause toggle. Pressed mirrors the audio element's paused state,
-// so a media key and the button move it the same way.
+// so a media key and the button move it the same way. Audio the browser blocks
+// is not playing, so the toggle reads as paused and shows the play glyph.
 export function playToggle(playback: PlaybackStatus, paused: boolean): PlayToggle {
-  if (playback === 'blocked') return { action: 'enable', pressed: false };
+  if (playback === 'blocked') return { action: 'enable', pressed: true };
   if (playback === 'playing') return { action: 'toggle', pressed: paused };
   return { action: 'none', pressed: false };
 }
