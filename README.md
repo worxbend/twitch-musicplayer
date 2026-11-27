@@ -251,7 +251,7 @@ size it, done.
 
 Recolour any instrument, including the ambient scene, with
 `?ramp=SPECTRUM|AURORA|EMBER|NEON|VU` — for example `/bars?ramp=EMBER` or
-`/spectrum-overlay?ramp=NEON`. Scene switching preserves the selected ramp.
+`/spectrum-overlay?ramp=NEON`. Scene switching preserves the selected ramp and `?autoplay=`.
 
 `/now-playing` takes `?align=left|center|right`, `?size=12–120` (title size in px),
 `?hold=1–600` (seconds the title stays after each change, then fades), `?art=1` (embedded
