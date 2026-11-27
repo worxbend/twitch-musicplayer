@@ -23,7 +23,7 @@ backend:
 
 # Same steps as the CI frontend job.
 frontend:
-	cd frontend && npm ci && npm run typecheck && npm test && npm run build && test -f dist/config.js
+	cd frontend && npm ci && npm audit --omit=dev --audit-level=high && npm run typecheck && npm test && npm run build && test -f dist/config.js
 
 ui:
 	cd frontend && npm run test:ui

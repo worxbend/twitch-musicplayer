@@ -14,7 +14,8 @@
 
 ## 📄 Backend TOML
 
-Example: `backend/config.example.toml`.
+Copy the template `backend/config.example.toml` to `backend/config.toml`. `config.toml` is
+local and not tracked by git.
 
 ```toml
 [server]

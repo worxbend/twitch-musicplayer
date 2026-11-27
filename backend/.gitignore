@@ -42,3 +42,6 @@ main
 *.blocked.json
 .blocked-*
 music/
+
+# local config; copy from config.example.toml
+config.toml

@@ -263,13 +263,10 @@ func TestValidateDefaultsOK(t *testing.T) {
 	}
 }
 
+// config.toml is a local, untracked copy, so only the template is checked.
 func TestShippedConfigsValidate(t *testing.T) {
-	for _, name := range []string{"config.toml", "config.example.toml"} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := loadFrom(filepath.Join("..", "..", name), true, fakeEnv(nil)); err != nil {
-				t.Fatalf("loadFrom %s: %v", name, err)
-			}
-		})
+	if _, err := loadFrom(filepath.Join("..", "..", "config.example.toml"), true, fakeEnv(nil)); err != nil {
+		t.Fatalf("loadFrom config.example.toml: %v", err)
 	}
 }
 

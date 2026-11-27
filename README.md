@@ -321,7 +321,8 @@ naive linear crossfade dips by roughly 6 dB right at the seam. 🎚️
 
 ## ⚙️ Configuration
 
-Everything is set in `backend/config.toml`. Five keys also take an environment override
+Settings live in `backend/config.toml`, created by copying the template
+`backend/config.example.toml`. Five keys also take an environment override
 for containers: `PORT`, `MUSIC_DIR`, `BASE_URL`, `BLOOM_PATH` and `ALLOWED_ORIGINS`.
 `LOFI_CONFIG` picks the TOML file itself. Everything else (shuffle, queue, extensions, obs)
 is TOML-only — see [docs/configuration.md](docs/configuration.md).
@@ -407,6 +408,7 @@ make check              # toolchains, gofmt, go mod tidy -diff, go vet, staticch
 
 cd ../frontend
 npm ci
+npm audit --omit=dev --audit-level=high   # production deps: no high/critical advisories
 npm run typecheck       # typecheck src, tests and configs
 npm test                # unit tests, via node --test
 npm run build           # typecheck + production bundle
@@ -429,7 +431,7 @@ concurrency behaviour. 🧪
 
 - [ ] 💬 Twitch chat integration — song requests from viewers
 - [ ] 🗳️ Viewer voting to skip
-- [ ] 🖼️ Album art extraction from ID3 APIC frames
+- [x] 🖼️ Album art extraction from ID3 APIC frames
 - [ ] 🎛️ More visualizer scenes
 - [ ] 📻 Multiple simultaneous stations
 

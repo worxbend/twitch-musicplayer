@@ -43,6 +43,8 @@ make clean      # remove build artifacts
 ## ⚙️ Configuration
 
 The backend reads `config.toml` unless `LOFI_CONFIG` points at another TOML file.
+Copy it from the template `config.example.toml`; it is local and untracked. A missing
+`config.toml` means built-in defaults.
 Environment variables take precedence over TOML values:
 
 | Variable | Overrides | Default |

@@ -199,7 +199,7 @@ Run every CI gate from the repo root with one command:
 
 ```bash
 make check              # toolchain parity, lint, backend check, frontend
-                        # npm ci + typecheck + test + build
+                        # npm ci + audit + typecheck + test + build
 make ui                 # opt-in: Playwright (needs chromium installed)
 make docker-smoke       # opt-in: builds both images, runs scripts/docker-smoke.sh
                         # on ports 18081/13001 (override with SMOKE_BE_PORT=...
@@ -217,6 +217,7 @@ make -C backend check   # gofmt, go mod tidy -diff, go vet, staticcheck,
 ```bash
 cd frontend
 npm ci
+npm audit --omit=dev --audit-level=high   # production deps: no high/critical advisories
 npm run typecheck       # typecheck src, tests and configs
 npm test                # unit tests, via node --test
 npm run build           # typecheck + production bundle
