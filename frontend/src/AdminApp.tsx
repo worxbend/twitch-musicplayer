@@ -190,7 +190,15 @@ export function AdminApp() {
   }
   function connectWS() {
     if (disposed || (socket && socket.readyState <= WebSocket.OPEN)) return;
-    const ws = new WebSocket(getWebSocketURL());
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(getWebSocketURL());
+    } catch {
+      // A bad backend URL or a CSP block throws instead of firing onclose.
+      dropSocket();
+      scheduleReconnect();
+      return;
+    }
     socket = ws;
     ws.onopen = () => {
       reconnectAttempts = 0;

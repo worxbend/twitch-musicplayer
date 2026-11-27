@@ -43,7 +43,15 @@ export function NowPlayingOverlay(props: Props) {
 
   function connect() {
     if (!running) return;
-    const ws = new WebSocket(getWebSocketURL());
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(getWebSocketURL());
+    } catch {
+      // A bad backend URL or a CSP block throws instead of firing onclose.
+      socket = null;
+      scheduleReconnect();
+      return;
+    }
     socket = ws;
     ws.onopen = () => {
       reconnectAttempts = 0;

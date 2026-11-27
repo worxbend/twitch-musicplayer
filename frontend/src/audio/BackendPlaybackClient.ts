@@ -183,8 +183,18 @@ export class BackendPlaybackClient {
     if (this.connecting) return;
     if (this.socket && this.socket.readyState <= WebSocket.OPEN) return;
 
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(getWebSocketURL('player'));
+    } catch (error) {
+      // A bad backend URL or a CSP block throws here and fires no onclose, so
+      // the retry is scheduled here or the client would never connect again.
+      this.socket = null;
+      this.report({ connection: 'reconnecting' }, `radio connection failed: ${errorName(error)}`);
+      this.scheduleReconnect();
+      return;
+    }
     this.connecting = true;
-    const socket = new WebSocket(getWebSocketURL('player'));
     this.socket = socket;
     this.lastMessageAt = Date.now();
 
@@ -552,6 +562,10 @@ function detachSocket(socket: WebSocket) {
   socket.onmessage = null;
   socket.onclose = null;
   socket.onerror = null;
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : String(error);
 }
 
 /** Browsers reject play() with NotAllowedError under autoplay policy; AudioEngine mirrors that name. */

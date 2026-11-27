@@ -16,6 +16,8 @@ class FakeWebSocket {
   static readonly CLOSING = 2;
   static readonly CLOSED = 3;
   static instances: FakeWebSocket[] = [];
+  // Set to make the next constructor call throw, as a bad URL or a CSP block does.
+  static throwNext: Error | null = null;
 
   readyState = FakeWebSocket.CONNECTING;
   url: string;
@@ -26,6 +28,11 @@ class FakeWebSocket {
   onerror: (() => void) | null = null;
 
   constructor(url: string) {
+    const failure = FakeWebSocket.throwNext;
+    if (failure) {
+      FakeWebSocket.throwNext = null;
+      throw failure;
+    }
     this.url = url;
     FakeWebSocket.instances.push(this);
   }
@@ -143,6 +150,8 @@ beforeEach(() => {
 afterEach(() => {
   client.stop();
   mock.timers.reset();
+  FakeWebSocket.throwNext = null;
+  Object.assign(window, { __LOFI_CONFIG__: { backendUrl: 'http://localhost:8080' } });
 });
 
 function socket(index = FakeWebSocket.instances.length - 1) {
@@ -182,11 +191,75 @@ function internals() {
     outbox: unknown[];
     pendingPlay: { history_id: string } | null;
     queueOrSend: (message: unknown) => void;
+    requestSong: () => void;
   };
 }
 
 test('the player connects to /ws as role=player', () => {
   assert.ok(socket().url.endsWith('/ws?role=player'), socket().url);
+});
+
+// Restarts the client so its first connect() meets the given failure.
+function restartWithConstructorThrow(failure: Error) {
+  client.stop();
+  FakeWebSocket.instances = [];
+  statuses = [];
+  FakeWebSocket.throwNext = failure;
+  assert.doesNotThrow(() => client.start());
+}
+
+test('a WebSocket constructor throw reports reconnecting and does not escape start()', () => {
+  restartWithConstructorThrow(new DOMException('blocked', 'SecurityError'));
+
+  assert.equal(FakeWebSocket.instances.length, 0);
+  assert.equal(internals().connecting, false);
+  assert.deepEqual(statuses.at(-1), {
+    connection: 'reconnecting',
+    playback: 'idle',
+    message: 'radio connection failed: SecurityError',
+  });
+});
+
+test('a WebSocket constructor throw retries after the backoff and the new socket requests a song', () => {
+  restartWithConstructorThrow(new DOMException('bad scheme', 'SyntaxError'));
+
+  mock.timers.tick(899);
+  assert.equal(FakeWebSocket.instances.length, 0, 'no retry before the backoff');
+  mock.timers.tick(1);
+  assert.equal(FakeWebSocket.instances.length, 1);
+
+  socket().open();
+  assert.equal(statuses.at(-1)?.connection, 'connected');
+  assert.equal(needSongCount(socket()), 1);
+});
+
+test('a song request made while the constructor failed is flushed once on the next socket', () => {
+  restartWithConstructorThrow(new DOMException('blocked', 'SecurityError'));
+
+  internals().requestSong();
+  assert.equal(FakeWebSocket.instances.length, 0, 'the pending reconnect timer owns the retry');
+  mock.timers.tick(900);
+  socket().open();
+
+  assert.equal(needSongCount(socket()), 1);
+  assert.deepEqual(internals().outbox, []);
+});
+
+test('an invalid backendUrl takes the constructor-failure path and retries', () => {
+  client.stop();
+  FakeWebSocket.instances = [];
+  statuses = [];
+  Object.assign(window, { __LOFI_CONFIG__: { backendUrl: 'not a url' } });
+  assert.doesNotThrow(() => client.start());
+  assert.deepEqual(statuses.at(-1), {
+    connection: 'reconnecting',
+    playback: 'idle',
+    message: 'radio connection failed: TypeError',
+  });
+
+  Object.assign(window, { __LOFI_CONFIG__: { backendUrl: 'http://localhost:8080' } });
+  mock.timers.tick(900);
+  assert.equal(FakeWebSocket.instances.length, 1);
 });
 
 test('a play that settles after a newer one is ignored', async () => {
