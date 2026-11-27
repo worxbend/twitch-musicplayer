@@ -109,7 +109,8 @@ Broadcast to every client when a song starts, after its `play_song` was delivere
   "payload": {
     "song": { "id": "song-id", "title": "track", "artist": "" },
     "queue_depth": 0,
-    "history_id": "history-id"
+    "history_id": "history-id",
+    "elapsed_secs": 0
   }
 }
 ```
@@ -117,6 +118,12 @@ Broadcast to every client when a song starts, after its `play_song` was delivere
 `history_id` matches the `play_song.history_id` of that start. It is absent when the server
 re-announces the current song after its tags change, so the `/now-playing` overlay can
 re-show a repeated title on a new start (`?hold=N`) without re-showing it on a retag.
+
+`elapsed_secs` is how long the song has been playing, in seconds rounded to the millisecond,
+computed by the server when the frame is built: `0` on a start, the time since that start on
+a retag re-announce (a retag never resets it). It is approximate: measured from the
+`play_song` dispatch, not the audible start, and it may exceed `duration_secs` while the next
+song is pending, so clients clamp it. The `/now-playing?progress=1` bar is driven by it.
 
 ### `queue_updated`
 
@@ -209,6 +216,7 @@ which empties it.
   "type": "state",
   "payload": {
     "current_song": { "id": "...", "title": "...", "artist": "..." },
+    "elapsed_secs": 42.5,
     "queue_length": 1,
     "total_songs": 0,
     "next_song": { "id": "...", "title": "...", "artist": "..." }
@@ -219,7 +227,9 @@ which empties it.
 `total_songs` counts indexed songs in rotation; blocked songs are not counted. It matches
 `GET /v1/player`.
 
-`current_song` is omitted while nothing is playing. `next_song` follows the `queue_updated`
+`current_song` is omitted while nothing is playing. `elapsed_secs` is present exactly when
+`current_song` is, with the `now_playing` meaning, so a client that connects mid-track knows
+the position. `next_song` follows the `queue_updated`
 rule and is also in `GET /v1/player`. The counts are looked up on a context
 detached from the HTTP upgrade request, so they stay accurate after the handler returns.
 

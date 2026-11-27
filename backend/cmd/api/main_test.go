@@ -398,6 +398,8 @@ func TestLoadBlocklistReplacesCorruptFile(t *testing.T) {
 func TestOnSongUpdatedReannouncesCurrentSong(t *testing.T) {
 	tracker := player.NewStateTracker()
 	tracker.SetCurrentSong(&models.Song{ID: "a", Title: "old"})
+	const wait = 20 * time.Millisecond
+	time.Sleep(wait)
 	hub := &capturingBroadcaster{}
 	q := fakeQueueLister{items: []*models.QueueItem{{}, {}}}
 
@@ -412,6 +414,10 @@ func TestOnSongUpdatedReannouncesCurrentSong(t *testing.T) {
 	}
 	if got.Song.ID != "a" || got.Song.Title != "new" || got.QueueDepth != 2 {
 		t.Errorf("now_playing = %+v, want a/new depth 2", got)
+	}
+	// The retag keeps the original start, so elapsed is not reset to 0.
+	if got.ElapsedSecs == nil || *got.ElapsedSecs < wait.Seconds() || *got.ElapsedSecs > 60 {
+		t.Errorf("now_playing elapsed_secs = %v, want at least %v", got.ElapsedSecs, wait.Seconds())
 	}
 }
 

@@ -73,6 +73,9 @@ type NowPlayingPayload struct {
 	// and absent when the current song is re-announced after a retag, so
 	// overlays can tell a repeat play of the same title from a tag refresh.
 	HistoryID string `json:"history_id,omitempty"`
+	// ElapsedSecs is how long Song has been playing when the frame is built:
+	// 0 on a real start, the time since that start on a retag re-announce.
+	ElapsedSecs *float64 `json:"elapsed_secs,omitempty"`
 }
 
 // Error codes carried by ErrorPayload.Code. The set is closed: clients treat

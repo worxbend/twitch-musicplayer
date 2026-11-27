@@ -815,6 +815,15 @@ components:
         current_song:
           $ref: "#/components/schemas/Song"
           nullable: true
+        elapsed_secs:
+          type: number
+          format: double
+          minimum: 0
+          description: >-
+            Seconds since current_song started, computed by the server when the response is built and
+            rounded to the millisecond. Present exactly when current_song is. Approximate: measured from
+            the play_song dispatch, not the audible start, and may exceed duration_secs while the next
+            song is pending, so clients clamp it.
         queue_length:
           type: integer
         total_songs:

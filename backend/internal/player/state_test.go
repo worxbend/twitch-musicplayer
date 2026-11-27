@@ -289,7 +289,7 @@ func TestRetagSongIgnoresNonCurrentSong(t *testing.T) {
 	tr.SetCurrentSong(&models.Song{ID: "b", Title: "B"})
 
 	called := false
-	ok := tr.RetagSong(&models.Song{ID: "a", Title: "A2"}, func(models.Song) { called = true })
+	ok := tr.RetagSong(&models.Song{ID: "a", Title: "A2"}, func(models.Song, time.Duration) { called = true })
 
 	if ok || called {
 		t.Fatalf("RetagSong(non-current) = %v, announced = %v; want false, false", ok, called)
@@ -304,7 +304,7 @@ func TestRetagSongAnnouncesUpdatedCopy(t *testing.T) {
 	tr.SetCurrentSong(&models.Song{ID: "a", Title: "old"})
 
 	var announced models.Song
-	ok := tr.RetagSong(&models.Song{ID: "a", Title: "new"}, func(s models.Song) { announced = s })
+	ok := tr.RetagSong(&models.Song{ID: "a", Title: "new"}, func(s models.Song, _ time.Duration) { announced = s })
 
 	if !ok || announced.ID != "a" || announced.Title != "new" {
 		t.Fatalf("RetagSong = %v, announced %+v; want true, a/new", ok, announced)
@@ -419,7 +419,7 @@ func TestStartAndRetagAnnouncesStayOrdered(t *testing.T) {
 				}
 				retag := *cur
 				retag.Title = fmt.Sprintf("t%d-%d", w, i)
-				tr.RetagSong(&retag, func(s models.Song) { record(announcement{retag: true, id: s.ID}) })
+				tr.RetagSong(&retag, func(s models.Song, _ time.Duration) { record(announcement{retag: true, id: s.ID}) })
 			}
 		})
 	}
@@ -439,6 +439,78 @@ func TestStartAndRetagAnnouncesStayOrdered(t *testing.T) {
 		}
 		if a.id != started {
 			t.Fatalf("announcement %d retags %q after %q started", i, a.id, started)
+		}
+	}
+}
+
+// newSteppedClockTracker returns a tracker whose clock reads *at.
+func newSteppedClockTracker(at *time.Time) *StateTracker {
+	tr := NewStateTracker()
+	tr.now = func() time.Time { return *at }
+	return tr
+}
+
+func TestCurrentElapsedFollowsStartAndClear(t *testing.T) {
+	at := epoch
+	tr := newSteppedClockTracker(&at)
+
+	if song, elapsed := tr.CurrentElapsed(); song != nil || elapsed != 0 {
+		t.Fatalf("CurrentElapsed on empty tracker = %v, %v; want nil, 0", song, elapsed)
+	}
+	tr.SetCurrentSong(&models.Song{ID: "a"})
+	at = at.Add(42 * time.Second)
+	if song, elapsed := tr.CurrentElapsed(); song == nil || song.ID != "a" || elapsed != 42*time.Second {
+		t.Fatalf("CurrentElapsed = %v, %v; want a, 42s", song, elapsed)
+	}
+
+	tr.ClearCurrentSong()
+	if song, elapsed := tr.CurrentElapsed(); song != nil || elapsed != 0 {
+		t.Fatalf("CurrentElapsed after clear = %v, %v; want nil, 0", song, elapsed)
+	}
+}
+
+func TestRetagKeepsOriginalStart(t *testing.T) {
+	at := epoch
+	tr := newSteppedClockTracker(&at)
+	tr.SetCurrentSong(&models.Song{ID: "a", Title: "old"})
+	at = at.Add(30 * time.Second)
+
+	var announced time.Duration
+	tr.RetagSong(&models.Song{ID: "a", Title: "new"}, func(_ models.Song, elapsed time.Duration) { announced = elapsed })
+	at = at.Add(5 * time.Second)
+
+	if announced != 30*time.Second {
+		t.Errorf("retag announced elapsed %v, want 30s", announced)
+	}
+	if _, elapsed := tr.CurrentElapsed(); elapsed != 35*time.Second {
+		t.Errorf("CurrentElapsed after retag = %v, want 35s", elapsed)
+	}
+}
+
+func TestNewStartResetsElapsed(t *testing.T) {
+	at := epoch
+	tr := newSteppedClockTracker(&at)
+	tr.SetCurrentSong(&models.Song{ID: "a"})
+	at = at.Add(time.Minute)
+	tr.StartSong(&models.Song{ID: "b"}, nil)
+
+	if song, elapsed := tr.CurrentElapsed(); song.ID != "b" || elapsed != 0 {
+		t.Errorf("CurrentElapsed after new start = %s, %v; want b, 0", song.ID, elapsed)
+	}
+}
+
+func TestElapsedSecsRoundsToMillisAndClampsNegative(t *testing.T) {
+	for _, tc := range []struct {
+		in   time.Duration
+		want float64
+	}{
+		{0, 0},
+		{42*time.Second + 123456*time.Microsecond, 42.123},
+		{1499 * time.Microsecond, 0.001},
+		{-time.Second, 0},
+	} {
+		if got := ElapsedSecs(tc.in); got == nil || *got != tc.want {
+			t.Errorf("ElapsedSecs(%v) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 }

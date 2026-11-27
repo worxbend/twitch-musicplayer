@@ -195,10 +195,16 @@ Returns the authoritative playback snapshot:
 ```json
 {
   "current_song": { "id": "...", "title": "...", "artist": "..." },
+  "elapsed_secs": 42.5,
   "queue_length": 0,
   "total_songs": 0
 }
 ```
+
+`elapsed_secs` is present exactly when `current_song` is: seconds since that song started,
+computed by the server when the response is built and rounded to the millisecond. A retag
+does not reset it. It is approximate (measured from the `play_song` dispatch, not the audible
+start) and may exceed `duration_secs` while the next song is pending, so clients clamp it.
 
 `total_songs` counts indexed songs in rotation; blocked songs are not counted. It matches the
 websocket `state` frame.

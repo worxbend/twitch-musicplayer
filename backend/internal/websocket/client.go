@@ -172,7 +172,11 @@ func (e *Endpoint) checkOrigin(r *http.Request) bool {
 // broadcast when now-playing is cleared. Lookup
 // failures degrade to zero counts rather than withholding the whole snapshot.
 func (c *Client) snapshotState(ctx context.Context) models.PlayerState {
-	state := models.PlayerState{CurrentSong: c.stateTracker.GetCurrentSong()}
+	var state models.PlayerState
+	if song, elapsed := c.stateTracker.CurrentElapsed(); song != nil {
+		state.CurrentSong = song
+		state.ElapsedSecs = player.ElapsedSecs(elapsed)
+	}
 	if items, err := c.queueMgr.ListQueue(ctx); err == nil {
 		state.QueueLength = len(items)
 		state.NextSong = models.NextPlayableSong(items)
@@ -332,7 +336,7 @@ func (c *Client) sendNextSong(ctx context.Context) error {
 
 	// Broadcast to all peers so management UIs get live updates.
 	announce := func() {
-		if nowMsg, encErr := Encode(MsgNowPlaying, NowPlayingPayload{Song: *song, QueueDepth: queueDepth, HistoryID: payload.HistoryID}); encErr == nil {
+		if nowMsg, encErr := Encode(MsgNowPlaying, NowPlayingPayload{Song: *song, QueueDepth: queueDepth, HistoryID: payload.HistoryID, ElapsedSecs: player.ElapsedSecs(0)}); encErr == nil {
 			c.hub.Broadcast(nowMsg)
 		}
 		if queueMsg, encErr := QueueUpdatedMessage(items, "song_started"); encErr == nil {

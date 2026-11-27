@@ -75,6 +75,10 @@ func TestPlayerState(t *testing.T) {
 			if hasCurrent && cur["id"] != "c" {
 				t.Fatalf("current_song = %v", cur)
 			}
+			elapsed, hasElapsed := got["elapsed_secs"].(float64)
+			if hasElapsed != tt.wantCurrent || elapsed < 0 {
+				t.Fatalf("elapsed_secs = %v, want present and >= 0 exactly when current_song is (%v)", got["elapsed_secs"], got)
+			}
 			next, hasNext := got["next_song"].(map[string]any)
 			if hasNext != (tt.wantNext != "") || (hasNext && next["id"] != tt.wantNext) {
 				t.Fatalf("next_song = %v, want id %q", got["next_song"], tt.wantNext)

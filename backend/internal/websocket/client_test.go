@@ -253,7 +253,7 @@ func TestSendNextSongDeliversAndPublishes(t *testing.T) {
 				t.Fatalf("broadcast = %s, want %s", got.Type, want)
 			}
 			if want == MsgNowPlaying {
-				assertNowPlayingHistoryID(t, got, payload.HistoryID)
+				assertNowPlayingStart(t, got, payload.HistoryID)
 			}
 		default:
 			t.Fatalf("broadcast missing %s", want)
@@ -311,7 +311,43 @@ func TestConnectStateCarriesNextSong(t *testing.T) {
 	if err := conn.ReadJSON(&first); err != nil || first.Type != MsgState {
 		t.Fatalf("first frame = %+v, %v; want %s", first, err, MsgState)
 	}
-	assertNextSong(t, decodeObject(t, first), "b")
+	got := decodeObject(t, first)
+	assertNextSong(t, got, "b")
+	if elapsed, ok := got["elapsed_secs"]; ok {
+		t.Fatalf("idle state elapsed_secs = %v, want key absent", elapsed)
+	}
+}
+
+// A peer that connects mid-track gets the time since the song started, so an
+// overlay reloaded mid-track places its progress bar correctly.
+func TestConnectStateCarriesElapsedSecs(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+	tracker := player.NewStateTracker()
+	tracker.SetCurrentSong(&models.Song{ID: "a", DurationSecs: 180})
+	const wait = 20 * time.Millisecond
+	time.Sleep(wait)
+	srv := httptest.NewServer(&Endpoint{Hub: hub, QueueMgr: emptyQueueManager{}, StateTracker: tracker})
+	t.Cleanup(srv.Close)
+
+	conn, _, err := ws.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
+
+	var first Message
+	if err := conn.ReadJSON(&first); err != nil || first.Type != MsgState {
+		t.Fatalf("first frame = %+v, %v; want %s", first, err, MsgState)
+	}
+	var state models.PlayerState
+	if err := json.Unmarshal(first.Payload, &state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	if state.ElapsedSecs == nil || *state.ElapsedSecs < wait.Seconds() || *state.ElapsedSecs > 60 {
+		t.Fatalf("state elapsed_secs = %v, want at least %v", state.ElapsedSecs, wait.Seconds())
+	}
 }
 
 // decodeObject decodes msg's payload as a JSON object, so tests can tell an
@@ -342,9 +378,10 @@ func assertNextSong(t *testing.T, payload map[string]any, wantID string) {
 	}
 }
 
-// assertNowPlayingHistoryID checks that a now_playing broadcast carries the
-// play_song history_id, so overlays can tell a new start from a retag.
-func assertNowPlayingHistoryID(t *testing.T, msg Message, want string) {
+// assertNowPlayingStart checks that a now_playing broadcast carries the
+// play_song history_id, so overlays can tell a new start from a retag, and an
+// elapsed_secs of 0, so progress bars restart.
+func assertNowPlayingStart(t *testing.T, msg Message, want string) {
 	t.Helper()
 	var now NowPlayingPayload
 	if err := json.Unmarshal(msg.Payload, &now); err != nil {
@@ -352,6 +389,9 @@ func assertNowPlayingHistoryID(t *testing.T, msg Message, want string) {
 	}
 	if want == "" || now.HistoryID != want {
 		t.Fatalf("now_playing history_id = %q, want play_song's %q (non-empty)", now.HistoryID, want)
+	}
+	if now.ElapsedSecs == nil || *now.ElapsedSecs != 0 {
+		t.Fatalf("now_playing elapsed_secs = %v, want 0", now.ElapsedSecs)
 	}
 }
 

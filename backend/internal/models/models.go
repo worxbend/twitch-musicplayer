@@ -57,8 +57,13 @@ func NextPlayableSong(items []*QueueItem) *Song {
 // PlayerState is the snapshot of current playback state sent over WebSocket.
 type PlayerState struct {
 	CurrentSong *Song `json:"current_song,omitempty"`
-	QueueLength int   `json:"queue_length"`
-	TotalSongs  int   `json:"total_songs"`
+	// ElapsedSecs is how long CurrentSong has been playing, computed by the
+	// server when the snapshot is built and rounded to the millisecond. It is
+	// set exactly when CurrentSong is, and may exceed its duration_secs while
+	// the next song is pending.
+	ElapsedSecs *float64 `json:"elapsed_secs,omitempty"`
+	QueueLength int      `json:"queue_length"`
+	TotalSongs  int      `json:"total_songs"`
 	// NextSong is the first playable queued song, absent when none is queued.
 	NextSong *Song `json:"next_song,omitempty"`
 }

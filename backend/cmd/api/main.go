@@ -286,7 +286,8 @@ func broadcastQueueUpdated(ctx context.Context, hub broadcaster, q queueLister, 
 
 // onSongUpdated handles a retag: when song is still the current song it
 // re-announces it so overlays and the admin console show the new metadata at
-// once, then reports the queue change. The queue depth is read first, outside
+// once, with the time elapsed since its original start, then reports the
+// queue change. The queue depth is read first, outside
 // the tracker's announce lock; the update and its now_playing frame then run
 // under that lock, so the frame cannot land after a newer song start.
 func onSongUpdated(ctx context.Context, tracker *player.StateTracker, hub broadcaster, q queueLister, song *models.Song) {
@@ -294,8 +295,12 @@ func onSongUpdated(ctx context.Context, tracker *player.StateTracker, hub broadc
 	if err != nil {
 		log.Printf("list queue for now_playing: %v", err)
 	}
-	tracker.RetagSong(song, func(updated models.Song) {
-		msg, err := websocket.Encode(websocket.MsgNowPlaying, websocket.NowPlayingPayload{Song: updated, QueueDepth: len(items)})
+	tracker.RetagSong(song, func(updated models.Song, elapsed time.Duration) {
+		msg, err := websocket.Encode(websocket.MsgNowPlaying, websocket.NowPlayingPayload{
+			Song:        updated,
+			QueueDepth:  len(items),
+			ElapsedSecs: player.ElapsedSecs(elapsed),
+		})
 		if err != nil {
 			log.Printf("encode now_playing: %v", err)
 			return

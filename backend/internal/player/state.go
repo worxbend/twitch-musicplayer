@@ -26,15 +26,17 @@ type PlayEntry struct {
 // change hook runs outside mu and may call back in.
 //
 // startSeq counts song starts. A retag replaces currentSong but keeps
-// startSeq, so it tells a new start from a metadata update.
+// startSeq and currentStartedAt, so it tells a new start from a metadata
+// update and does not reset the elapsed time.
 type StateTracker struct {
-	announceMu  sync.Mutex
-	mu          sync.RWMutex
-	currentSong *models.Song
-	startSeq    uint64
-	history     []PlayEntry // oldest first, at most MaxHistory entries
-	now         func() time.Time
-	onChange    func(*models.Song)
+	announceMu       sync.Mutex
+	mu               sync.RWMutex
+	currentSong      *models.Song
+	currentStartedAt time.Time // zero when no song is current
+	startSeq         uint64
+	history          []PlayEntry // oldest first, at most MaxHistory entries
+	now              func() time.Time
+	onChange         func(*models.Song)
 }
 
 func NewStateTracker() *StateTracker { return &StateTracker{now: time.Now} }
@@ -74,7 +76,7 @@ func (t *StateTracker) ClearCurrentSong() bool {
 // history entry is updated too when it is the same song. It returns whether
 // anything changed, and runs the change hook outside the lock when it did.
 func (t *StateTracker) UpdateSong(song *models.Song) bool {
-	updated, hook, ok := t.update(song)
+	updated, _, hook, ok := t.update(song)
 	if ok {
 		runHook(hook, &updated)
 	}
@@ -98,13 +100,15 @@ func (t *StateTracker) StartSong(song *models.Song, announce func()) {
 }
 
 // RetagSong is UpdateSong followed, when it changed the song, by announce with
-// the updated copy, ordered and constrained like StartSong. A retag of a song
-// that is no longer current returns false and announces nothing.
-func (t *StateTracker) RetagSong(song *models.Song, announce func(models.Song)) bool {
+// the updated copy and the time elapsed since the song started, ordered and
+// constrained like StartSong. A retag keeps the original start, so elapsed is
+// never reset. A retag of a song that is no longer current returns false and
+// announces nothing.
+func (t *StateTracker) RetagSong(song *models.Song, announce func(models.Song, time.Duration)) bool {
 	t.announceMu.Lock()
-	updated, hook, ok := t.update(song)
+	updated, elapsed, hook, ok := t.update(song)
 	if ok && announce != nil {
-		announce(updated)
+		announce(updated, elapsed)
 	}
 	t.announceMu.Unlock()
 	if ok {
@@ -153,9 +157,11 @@ func (t *StateTracker) setCurrent(song *models.Song) func(*models.Song) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.currentSong = song
+	t.currentStartedAt = time.Time{}
 	if song != nil {
 		t.startSeq++
-		t.history = append(t.history, PlayEntry{Song: *song, StartedAt: t.now()})
+		t.currentStartedAt = t.now()
+		t.history = append(t.history, PlayEntry{Song: *song, StartedAt: t.currentStartedAt})
 		if excess := len(t.history) - MaxHistory; excess > 0 {
 			t.history = t.history[excess:]
 		}
@@ -187,23 +193,30 @@ func (t *StateTracker) clearLocked() (func(*models.Song), bool) {
 		return nil, false
 	}
 	t.currentSong = nil
+	t.currentStartedAt = time.Time{}
 	return t.onChange, true
 }
 
-// update applies UpdateSong under mu and returns the stored copy, the change
-// hook and whether anything changed.
-func (t *StateTracker) update(song *models.Song) (models.Song, func(*models.Song), bool) {
+// update applies UpdateSong under mu and returns the stored copy, the time
+// elapsed since its start, the change hook and whether anything changed.
+func (t *StateTracker) update(song *models.Song) (models.Song, time.Duration, func(*models.Song), bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if song == nil || t.currentSong == nil || t.currentSong.ID != song.ID {
-		return models.Song{}, nil, false
+		return models.Song{}, 0, nil, false
 	}
 	updated := *song
 	t.currentSong = &updated
 	if last := len(t.history) - 1; last >= 0 && t.history[last].Song.ID == song.ID {
 		t.history[last].Song = updated
 	}
-	return updated, t.onChange, true
+	return updated, t.elapsedLocked(), t.onChange, true
+}
+
+// elapsedLocked is the time since the current song started. The caller must
+// hold mu and have checked that a song is current.
+func (t *StateTracker) elapsedLocked() time.Duration {
+	return t.now().Sub(t.currentStartedAt)
 }
 
 func (t *StateTracker) GetCurrentSong() *models.Song {
@@ -218,6 +231,27 @@ func (t *StateTracker) CurrentStart() (*models.Song, uint64) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.currentSong, t.startSeq
+}
+
+// CurrentElapsed returns the current song, nil when none, and the time since
+// it started. Elapsed is 0 when no song is current. It is measured from the
+// start recorded by SetCurrentSong or StartSong, so it may run past the
+// song's duration while the next song is pending.
+func (t *StateTracker) CurrentElapsed() (*models.Song, time.Duration) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.currentSong == nil {
+		return nil, 0
+	}
+	return t.currentSong, t.elapsedLocked()
+}
+
+// ElapsedSecs converts elapsed to seconds rounded to the millisecond, as the
+// elapsed_secs field of the state and now_playing payloads. A negative
+// elapsed (clock step back) is reported as 0.
+func ElapsedSecs(elapsed time.Duration) *float64 {
+	secs := max(elapsed, 0).Round(time.Millisecond).Seconds()
+	return &secs
 }
 
 // History returns up to limit recorded starts, newest first, in a new slice.

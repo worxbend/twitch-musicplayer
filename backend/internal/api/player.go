@@ -117,10 +117,10 @@ func (h *PlayerHandler) State(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := models.PlayerState{
-		CurrentSong: h.stateTracker.GetCurrentSong(),
-		TotalSongs:  totalSongs,
-		QueueLength: queueLength,
+	state := models.PlayerState{TotalSongs: totalSongs, QueueLength: queueLength}
+	if song, elapsed := h.stateTracker.CurrentElapsed(); song != nil {
+		state.CurrentSong = song
+		state.ElapsedSecs = player.ElapsedSecs(elapsed)
 	}
 	// next_song is optional: a failed queue read omits it instead of failing.
 	if items, err := h.skipSource.ListQueue(ctx); err == nil {
