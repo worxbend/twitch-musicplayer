@@ -305,6 +305,63 @@ for (const [name, extra] of [['false', { has_cover: false }], ['absent', {}]] as
   });
 }
 
+function retag(id: string, song: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return {
+    type: 'now_playing',
+    payload: { song: { id, title: id, filename: `${id}.mp3`, ...song }, queue_depth: 0, elapsed_secs: 12, ...extra },
+  };
+}
+
+test('a retag of the song on screen shows its new title, artist and cover at once', async () => {
+  await startedSong({ has_cover: true, artist: 'Old' });
+  const reports = statuses.length;
+
+  socket().message(retag('a 1', { title: 'New', artist: 'Cat', has_cover: true }));
+
+  assert.deepEqual(songs.at(-1), { title: 'New', artist: 'Cat', coverUrl: 'http://localhost:8080/v1/songs/a%201/cover' });
+  assert.equal(statuses.length, reports, 'a retag does not re-report playback');
+  assert.equal(audio.plays.length, 1, 'a retag does not restart the stream');
+});
+
+test('a retag with an empty title falls back to the filename', async () => {
+  await startedSong({});
+  socket().message(retag('a 1', { title: '' }));
+  assert.equal(songs.at(-1)?.title, 'a 1.mp3');
+});
+
+test('a restart after a retag keeps the new title', async () => {
+  await startedSong({});
+  socket().message(retag('a 1', { title: 'New' }));
+
+  audio.plays[0].callbacks.onError();
+  mock.timers.tick(5000);
+
+  assert.equal(audio.plays.length, 2);
+  assert.equal(audio.plays[1].name, 'New');
+});
+
+for (const [name, frame] of [
+  ['a now_playing with a history_id (a real start)', retag('a 1', { title: 'New' }, { history_id: 'h-a 1' })],
+  ['a now_playing for another song', retag('b', { title: 'New' })],
+  ['a now_playing without a valid song', { type: 'now_playing', payload: { song: { id: 'a 1', title: 'New' } } }],
+] as const) {
+  test(`${name} is ignored`, async () => {
+    await startedSong({});
+    const shown = songs.length;
+    socket().message(frame);
+    assert.equal(songs.length, shown);
+  });
+}
+
+test('a retag after the title cleared is ignored', async () => {
+  await startedSong({});
+  audio.plays[0].callbacks.onEnded();
+  assert.equal(songs.at(-1), null);
+
+  socket().message(retag('a 1', { title: 'New' }));
+  assert.equal(songs.at(-1), null);
+});
+
 test('a stale play failure does not report over the newer play', async () => {
   socket().open();
   socket().message(playSong('a'));

@@ -13,7 +13,8 @@ type MessageType =
   | 'error'
   | 'heartbeat_ack'
   | 'state'
-  | 'skip_now';
+  | 'skip_now'
+  | 'now_playing';
 
 interface SocketMessage<T = unknown> {
   type: MessageType;
@@ -32,6 +33,12 @@ interface PlaySongPayload {
   song: Song;
   stream_url: string;
   history_id: string;
+}
+
+// A start or a retag re-announce of the current song; only retags (no history_id) are used.
+interface NowPlayingPayload {
+  song: Song;
+  history_id?: unknown;
 }
 
 // `code` is checked by parseErrorCode, so a newer or older backend still parses.
@@ -100,6 +107,7 @@ const messageTypes = new Set<MessageType>([
   'heartbeat_ack',
   'state',
   'skip_now',
+  'now_playing',
 ]);
 
 export class BackendPlaybackClient {
@@ -137,6 +145,8 @@ export class BackendPlaybackClient {
   // history_id of the song whose title is on screen; it can outlive `current`
   // through the near-end handoff, while the old track is still audible.
   private displayedHistoryId: string | null = null;
+  // Song id of that title, matched by a retag re-announce.
+  private displayedSongId: string | null = null;
   // Server error held back while a track that finished early is still audible.
   private deferredError: ServerError | null = null;
   // Reports the deferred error if the tail never fires onEnded (stalled or silent element).
@@ -333,6 +343,9 @@ export class BackendPlaybackClient {
         this.awaitingSong = false;
         this.requestSong();
         break;
+      case 'now_playing':
+        if (isNowPlayingPayload(msg.payload) && isRetag(msg.payload)) this.applyRetag(msg.payload.song);
+        break;
       case 'error': {
         if (msg.payload !== undefined && !isErrorPayload(msg.payload)) return;
         this.awaitingSong = false;
@@ -364,7 +377,7 @@ export class BackendPlaybackClient {
     this.playInFlight = true;
     this.finishedInFlight = null;
     this.pendingPlay = payload;
-    const songName = payload.song.title || payload.song.filename;
+    const songName = displayTitle(payload.song);
 
     try {
       await this.audio.playStream(resolveStreamURL(payload.stream_url), songName, {
@@ -377,13 +390,10 @@ export class BackendPlaybackClient {
         onStarted: () => {
           if (token !== this.playToken) return;
           this.displayedHistoryId = payload.history_id;
+          this.displayedSongId = payload.song.id;
           this.deferredError = null;
           this.cancelTailFallback();
-          this.onSongChange?.({
-            title: songName,
-            artist: payload.song.artist,
-            coverUrl: payload.song.has_cover === true ? coverURL(payload.song.id) : undefined,
-          });
+          this.onSongChange?.(songInfo(payload.song));
           this.report({ playback: 'playing' }, 'playing');
         },
       });
@@ -586,8 +596,19 @@ export class BackendPlaybackClient {
     this.requestSong();
   }
 
+  // A retag of the song on screen shows its new tags at once, and a later
+  // retry or restart of it keeps them. Playback state is left alone.
+  private applyRetag(song: Song) {
+    if (this.displayedSongId === null || song.id !== this.displayedSongId) return;
+    this.onSongChange?.(songInfo(song));
+    for (const play of [this.current, this.pendingPlay]) {
+      if (play?.song.id === song.id) play.song = song;
+    }
+  }
+
   private clearDisplayedSong() {
     this.displayedHistoryId = null;
+    this.displayedSongId = null;
     this.onSongChange?.(null);
   }
 
@@ -693,16 +714,39 @@ function isSocketMessage(value: unknown): value is SocketMessage {
   return typeof value.type === 'string' && messageTypes.has(value.type as MessageType);
 }
 
-function isPlaySongPayload(value: unknown): value is PlaySongPayload {
-  if (!isRecord(value) || !isRecord(value.song)) return false;
+function displayTitle(song: Song): string {
+  return song.title || song.filename;
+}
+
+function songInfo(song: Song): SongInfo {
+  return {
+    title: displayTitle(song),
+    artist: song.artist,
+    coverUrl: song.has_cover === true ? coverURL(song.id) : undefined,
+  };
+}
+
+function isSong(value: unknown): value is Song {
   return (
-    typeof value.song.id === 'string' &&
-    typeof value.song.title === 'string' &&
-    typeof value.song.filename === 'string' &&
-    (value.song.artist === undefined || typeof value.song.artist === 'string') &&
-    typeof value.stream_url === 'string' &&
-    typeof value.history_id === 'string'
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.title === 'string' &&
+    typeof value.filename === 'string' &&
+    (value.artist === undefined || typeof value.artist === 'string')
   );
+}
+
+function isPlaySongPayload(value: unknown): value is PlaySongPayload {
+  return isRecord(value) && isSong(value.song) && typeof value.stream_url === 'string' && typeof value.history_id === 'string';
+}
+
+function isNowPlayingPayload(value: unknown): value is NowPlayingPayload {
+  return isRecord(value) && isSong(value.song);
+}
+
+/** A now_playing without a history_id re-announces a retag; real starts arrive via play_song. */
+function isRetag(payload: NowPlayingPayload): boolean {
+  return typeof payload.history_id !== 'string' || payload.history_id === '';
 }
 
 function isErrorPayload(value: unknown): value is ErrorPayload {
