@@ -37,15 +37,18 @@ ui:
 	$(call need,npm,$(NPM_HINT))
 	cd frontend && npm run test:ui
 
-# Builds both images, smokes them on spare ports and removes the tags even
-# when a step fails.
+# Builds both images, smokes them and the compose hardening on spare ports
+# and removes the tags even when a step fails.
 docker-smoke:
 	$(call need,docker,install Docker with BuildKit)
+	$(call need,jq,install jq)
 	status=0; \
 	docker build -t $(SMOKE_BE_IMAGE) backend \
 	  && docker build -t $(SMOKE_FE_IMAGE) frontend \
 	  && SMOKE_BE_PORT=$(SMOKE_BE_PORT) SMOKE_FE_PORT=$(SMOKE_FE_PORT) \
 	     bash scripts/docker-smoke.sh $(SMOKE_BE_IMAGE) $(SMOKE_FE_IMAGE) \
+	  && SMOKE_BE_PORT=$(SMOKE_BE_PORT) SMOKE_FE_PORT=$(SMOKE_FE_PORT) \
+	     bash scripts/compose-smoke.sh $(SMOKE_BE_IMAGE) $(SMOKE_FE_IMAGE) \
 	  || status=$$?; \
 	docker rmi $(SMOKE_BE_IMAGE) $(SMOKE_FE_IMAGE) >/dev/null 2>&1 || true; \
 	exit $$status

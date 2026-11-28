@@ -159,30 +159,9 @@ jobs:
       # Local equivalent: make docker-smoke
       - name: smoke images
         run: bash scripts/docker-smoke.sh lofi-backend:ci lofi-frontend:ci
+      # Local equivalent: make docker-smoke
       - name: smoke compose hardening
-        run: |
-          set -euo pipefail
-          docker tag lofi-backend:ci lofi-radio-backend:local
-          docker tag lofi-frontend:ci lofi-radio-frontend:local
-          mkdir -p "$RUNNER_TEMP/music"
-          MUSIC_DIR="$RUNNER_TEMP/music" BACKEND_PORT=18080 FRONTEND_PORT=13000 \
-            docker compose -f docker-compose.yml up -d --no-build --pull never --wait --wait-timeout 120
-          be="$(docker compose -f docker-compose.yml ps -q backend)"
-          fe="$(docker compose -f docker-compose.yml ps -q frontend)"
-          test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$be")" = true
-          docker inspect -f '{{.HostConfig.CapDrop}}' "$be" | grep -w ALL
-          test "$(docker inspect -f '{{.State.Health.Status}}' "$be")" = healthy
-          test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$fe")" = true
-          docker inspect -f '{{.HostConfig.CapDrop}}' "$fe" | grep -w ALL
-          docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$fe" | grep -F '"no-new-privileges:true"'
-          test "$(docker inspect -f '{{.State.Health.Status}}' "$fe")" = healthy
-          curl -fsS -o /dev/null http://127.0.0.1:13000/config.js
-      - name: container logs
-        if: failure()
-        run: docker compose -f docker-compose.yml logs || true
-      - name: tear down compose
-        if: always()
-        run: docker compose -f docker-compose.yml down -v || true
+        run: bash scripts/compose-smoke.sh lofi-backend:ci lofi-frontend:ci
 
   # Native arm64 runner, no QEMU: npm ci installs the arm64 musl optional deps
   # (TS7 native compiler) and the Go build targets arm64 for real.

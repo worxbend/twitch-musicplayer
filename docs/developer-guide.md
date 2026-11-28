@@ -202,6 +202,8 @@ make check              # toolchain parity, lint, backend check, frontend
                         # npm ci + audit + typecheck + test + build
 make ui                 # opt-in: Playwright (needs chromium installed)
 make docker-smoke       # opt-in: builds both images, runs scripts/docker-smoke.sh
+                        # and scripts/compose-smoke.sh (hub/local compose
+                        # hardening parity, then docker-compose.yml hardening)
                         # on ports 18081/13001 (override with SMOKE_BE_PORT=...
                         # SMOKE_FE_PORT=...), then removes the images
 ```
@@ -234,11 +236,16 @@ bash scripts/lint.sh    # actionlint over workflows, shellcheck over scripts/ an
 bash scripts/docker-smoke.sh BACKEND_IMAGE FRONTEND_IMAGE
                         # hardened-container smoke of built images; ports via
                         # SMOKE_BE_PORT / SMOKE_FE_PORT (default 8080 / 3000), needs node
+bash scripts/compose-smoke.sh BACKEND_IMAGE FRONTEND_IMAGE
+                        # fails when docker-compose.hub.yml hardening drifts from
+                        # docker-compose.yml, then starts docker-compose.yml with
+                        # the images under its own project; ports via SMOKE_BE_PORT /
+                        # SMOKE_FE_PORT (default 18082 / 13002), needs jq
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same gates in six jobs: `backend`, `frontend`,
 `ui` (Playwright), `lint` (`scripts/lint.sh`), `docker` (compose validation, image builds,
-`scripts/docker-smoke.sh` and a compose hardening check) and `docker-arm64` (native arm64
+`scripts/docker-smoke.sh` and `scripts/compose-smoke.sh`) and `docker-arm64` (native arm64
 image builds on an arm64 runner, an architecture check and the same smoke script).
 
 The product site has its own workflow (`.github/workflows/pages.yml`). `make site` runs the
