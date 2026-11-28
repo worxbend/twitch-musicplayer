@@ -9,6 +9,10 @@ if ! command -v go >/dev/null 2>&1; then
   echo "lint: go is required to run actionlint" >&2
   exit 1
 fi
+if ! command -v shellcheck >/dev/null 2>&1; then
+  echo "lint: shellcheck 0.11.0 is required; install it from your package manager or https://github.com/koalaman/shellcheck/releases" >&2
+  exit 1
+fi
 
 shellcheck -S warning scripts/*.sh
 # The nginx image runs this hook under /bin/sh.

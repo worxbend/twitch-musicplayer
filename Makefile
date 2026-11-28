@@ -11,6 +11,11 @@ SMOKE_FE_IMAGE ?= lofi-frontend:smoke-local
 SMOKE_BE_PORT ?= 18081
 SMOKE_FE_PORT ?= 13001
 
+# $(call need,TOOL,HINT): fail with HINT instead of a cryptic shell error when
+# TOOL is not on PATH.
+need = @command -v $(1) >/dev/null 2>&1 || { echo "make: $(1) not found on PATH; $(2)" >&2; exit 127; }
+NPM_HINT := install Node per frontend/.nvmrc, e.g. nvm use
+
 check: toolchains lint backend frontend
 
 toolchains:
@@ -20,18 +25,22 @@ lint:
 	bash scripts/lint.sh
 
 backend:
+	$(call need,go,install Go (see backend/go.mod toolchain))
 	$(MAKE) -C backend check
 
 # Same steps as the CI frontend job.
 frontend:
+	$(call need,npm,$(NPM_HINT))
 	cd frontend && npm ci && npm audit --omit=dev --audit-level=high && npm run typecheck && npm test && npm run build && test -f dist/config.js
 
 ui:
+	$(call need,npm,$(NPM_HINT))
 	cd frontend && npm run test:ui
 
 # Builds both images, smokes them on spare ports and removes the tags even
 # when a step fails.
 docker-smoke:
+	$(call need,docker,install Docker with BuildKit)
 	status=0; \
 	docker build -t $(SMOKE_BE_IMAGE) backend \
 	  && docker build -t $(SMOKE_FE_IMAGE) frontend \
@@ -44,7 +53,8 @@ docker-smoke:
 # Builds the product site into a temp dir like pages.yml, checks it and removes
 # the dir even when a step fails.
 site:
-	@command -v cwebp >/dev/null 2>&1 || { echo 'make site: cwebp not found; install the webp package' >&2; exit 127; }
+	$(call need,cwebp,install the webp package)
+	$(call need,node,$(NPM_HINT))
 	out=$$(mktemp -d); status=0; \
 	bash scripts/site.sh build "$$out" && bash scripts/site.sh check "$$out" || status=$$?; \
 	rm -rf "$$out"; \
