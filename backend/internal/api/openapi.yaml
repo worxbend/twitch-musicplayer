@@ -608,8 +608,9 @@ paths:
       description: >
         Returns the current song as one plain-text line for chat bots
         (Nightbot `$(urlfetch)`, StreamElements `${customapi}`). The line uses
-        `obs.now_playing_format` (default `{artist} - {title}`); a song without
-        an artist renders just its title, and control characters in tags become
+        `obs.now_playing_format` (default `{artist} - {title}`), or the
+        `format` query parameter when given; a song without an artist renders
+        just its title, and control characters in tags and in the format become
         spaces.
         While nothing is playing the body is the `idle` text, or empty when
         `idle` is absent. There is no trailing newline, and the response is
@@ -630,6 +631,20 @@ paths:
             type: string
             maxLength: 200
             example: Radio is idle
+        - name: format
+          in: query
+          required: false
+          description: >
+            Overrides `obs.now_playing_format` for this request, with the same
+            `{title}`, `{artist}` and `{album}` placeholders. It must contain
+            `{title}` or `{artist}`. Surrounding whitespace is trimmed, and an
+            empty value uses the config format. It is validated on every
+            request: over 200 characters or without a placeholder returns 400
+            even while idle.
+          schema:
+            type: string
+            maxLength: 200
+            example: "{title} by {artist}"
       responses:
         "200":
           description: Current song line, or the idle text (empty without `idle`) when idle
@@ -644,7 +659,9 @@ paths:
                 type: string
                 example: Nujabes - Aruarian Dance
         "400":
-          description: idle is longer than 200 characters
+          description: >
+            idle is longer than 200 characters, format is longer than 200
+            characters, or format contains neither `{title}` nor `{artist}`
           content:
             application/json:
               schema:

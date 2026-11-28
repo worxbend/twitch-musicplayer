@@ -14,6 +14,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	_ "github.com/joho/godotenv/autoload"
+
+	"lofi-radio-backend/internal/player"
 )
 
 // Config holds the complete runtime configuration for the service.
@@ -225,7 +227,7 @@ func (c *Config) Validate() error {
 // file is set.
 func checkOBS(obs OBSConfig) []error {
 	var errs []error
-	if !strings.Contains(obs.NowPlayingFormat, "{title}") && !strings.Contains(obs.NowPlayingFormat, "{artist}") {
+	if !player.HasNowPlayingPlaceholder(obs.NowPlayingFormat) {
 		errs = append(errs, fmt.Errorf("obs.now_playing_format: %q must contain {title} or {artist}", obs.NowPlayingFormat))
 	}
 	if obs.NowPlayingFile == "" {

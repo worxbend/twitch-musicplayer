@@ -143,7 +143,7 @@ now_playing_format = "{artist} - {title}"
 | Key | Default | Meaning |
 |:--|:--|:--|
 | `now_playing_file` | `""` (off) | File to rewrite on every song change and when the current song is retagged. `~` expands to your home. The directory must exist, and the path must not be a directory itself. |
-| `now_playing_format` | `{artist} - {title}` | Text template. Placeholders: `{title}`, `{artist}`, `{album}`. Also drives [`GET /v1/now-playing.txt`](api.md), so it is validated even when `now_playing_file` is empty. |
+| `now_playing_format` | `{artist} - {title}` | Text template. Placeholders: `{title}`, `{artist}`, `{album}`. Also drives [`GET /v1/now-playing.txt`](api.md), so it is validated even when `now_playing_file` is empty; that endpoint can override it per request with `?format=`. |
 
 - A song with no artist tag writes just its title, so no stray ` - ` appears. Line breaks
   in tags become spaces, so the text stays on one line.

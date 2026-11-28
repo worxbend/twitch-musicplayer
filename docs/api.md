@@ -247,6 +247,14 @@ tab and Unicode line/paragraph separators) become spaces and surrounding whitesp
 trimmed. It may be at most 200 characters; a longer value returns
 `400 {"error":"idle must be at most 200 characters"}`, even while a song plays.
 
+`?format=` overrides `obs.now_playing_format` for this request, with the same `{title}`,
+`{artist}` and `{album}` placeholders, so a chat command can use its own wording without a
+config change. Surrounding whitespace is trimmed and an empty value uses the config format;
+control characters in it become spaces. It is validated on every request, even while idle:
+over 200 characters returns `400 {"error":"format must be at most 200 characters"}`, and a
+format with neither `{title}` nor `{artist}` returns
+`400 {"error":"format must contain {title} or {artist}"}`.
+
 Chat bots and overlays must call the backend address (`BASE_URL`, port `8080` by
 default), not the frontend. The frontend port answers every `/v1/*` path and `/ws` with
 `404 {"error":"not_found","detail":"..."}` instead of the player page.
@@ -261,6 +269,15 @@ StreamElements: !song  ->  Now playing: ${customapi.https://radio.example.com/v1
 These commands prefix `Now playing: `, so idle text appears after it. With
 `https://radio.example.com/v1/now-playing.txt?idle=nothing%20right%20now` an idle radio
 answers `Now playing: nothing right now`.
+
+A Nightbot command with its own format (placeholders must be URL-encoded: `{` is `%7B`,
+`}` is `%7D`, a space is `%20`):
+
+```text
+Nightbot:      !song  ->  $(urlfetch https://radio.example.com/v1/now-playing.txt?format=%7Btitle%7D%20by%20%7Bartist%7D&idle=Offline)
+```
+
+It answers `Aruarian Dance by Nujabes`, or `Offline` while idle.
 
 ## 🕰️ History
 

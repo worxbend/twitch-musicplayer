@@ -21,6 +21,9 @@ const defaultHistoryLimit = 20
 // maxIdleTextRunes caps the ?idle= fallback text of GET /v1/now-playing.txt.
 const maxIdleTextRunes = 200
 
+// maxNowPlayingFormatRunes caps the ?format= template of GET /v1/now-playing.txt.
+const maxNowPlayingFormatRunes = 200
+
 type playerQueueRepo interface {
 	Count(ctx context.Context) (int, error)
 }
@@ -79,19 +82,35 @@ func (h *PlayerHandler) Skip(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "skip broadcast"})
 }
 
-// NowPlayingText handles GET /v1/now-playing.txt?idle=TEXT: the current song
-// as one plain-text line for chat bots (Nightbot, StreamElements). While idle
-// it returns the optional idle text (control characters flattened to spaces, trimmed), else an empty
-// body. idle is validated on every request, playing or not: over
-// maxIdleTextRunes is 400. no-store keeps proxies from serving a stale title.
+// NowPlayingText handles GET /v1/now-playing.txt?idle=TEXT&format=TEMPLATE:
+// the current song as one plain-text line for chat bots (Nightbot,
+// StreamElements). format overrides obs.now_playing_format for this request
+// (trimmed; empty uses the config format). While idle it returns the optional
+// idle text (control characters flattened to spaces, trimmed), else an empty
+// body. idle and format are validated on every request, playing or not: idle
+// over maxIdleTextRunes, format over maxNowPlayingFormatRunes, or format
+// without {title} or {artist} is 400. no-store keeps proxies from serving a
+// stale title.
 func (h *PlayerHandler) NowPlayingText(w http.ResponseWriter, r *http.Request) {
-	idle := strings.TrimSpace(player.OneLine(r.URL.Query().Get("idle")))
+	q := r.URL.Query()
+	idle := strings.TrimSpace(player.OneLine(q.Get("idle")))
 	if utf8.RuneCountInString(idle) > maxIdleTextRunes {
 		writeError(w, http.StatusBadRequest, "idle must be at most "+strconv.Itoa(maxIdleTextRunes)+" characters")
 		return
 	}
+	format := strings.TrimSpace(q.Get("format"))
+	switch {
+	case format == "":
+		format = h.nowPlayingFormat
+	case utf8.RuneCountInString(format) > maxNowPlayingFormatRunes:
+		writeError(w, http.StatusBadRequest, "format must be at most "+strconv.Itoa(maxNowPlayingFormatRunes)+" characters")
+		return
+	case !player.HasNowPlayingPlaceholder(format):
+		writeError(w, http.StatusBadRequest, "format must contain {title} or {artist}")
+		return
+	}
 
-	line := player.FormatNowPlaying(h.nowPlayingFormat, h.stateTracker.GetCurrentSong())
+	line := player.FormatNowPlaying(format, h.stateTracker.GetCurrentSong())
 	if line == "" {
 		line = idle
 	}

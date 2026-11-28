@@ -173,6 +173,60 @@ func TestPlayerNowPlayingTextIdle(t *testing.T) {
 	}
 }
 
+func TestPlayerNowPlayingTextFormat(t *testing.T) {
+	playing := &models.Song{Title: "Rain", Artist: "Nujabes", Album: "Modal Soul"}
+	tooLong := "{title}" + strings.Repeat("a", maxNowPlayingFormatRunes-len("{title}")+1)
+	exact := "{title}" + strings.Repeat("é", maxNowPlayingFormatRunes-len("{title}"))
+	const tooLongErr = "format must be at most 200 characters"
+	const noPlaceholderErr = "format must contain {title} or {artist}"
+	tests := []struct {
+		name     string
+		current  *models.Song
+		query    string
+		wantCode int
+		want     string // body on 200, error message otherwise
+	}{
+		{name: "custom format applied", current: playing, query: "?format=" + url.QueryEscape("{title} by {artist}"), wantCode: http.StatusOK, want: "Rain by Nujabes"},
+		{name: "album rendered", current: playing, query: "?format=" + url.QueryEscape("{title} ({album})"), wantCode: http.StatusOK, want: "Rain (Modal Soul)"},
+		{name: "newline in format becomes space", current: playing, query: "?format=" + url.QueryEscape("{title}\nby {artist}"), wantCode: http.StatusOK, want: "Rain by Nujabes"},
+		{name: "empty format uses config", current: playing, query: "?format=", wantCode: http.StatusOK, want: "Nujabes - Rain"},
+		{name: "whitespace format uses config", current: playing, query: "?format=%20%09", wantCode: http.StatusOK, want: "Nujabes - Rain"},
+		{name: "no artist renders title only", current: &models.Song{Title: "Rain"}, query: "?format=" + url.QueryEscape("{title} by {artist}"), wantCode: http.StatusOK, want: "Rain"},
+		{name: "exactly 200 runes accepted", current: playing, query: "?format=" + url.QueryEscape(exact), wantCode: http.StatusOK, want: "Rain" + strings.Repeat("é", maxNowPlayingFormatRunes-len("{title}"))},
+		{name: "idle with valid format returns idle text", query: "?idle=Offline&format=" + url.QueryEscape("{title} by {artist}"), wantCode: http.StatusOK, want: "Offline"},
+		{name: "no placeholder rejected", current: playing, query: "?format=" + url.QueryEscape("{album}"), wantCode: http.StatusBadRequest, want: noPlaceholderErr},
+		{name: "201 runes rejected", current: playing, query: "?format=" + url.QueryEscape(tooLong), wantCode: http.StatusBadRequest, want: tooLongErr},
+		{name: "invalid format rejected while idle", query: "?idle=Offline&format=hello", wantCode: http.StatusBadRequest, want: noPlaceholderErr},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := player.NewStateTracker()
+			if tt.current != nil {
+				st.SetCurrentSong(tt.current)
+			}
+			h := NewPlayerHandler(fakeCounter{}, &fakeQueueManager{}, &fakeBroadcaster{}, st, "{artist} - {title}")
+			rec := serve(t, RegisterRoutesHTTP(nil, nil, h), http.MethodGet, "/v1/now-playing.txt"+tt.query, "", nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if tt.wantCode != http.StatusOK {
+				var body map[string]string
+				decodeBody(t, rec, &body)
+				if body["error"] != tt.want {
+					t.Fatalf("error body = %v, want error %q", body, tt.want)
+				}
+				return
+			}
+			if got := rec.Body.String(); got != tt.want {
+				t.Errorf("body = %q, want %q", got, tt.want)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q", got)
+			}
+		})
+	}
+}
+
 func TestPlayerSkip(t *testing.T) {
 	playable := &models.QueueItem{ID: "q1", SongID: "n", Song: &models.Song{ID: "n"}}
 	// dead is an entry whose song left the library: ListQueue reports Song=nil.
