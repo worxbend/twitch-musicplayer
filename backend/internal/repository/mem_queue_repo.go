@@ -49,6 +49,7 @@ func (r *MemQueueRepo) Dequeue(_ context.Context) (*models.QueueItem, error) {
 		return nil, sql.ErrNoRows
 	}
 	item := r.items[0]
+	r.items[0] = nil // drop the backing array's reference to the popped item
 	r.items = r.items[1:]
 	return item, nil
 }
@@ -78,13 +79,12 @@ func (r *MemQueueRepo) List(ctx context.Context) ([]*models.QueueItem, error) {
 func (r *MemQueueRepo) Remove(_ context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for i, item := range r.items {
-		if item.ID == id {
-			r.items = append(r.items[:i], r.items[i+1:]...)
-			return nil
-		}
+	i := slices.IndexFunc(r.items, func(item *models.QueueItem) bool { return item.ID == id })
+	if i < 0 {
+		return sql.ErrNoRows
 	}
-	return sql.ErrNoRows
+	r.items = slices.Delete(r.items, i, i+1) // zeroes the vacated tail slot
+	return nil
 }
 
 // Move shifts the item with id by delta places, clamped to the queue bounds.
@@ -125,6 +125,7 @@ func (r *MemQueueRepo) RemoveBySongID(_ context.Context, songID string) (int, er
 func (r *MemQueueRepo) Clear(_ context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	clear(r.items) // drop references so cleared items can be collected
 	r.items = r.items[:0]
 	return nil
 }

@@ -145,3 +145,157 @@ func TestMemQueueRepoListDropsSongRemovedFromLibrary(t *testing.T) {
 		t.Fatalf("queue = %+v, want one item with nil Song", items)
 	}
 }
+
+// newTestQueue returns a repo holding one item per id, in order.
+func newTestQueue(t *testing.T, ids ...string) *MemQueueRepo {
+	t.Helper()
+	repo := NewMemQueueRepo(NewMemSongRepo())
+	for _, id := range ids {
+		if err := repo.Enqueue(context.Background(), &models.QueueItem{ID: id, SongID: "song-" + id}); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+	return repo
+}
+
+func queueIDs(t *testing.T, r *MemQueueRepo) []string {
+	t.Helper()
+	items, err := r.List(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	ids := make([]string, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+	return ids
+}
+
+func queueCount(t *testing.T, r *MemQueueRepo) int {
+	t.Helper()
+	n, err := r.Count(context.Background())
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	return n
+}
+
+// tailIsNil fails when a slot past len(r.items) still holds an item, which
+// would keep a vacated entry reachable until the next reallocation.
+func tailIsNil(t *testing.T, r *MemQueueRepo) {
+	t.Helper()
+	for i, item := range r.items[len(r.items):cap(r.items)] {
+		if item != nil {
+			t.Fatalf("vacated slot %d still holds item %q", len(r.items)+i, item.ID)
+		}
+	}
+}
+
+func TestMemQueueRepoDequeue(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestQueue(t, "A", "B", "C")
+
+	for _, want := range []string{"A", "B", "C"} {
+		backing := repo.items
+		got, err := repo.Dequeue(ctx)
+		if err != nil || got == nil || got.ID != want {
+			t.Fatalf("Dequeue = (%+v, %v), want item %s", got, err, want)
+		}
+		if backing[0] != nil {
+			t.Fatalf("dequeued slot still holds item %q", backing[0].ID)
+		}
+	}
+
+	got, err := repo.Dequeue(ctx)
+	if !errors.Is(err, sql.ErrNoRows) || got != nil {
+		t.Fatalf("Dequeue on empty = (%+v, %v), want (nil, sql.ErrNoRows)", got, err)
+	}
+}
+
+func TestMemQueueRepoEnqueueFrontDequeuesFirst(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestQueue(t, "A", "B")
+	if err := repo.EnqueueFront(ctx, &models.QueueItem{ID: "F", SongID: "song-F"}); err != nil {
+		t.Fatalf("enqueue front: %v", err)
+	}
+
+	got, err := repo.Dequeue(ctx)
+	if err != nil || got.ID != "F" {
+		t.Fatalf("Dequeue = (%+v, %v), want item F", got, err)
+	}
+	if order := queueIDs(t, repo); !slices.Equal(order, []string{"A", "B"}) {
+		t.Fatalf("order = %v, want [A B]", order)
+	}
+}
+
+func TestMemQueueRepoRemove(t *testing.T) {
+	tests := []struct {
+		name      string
+		id        string
+		wantErr   error
+		wantOrder []string
+	}{
+		{name: "head", id: "A", wantOrder: []string{"B", "C"}},
+		{name: "middle", id: "B", wantOrder: []string{"A", "C"}},
+		{name: "tail", id: "C", wantOrder: []string{"A", "B"}},
+		{name: "unknown id", id: "Z", wantErr: sql.ErrNoRows, wantOrder: []string{"A", "B", "C"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newTestQueue(t, "A", "B", "C")
+
+			if err := repo.Remove(context.Background(), tt.id); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Remove(%q) = %v, want %v", tt.id, err, tt.wantErr)
+			}
+			if order := queueIDs(t, repo); !slices.Equal(order, tt.wantOrder) {
+				t.Fatalf("order = %v, want %v", order, tt.wantOrder)
+			}
+			tailIsNil(t, repo)
+		})
+	}
+}
+
+func TestMemQueueRepoClear(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestQueue(t, "A", "B", "C")
+
+	if err := repo.Clear(ctx); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if n := queueCount(t, repo); n != 0 {
+		t.Fatalf("Count after Clear = %d, want 0", n)
+	}
+	tailIsNil(t, repo)
+	if got, err := repo.Dequeue(ctx); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("Dequeue after Clear = (%+v, %v), want sql.ErrNoRows", got, err)
+	}
+}
+
+func TestMemQueueRepoCount(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestQueue(t)
+	if n := queueCount(t, repo); n != 0 {
+		t.Fatalf("Count on new repo = %d, want 0", n)
+	}
+
+	for _, id := range []string{"A", "B", "C"} {
+		if err := repo.Enqueue(ctx, &models.QueueItem{ID: id, SongID: "song-" + id}); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+	if n := queueCount(t, repo); n != 3 {
+		t.Fatalf("Count after 3 Enqueue = %d, want 3", n)
+	}
+	if err := repo.Remove(ctx, "B"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if n := queueCount(t, repo); n != 2 {
+		t.Fatalf("Count after Remove = %d, want 2", n)
+	}
+	if _, err := repo.Dequeue(ctx); err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	if n := queueCount(t, repo); n != 1 {
+		t.Fatalf("Count after Dequeue = %d, want 1", n)
+	}
+}
