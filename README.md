@@ -402,20 +402,17 @@ back-to-back — as long as an alternative exists.
 ## ✅ Verification
 
 ```bash
-cd backend
-make check              # toolchains, gofmt, go mod tidy -diff, go vet, staticcheck,
-                        # go test -race, govulncheck, go build
-
-cd ../frontend
-npm ci
-npm audit --omit=dev --audit-level=high   # production deps: no high/critical advisories
-npm run typecheck       # typecheck src, tests and configs
-npm test                # unit tests, via node --test
-npm run build           # typecheck + production bundle
+make check              # CI parity: toolchains, lint (actionlint, shellcheck), backend
+                        # (gofmt, tidy, vet, staticcheck, go test -race, govulncheck, build)
+                        # and frontend (npm ci, npm audit, typecheck, unit tests, build)
+make ui                 # Playwright browser suite
+make docker-smoke       # build and smoke both images; run before nginx or Dockerfile changes
+make site               # build and check the product site like pages.yml (needs cwebp)
 ```
 
-CI (`.github/workflows/ci.yml`) runs these gates on every push to `main` and every pull request,
-plus the Playwright browser suite (`ui` job) and Docker image builds with smoke tests (`docker` job).
+CI (`.github/workflows/ci.yml`) runs six jobs on every push to `main` and every pull request:
+`backend`, `frontend`, `ui`, `lint`, `docker` and `docker-arm64`. The
+[developer guide](docs/developer-guide.md) lists what each gate checks.
 
 The redesigned instruments, UI, screenshots, and browser verification are documented in
 **[Signal Observatory](docs/signal-observatory/README.md)**. Run its browser checks with

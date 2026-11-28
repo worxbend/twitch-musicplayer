@@ -31,9 +31,9 @@
 
 ## ✅ Suggested PR Checklist
 
-- `make -C backend check` passes (gofmt, go mod tidy -diff, go vet, staticcheck, go test -race, govulncheck, go build).
-- `npm run typecheck`, `npm test` and `npm run build` pass in `frontend/`.
-- `npm run test:ui` passes in `frontend/` (run `npx playwright install chromium` once first).
+- `make check` passes at the repo root (toolchains, lint, backend and frontend gates). If make reports npm not found, put Node on PATH first, e.g. `nvm use` in `frontend/` or `PATH=~/.nvm/versions/node/<version>/bin:$PATH make check`.
+- `make ui` passes (run `npx playwright install chromium` in `frontend/` once first).
+- `make docker-smoke` passes when a Dockerfile, the nginx config or a compose file changes.
 - New configuration has examples in `backend/config.example.toml`, `backend/.env.example`, or `frontend/.env.example`.
 - WebSocket payload shape changes are reflected in `docs/websocket-protocol.md`.
 - HTTP endpoint changes are reflected in `docs/api.md`.
