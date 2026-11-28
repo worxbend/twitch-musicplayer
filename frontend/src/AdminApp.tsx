@@ -5,6 +5,7 @@ import { createLatest } from './admin/latestRequest';
 import { connectionAnnouncement, connectionLabel, type AdminConnection } from './admin/connection';
 import { HttpError, errorText, fetchWithTimeout, REQUEST_TIMEOUT_MS } from './admin/request';
 import { isNew, sortSongs, type LibrarySort } from './admin/librarySort';
+import { blockedIdSet, blockedReason } from './admin/blocked';
 import { TerminalHeader } from './components/TerminalHeader';
 import { formatDuration } from './format/trackTime';
 
@@ -45,6 +46,14 @@ function restoreQueueFocus(control: QueueControl | null, items: QueueItem[]) {
 }
 // fetchSongs replaces every row too, and a file event refetches it while the
 // streamer may be on a library button. Same rule, keyed by song id.
+// Block and Allow again share a slot, so a lookup falls back to its partner.
+const SONG_TOGGLE: Record<string, string> = { block: 'allow', allow: 'block' };
+function songControl(id: string, action: string) {
+  return document.querySelector<HTMLElement>(`.song-list [data-song-id="${CSS.escape(id)}"][data-song-action="${CSS.escape(action)}"]`);
+}
+function songControlOrPartner(id: string, action: string) {
+  return songControl(id, action) ?? (SONG_TOGGLE[action] ? songControl(id, SONG_TOGGLE[action]) : null);
+}
 type SongControl = { id: string; action: string; index: number };
 function focusedSongControl(items: Song[]): SongControl | null {
   const el = document.activeElement;
@@ -55,12 +64,11 @@ function focusedSongControl(items: Song[]): SongControl | null {
 }
 function restoreSongFocus(control: SongControl | null, items: Song[]) {
   if (!control) return;
-  const action = CSS.escape(control.action);
-  const same = document.querySelector<HTMLElement>(`.song-list [data-song-id="${CSS.escape(control.id)}"][data-song-action="${action}"]`);
+  const same = songControlOrPartner(control.id, control.action);
   if (same) { same.focus(); return; }
   if (!items.length) { document.getElementById('library-heading')?.focus(); return; }
   const slot = items[Math.min(Math.max(control.index, 0), items.length - 1)];
-  document.querySelector<HTMLElement>(`.song-list [data-song-id="${CSS.escape(slot.id)}"][data-song-action="${action}"]`)?.focus();
+  songControlOrPartner(slot.id, control.action)?.focus();
 }
 const SORT_KEY = 'lofi-admin-library-sort';
 // queue_updated reasons sent when a library file appears, leaves or changes.
@@ -106,6 +114,7 @@ export function AdminApp() {
   const [queue, setQueue] = createSignal<QueueItem[]>([]);
   const [history, setHistory] = createSignal<HistoryItem[]>([]);
   const [blocked, setBlocked] = createSignal<BlockedEntry[]>([]);
+  const blockedIds = createMemo(() => blockedIdSet(blocked()));
   const [currentSong, setCurrentSong] = createSignal<Song | null>(null);
   const [conn, setConn] = createSignal<AdminConnection>('connecting');
   // A fresh id per call makes Solid insert a new node, so a repeated message is re-announced.
@@ -275,15 +284,21 @@ export function AdminApp() {
     void refetch();
   }
 
+  // fetchBlocked swaps the pressed button out (⊘ for Allow again, or the
+  // Blocked row away); refocus keeps keyboard focus off <body>.
   async function blockSong(song: Song) {
     await action(`/v1/songs/${encodeURIComponent(song.id)}:block`, `Out of rotation: ${songLabel(song)}`);
     await fetchBlocked();
+    if (document.activeElement === document.body) songControl(song.id, 'allow')?.focus();
   }
-  async function allowAgain(entry: BlockedEntry) {
+  async function allowAgain(entry: BlockedEntry, refocus = () => document.getElementById('blocked-heading')?.focus()) {
     await action(`/v1/songs/${encodeURIComponent(entry.id)}:unblock`, `Back in rotation: ${blockedLabel(entry)}`);
     await fetchBlocked();
-    // The row and its button are gone; keep keyboard focus off <body>.
-    if (document.activeElement === document.body) document.getElementById('blocked-heading')?.focus();
+    if (document.activeElement === document.body) refocus();
+  }
+  // Library and history rows of a blocked song: queue and play would get a 409.
+  function blockedReasonFor(song: Song) {
+    return blockedIds().has(song.id) ? blockedReason(songLabel(song)) : undefined;
   }
 
   function MoveButton(props: { item: QueueItem; direction: 'up' | 'down'; blocked: boolean }) {
@@ -424,12 +439,17 @@ export function AdminApp() {
               <Show when={!loading()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--loading" aria-hidden="true">◌</span><h3>Reading your library</h3><p>Fetching tracks from the backend.</p></div>}>
                 <Show when={!libraryError()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--error" aria-hidden="true">!</span><h3>Library unavailable</h3><p>Check the backend connection, then try again.</p><button class="btn" onClick={() => retry('library-heading', () => fetchSongs())}>Retry connection</button></div>}>
                   <For each={sortedSongs()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">♫</span><h3>{searchQuery() ? 'No matching tracks' : 'Your library is quiet'}</h3><p>{searchQuery() ? 'Try a different title, artist, or album.' : 'Add MP3 files to your configured music folder.'}</p></div>}>
-                    {(song, idx) => <div class="song-item" classList={{'song-item--playing': currentSong()?.id === song.id}}>
-                      <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
-                      <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta"><Show when={isNew(song.added_at, now())}><span class="song-badge">New</span></Show>{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
-                      <span class="song-duration">{formatDuration(song.duration_secs)}</span>
-                      <div class="song-actions"><ActionButton class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} data-song-id={song.id} data-song-action="queue" inactive={() => !!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</ActionButton><ActionButton class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} data-song-id={song.id} data-song-action="play" inactive={() => !!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</ActionButton><ActionButton class="btn btn-ghost btn-icon" title="Don't play this" aria-label={`Don't play ${songLabel(song)}`} data-song-id={song.id} data-song-action="block" inactive={() => !!busy()} onClick={() => void blockSong(song)}><span aria-hidden="true">⊘</span></ActionButton></div>
-                    </div>}
+                    {(song, idx) => {
+                      const reason = () => blockedReasonFor(song);
+                      const reasonId = `song-blocked-${song.id}`;
+                      return <div class="song-item" classList={{'song-item--playing': currentSong()?.id === song.id, 'song-item--blocked': !!reason()}}>
+                        <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
+                        <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta"><Show when={reason()}><span class="song-badge song-badge--blocked">Blocked</span></Show><Show when={isNew(song.added_at, now())}><span class="song-badge">New</span></Show>{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
+                        <span class="song-duration">{formatDuration(song.duration_secs)}</span>
+                        <div class="song-actions"><ActionButton class="btn btn-ghost btn-icon" title={reason() ?? 'Add to queue'} aria-label={`Add ${songLabel(song)} to queue`} aria-describedby={reason() ? reasonId : undefined} data-song-id={song.id} data-song-action="queue" inactive={() => !!busy() || !!reason()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</ActionButton><ActionButton class="btn btn-primary btn-icon" title={reason() ?? 'Play now'} aria-label={`Play ${songLabel(song)} now`} aria-describedby={reason() ? reasonId : undefined} data-song-id={song.id} data-song-action="play" inactive={() => !!busy() || !!reason()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</ActionButton><Show when={reason()} fallback={<ActionButton class="btn btn-ghost btn-icon" title="Don't play this" aria-label={`Don't play ${songLabel(song)}`} data-song-id={song.id} data-song-action="block" inactive={() => !!busy()} onClick={() => void blockSong(song)}><span aria-hidden="true">⊘</span></ActionButton>}><ActionButton class="btn btn-ghost song-allow" aria-label={`Allow ${songLabel(song)} again`} data-song-id={song.id} data-song-action="allow" inactive={() => !!busy()} onClick={() => void allowAgain(song, () => songControl(song.id, 'block')?.focus())}>Allow again</ActionButton></Show></div>
+                        <Show when={reason()}>{text => <span id={reasonId} class="sr-only">{text()}</span>}</Show>
+                      </div>;
+                    }}
                   </For>
                 </Show>
               </Show>
@@ -456,7 +476,11 @@ export function AdminApp() {
             <Show when={pastHistory().length} fallback={<div class="empty-state"><p>No songs played yet.</p></div>}>
               <ol class="history-list">
                 <For each={pastHistory()}>
-                  {entry => <li class="history-item"><div class="queue-info"><div class="queue-title">{songLabel(entry.song)}</div><div class="queue-artist">{entry.song.artist || 'Unknown artist'}</div></div><time class="history-time" datetime={entry.started_at}>{formatClock(entry.started_at)}</time><div class="history-actions"><ActionButton class="btn" aria-label={`Queue ${songLabel(entry.song)} again`} data-history-key={entry.started_at} data-history-action="queue" inactive={() => !!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(entry.song)}`, 'POST', { song_id: entry.song.id })}>Queue again</ActionButton><ActionButton class="btn" aria-label={`Play ${songLabel(entry.song)} now`} data-history-key={entry.started_at} data-history-action="play" inactive={() => !!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(entry.song)}`, 'POST', { song_id: entry.song.id })}>Play now</ActionButton></div></li>}
+                  {entry => {
+                    const reason = () => blockedReasonFor(entry.song);
+                    const reasonId = `history-blocked-${entry.started_at}`;
+                    return <li class="history-item"><div class="queue-info"><div class="queue-title">{songLabel(entry.song)}</div><div class="queue-artist">{entry.song.artist || 'Unknown artist'}</div></div><time class="history-time" datetime={entry.started_at}>{formatClock(entry.started_at)}</time><div class="history-actions"><ActionButton class="btn" title={reason()} aria-label={`Queue ${songLabel(entry.song)} again`} aria-describedby={reason() ? reasonId : undefined} data-history-key={entry.started_at} data-history-action="queue" inactive={() => !!busy() || !!reason()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(entry.song)}`, 'POST', { song_id: entry.song.id })}>Queue again</ActionButton><ActionButton class="btn" title={reason()} aria-label={`Play ${songLabel(entry.song)} now`} aria-describedby={reason() ? reasonId : undefined} data-history-key={entry.started_at} data-history-action="play" inactive={() => !!busy() || !!reason()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(entry.song)}`, 'POST', { song_id: entry.song.id })}>Play now</ActionButton></div><Show when={reason()}>{text => <span id={reasonId} class="sr-only">{text()}</span>}</Show></li>;
+                  }}
                 </For>
               </ol>
             </Show>

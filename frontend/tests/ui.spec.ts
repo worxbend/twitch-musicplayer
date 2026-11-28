@@ -262,7 +262,8 @@ test('admin plays a recently played track now and keeps focus across the history
   expect(focused).toEqual({ id: '', key: '2026-01-01T20:01:00Z', action: 'play' });
 });
 
-test('admin replay of a blocked track shows the backend reason', async ({ page }) => {
+// A song blocked elsewhere stays enabled until GET /v1/blocked lists it; the 409 then explains the refusal.
+test('admin replay of a track blocked behind a stale blocklist shows the backend reason', async ({ page }) => {
   await mockStation(page);
   await page.route(url => url.pathname === '/v1/queue', route => route.request().method() === 'POST'
     ? route.fulfill({ status: 409, json: { error: 'song is blocked' } })
@@ -478,33 +479,66 @@ async function mockBlocklist(page: Page, initial: { id: string; title?: string; 
 test('admin blocks a song from the library and allows it again', async ({ page }) => {
   await mockStation(page);
   await mockBlocklist(page);
+  const queuePosts: string[] = [];
+  page.on('request', r => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/v1/queue') queuePosts.push(r.postDataJSON().song_id); });
   await page.goto('/admin');
   const panel = page.getByRole('region', { name: 'Blocked', exact: true });
+  const row = page.getByRole('region', { name: 'Music library' }).locator('.song-item', { hasText: 'Midnight compiler' });
+  const add = row.getByRole('button', { name: 'Add Midnight compiler to queue' });
+  const play = row.getByRole('button', { name: 'Play Midnight compiler now' });
+  const allow = row.getByRole('button', { name: 'Allow Midnight compiler again' });
+  const dontPlay = row.getByRole('button', { name: "Don't play Midnight compiler" });
   await expect(panel.getByText('Every track is in rotation.')).toBeVisible();
+
   const block = page.waitForRequest(r => r.url().endsWith('/v1/songs/a:block') && r.method() === 'POST');
-  await page.getByRole('button', { name: "Don't play Midnight compiler" }).click();
+  await dontPlay.focus();
+  await page.keyboard.press('Enter');
   await block;
   await expect(page.getByRole('status')).toContainText('Out of rotation: Midnight compiler');
   await expect(panel.getByRole('listitem')).toHaveText([/Midnight compiler/]);
+  await expect(row.locator('.song-badge--blocked')).toHaveText('Blocked');
+  await expect(allow).toBeFocused();
+  await expect(dontPlay).toHaveCount(0);
+  const replay = page.getByRole('region', { name: 'Recently played' }).getByRole('button', { name: 'Queue Midnight compiler again' });
+  for (const button of [add, play, replay]) {
+    await expect(button).toHaveAttribute('aria-disabled', 'true');
+    await expect(button).toHaveAccessibleDescription(/out of rotation/);
+  }
+  expect((await new AxeBuilder({ page }).include('.song-panel').include('.history-panel').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+  // The disabled + sends nothing; the next enabled add proves the click went through first.
+  await add.click({ force: true });
+  await page.getByRole('button', { name: 'Add Buffering dreams to queue' }).click();
+  await expect(page.getByRole('status')).toContainText('Queued: Buffering dreams');
+  expect(queuePosts).toEqual(['b']);
+
   const unblock = page.waitForRequest(r => r.url().endsWith('/v1/songs/a:unblock') && r.method() === 'POST');
-  await panel.getByRole('button', { name: 'Allow Midnight compiler again' }).click();
+  await allow.click();
   await unblock;
   await expect(panel.getByRole('listitem')).toHaveCount(0);
+  await expect(row.locator('.song-badge--blocked')).toHaveCount(0);
+  await expect(dontPlay).toBeFocused();
+  await expect(add).not.toHaveAttribute('aria-disabled', 'true');
+
+  // Allow again in the Blocked list removes its own row; focus lands on the heading.
+  await dontPlay.click();
+  await expect(panel.getByRole('listitem')).toHaveText([/Midnight compiler/]);
+  await panel.getByRole('button', { name: 'Allow Midnight compiler again' }).click();
+  await expect(panel.getByRole('listitem')).toHaveCount(0);
   await expect(page.locator('#blocked-heading')).toBeFocused();
+  await expect(dontPlay).toBeVisible();
   expect((await new AxeBuilder({ page }).include('[aria-labelledby="blocked-heading"]').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
 });
 
-test('admin labels a missing blocked song by id and reports a blocked add', async ({ page }) => {
+test('admin labels a missing blocked song by id and disables a known blocked song', async ({ page }) => {
   await mockStation(page);
-  await mockBlocklist(page, [{ id: 'gone', missing: true }]);
-  await page.route('**/v1/queue', route => route.request().method() === 'POST'
-    ? route.fulfill({ status: 409, json: { error: 'song is blocked' } })
-    : route.fallback());
+  await mockBlocklist(page, [{ id: 'gone', missing: true }, songs[0]]);
   await page.goto('/admin');
   const panel = page.getByRole('region', { name: 'Blocked', exact: true });
-  await expect(panel.getByRole('listitem')).toHaveText([/gone.*File no longer in the library/]);
-  await page.getByRole('button', { name: 'Add Midnight compiler to queue' }).click();
-  await expect(page.getByRole('status')).toContainText('Action failed: song is blocked.');
+  await expect(panel.getByRole('listitem')).toHaveText([/gone.*File no longer in the library/, /Midnight compiler/]);
+  const add = page.getByRole('button', { name: 'Add Midnight compiler to queue' });
+  await expect(add).toHaveAttribute('aria-disabled', 'true');
+  await expect(add).toHaveAccessibleDescription('Blocked: Midnight compiler is out of rotation');
+  await expect(page.getByRole('button', { name: 'Add Buffering dreams to queue' })).not.toHaveAttribute('aria-disabled', 'true');
 });
 
 test('audio unlock works by keyboard and reports actual playback', async ({ page }) => {
