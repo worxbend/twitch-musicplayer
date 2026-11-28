@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { VOLUME_KEY, loadVolume, parseVolume, saveVolume, shouldIgnoreVolumeKey, stepVolume } from './volumeStore.ts';
+import { VOLUME_KEY, loadVolume, parseVolume, saveVolume, shouldIgnoreVolumeKey, stepVolume, volumeValueText } from './volumeStore.ts';
 
 const throwingStorage = {
   getItem(): string | null { throw new DOMException('denied', 'SecurityError'); },
@@ -29,6 +29,20 @@ test('stepVolume clamps at both ends and rounds to two decimals', () => {
   assert.equal(stepVolume(0.98, 0.05), 1);
   assert.equal(stepVolume(0.1, 0.2), 0.3);
   assert.equal(stepVolume(0.55, -0.05), 0.5);
+});
+
+test('volumeValueText names the rounded percent and the mute state', () => {
+  assert.equal(volumeValueText(1, false), '100%');
+  assert.equal(volumeValueText(0, false), '0%');
+  assert.equal(volumeValueText(0.405, false), '41%');
+  assert.equal(volumeValueText(0.4, true), '40%, muted');
+});
+
+test('volumeValueText clamps out-of-range and non-finite volumes', () => {
+  assert.equal(volumeValueText(Number.NaN, false), '0%');
+  assert.equal(volumeValueText(Number.POSITIVE_INFINITY, true), '0%, muted');
+  assert.equal(volumeValueText(1.5, false), '100%');
+  assert.equal(volumeValueText(-0.2, false), '0%');
 });
 
 test('loadVolume reads the stored value and survives a throwing or missing storage', () => {

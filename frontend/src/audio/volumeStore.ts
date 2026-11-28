@@ -22,6 +22,12 @@ export function stepVolume(volume: number, delta: number): number {
   return Math.round(clamp(volume + delta, 0, 1) * 100) / 100;
 }
 
+// Screen-reader value text for the slider: the bare number hides that the audio is muted.
+export function volumeValueText(volume: number, muted: boolean): string {
+  const percent = Math.round(clamp(Number.isFinite(volume) ? volume : 0, 0, 1) * 100);
+  return muted ? `${percent}%, muted` : `${percent}%`;
+}
+
 export function loadVolume(storage: Pick<Storage, 'getItem'> | undefined): number {
   try {
     return parseVolume(storage?.getItem(VOLUME_KEY) ?? null);

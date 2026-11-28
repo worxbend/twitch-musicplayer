@@ -110,6 +110,12 @@ test('scene ramp selection, copy confirmation, and clipboard fallback', async ({
   await page.getByRole('button', { name: 'Copy Equaliser overlay URL' }).click();
   await expect(page.getByRole('status')).toContainText('Browser-source URL copied');
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/bars-overlay?ramp=EMBER');
+  // A repeated copy must replace the notice node so screen readers announce the same text again.
+  const notice = page.getByRole('status').locator('.notification');
+  await notice.evaluate(el => { el.dataset.seen = '1'; });
+  await page.getByRole('button', { name: 'Copy Equaliser overlay URL' }).click();
+  await expect(notice).not.toHaveAttribute('data-seen');
+  await expect(notice).toContainText('Browser-source URL copied');
   // Simulate a browser that denies clipboard access, without touching production code.
   await page.addInitScript(() => { Object.defineProperty(navigator, 'clipboard', { value: undefined }); });
   await page.reload();
@@ -583,15 +589,18 @@ test('volume shortcuts change the slider, mute toggles, and the level survives r
   const slider = page.getByRole('slider', { name: 'Volume' });
   const mute = page.getByRole('button', { name: 'Mute' });
   await expect(slider).toHaveValue('100');
+  await expect(slider).toHaveAttribute('aria-valuetext', '100%');
   await mute.focus();
   await page.keyboard.press('-');
   await page.keyboard.press('-');
   await expect(slider).toHaveValue('90');
   await page.keyboard.press('m');
   await expect(mute).toHaveAttribute('aria-pressed', 'true');
+  await expect(slider).toHaveAttribute('aria-valuetext', '90%, muted');
   await page.keyboard.press('=');
   await expect(mute).toHaveAttribute('aria-pressed', 'false');
   await expect(slider).toHaveValue('95');
+  await expect(slider).toHaveAttribute('aria-valuetext', '95%');
   await page.reload();
   await expect(page.getByRole('slider', { name: 'Volume' })).toHaveValue('95');
 });

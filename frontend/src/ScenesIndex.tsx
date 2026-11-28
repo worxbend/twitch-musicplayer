@@ -27,7 +27,8 @@ const capitalize = (word: string) => word.charAt(0).toUpperCase() + word.slice(1
 
 export function ScenesIndex() {
   const [ramp, setRamp] = createSignal<RampName>('SPECTRUM');
-  const [notice, setNotice] = createSignal('');
+  // A fresh id per copy lets the keyed Show replace the node, so a repeated identical notice is re-announced.
+  const [notice, setNotice] = createSignal<{ id: number; text: string } | null>(null);
   const [copyError, setCopyError] = createSignal(false);
   const [manualURL, setManualURL] = createSignal('');
   const [align, setAlign] = createSignal<NowPlayingAlign>('left');
@@ -41,6 +42,7 @@ export function ScenesIndex() {
   const [font, setFont] = createSignal<NowPlayingFont>('sans');
   const nowPlayingURL = () => nowPlayingPath({ align: align(), size: size(), hold: hold(), art: art(), theme: theme(), font: font(), next: next(), progress: progress(), ticker: ticker() });
   let timer = 0;
+  let noticeSeq = 0;
   onMount(() => {
     document.documentElement.classList.add('scenes-index-page');
     document.title = 'lofi.radio — Signal collection';
@@ -59,13 +61,13 @@ export function ScenesIndex() {
       await navigator.clipboard.writeText(url);
       setCopyError(false);
       setManualURL('');
-      setNotice('✓ Browser-source URL copied. Paste it into OBS.');
+      setNotice({ id: ++noticeSeq, text: '✓ Browser-source URL copied. Paste it into OBS.' });
     } catch {
       setCopyError(true);
       setManualURL(url);
-      setNotice('Clipboard unavailable. Select and copy the URL below.');
+      setNotice({ id: ++noticeSeq, text: 'Clipboard unavailable. Select and copy the URL below.' });
     }
-    timer = window.setTimeout(() => setNotice(''), 4500);
+    timer = window.setTimeout(() => setNotice(null), 4500);
   }
   return (
     <>
@@ -178,7 +180,7 @@ export function ScenesIndex() {
         <Show when={manualURL()}><label class="manual-copy">Browser-source URL<input readonly value={manualURL()} onFocus={e => e.currentTarget.select()} /></label></Show>
         <footer class="terminal-footer"><span>Your music. Your frequency.</span><span>Audio-reactive instruments. Ready for OBS.</span></footer>
       </main>
-      <div role="status" aria-live="polite"><Show when={notice()}><div class="notification" classList={{'notification--error': copyError()}}>{notice()}</div></Show></div>
+      <div role="status" aria-live="polite"><Show when={notice()} keyed>{n => <div class="notification" classList={{'notification--error': copyError()}}>{n.text}</div>}</Show></div>
     </>
   );
 }
