@@ -1,10 +1,10 @@
 /* Prism array — separated, oblique glass blades with triangular caps,
  * refracted seams and a second, quieter depth plane. */
-import type { AudioFrame } from './types';
-import { WaveScene, type WaveSceneOptions } from './WaveScene';
-import { rampByName, type Ramp } from './palette';
+import type { AudioFrame } from './types.ts';
+import { WaveScene, type WaveSceneOptions } from './WaveScene.ts';
+import { rampByName, type Ramp } from './palette.ts';
 import * as PIXI from 'pixi.js';
-import type { AudioEngine } from '../audio/AudioEngine';
+import type { AudioEngine } from '../audio/AudioEngine.ts';
 
 const SEGMENTS = 32;
 const IVORY = 0xe7f1ef;

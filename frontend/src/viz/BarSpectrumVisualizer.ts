@@ -1,10 +1,10 @@
 /* Spectral towers — calibrated, segmented meters with suspended peak flags,
  * a shallow reflection and a separate three-band telemetry strip. */
-import type { AudioFrame } from './types';
-import { WaveScene, type WaveSceneOptions } from './WaveScene';
-import { rampByName, type Ramp } from './palette';
+import type { AudioFrame } from './types.ts';
+import { WaveScene, type WaveSceneOptions } from './WaveScene.ts';
+import { rampByName, type Ramp } from './palette.ts';
 import * as PIXI from 'pixi.js';
-import type { AudioEngine } from '../audio/AudioEngine';
+import type { AudioEngine } from '../audio/AudioEngine.ts';
 
 const BAND_COUNT = 56;
 const SEGMENTS = 24;

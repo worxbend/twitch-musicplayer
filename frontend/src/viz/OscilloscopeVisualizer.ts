@@ -3,10 +3,10 @@
  * that same real signal, not invented stereo or an ornamental oscillator.
  */
 import * as PIXI from 'pixi.js';
-import type { AudioEngine } from '../audio/AudioEngine';
-import type { AudioFrame } from './types';
-import { WaveScene, type WaveSceneOptions } from './WaveScene';
-import { rampByName } from './palette';
+import type { AudioEngine } from '../audio/AudioEngine.ts';
+import type { AudioFrame } from './types.ts';
+import { WaveScene, type WaveSceneOptions } from './WaveScene.ts';
+import { rampByName } from './palette.ts';
 
 const POINTS = 256;
 const TRAILS = 3;

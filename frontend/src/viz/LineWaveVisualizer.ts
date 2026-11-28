@@ -1,9 +1,9 @@
 /* Trace — a receding topographic survey of recent audio, not a single zigzag. */
 import type * as PIXI from 'pixi.js';
-import type { AudioEngine } from '../audio/AudioEngine';
-import type { AudioFrame } from './types';
-import { WaveScene, type WaveSceneOptions } from './WaveScene';
-import { rampByName } from './palette';
+import type { AudioEngine } from '../audio/AudioEngine.ts';
+import type { AudioFrame } from './types.ts';
+import { WaveScene, type WaveSceneOptions } from './WaveScene.ts';
+import { rampByName } from './palette.ts';
 
 const POINTS = 144;
 const ROWS = 15;

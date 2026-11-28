@@ -5,16 +5,16 @@
  * is no separate place to forget to update.
  */
 import type * as PIXI from 'pixi.js';
-import type { AudioEngine } from '../audio/AudioEngine';
-import type { Visualizer } from './types';
+import type { AudioEngine } from '../audio/AudioEngine.ts';
+import type { Visualizer } from './types.ts';
 
-import { OscilloscopeVisualizer } from './OscilloscopeVisualizer';
-import { BarSpectrumVisualizer } from './BarSpectrumVisualizer';
-import { MirrorWaveVisualizer } from './MirrorWaveVisualizer';
-import { DotMatrixVisualizer } from './DotMatrixVisualizer';
-import { RibbonVisualizer } from './RibbonVisualizer';
-import { LineWaveVisualizer } from './LineWaveVisualizer';
-import { LensWaveVisualizer } from './LensWaveVisualizer';
+import { OscilloscopeVisualizer } from './OscilloscopeVisualizer.ts';
+import { BarSpectrumVisualizer } from './BarSpectrumVisualizer.ts';
+import { MirrorWaveVisualizer } from './MirrorWaveVisualizer.ts';
+import { DotMatrixVisualizer } from './DotMatrixVisualizer.ts';
+import { RibbonVisualizer } from './RibbonVisualizer.ts';
+import { LineWaveVisualizer } from './LineWaveVisualizer.ts';
+import { LensWaveVisualizer } from './LensWaveVisualizer.ts';
 
 export interface SceneBuildOptions {
   showBackground: boolean;

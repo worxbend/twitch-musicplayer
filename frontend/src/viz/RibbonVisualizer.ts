@@ -1,9 +1,9 @@
 /* Ribbon — translucent aurora silk, suspended as five independently folded surfaces. */
 import * as PIXI from 'pixi.js';
-import type { AudioEngine } from '../audio/AudioEngine';
-import type { AudioFrame } from './types';
-import { WaveScene, type WaveSceneOptions } from './WaveScene';
-import { rampByName, type Ramp } from './palette';
+import type { AudioEngine } from '../audio/AudioEngine.ts';
+import type { AudioFrame } from './types.ts';
+import { WaveScene, type WaveSceneOptions } from './WaveScene.ts';
+import { rampByName, type Ramp } from './palette.ts';
 
 const POINTS = 112;
 const SURFACES = 5;

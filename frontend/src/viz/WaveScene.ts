@@ -10,10 +10,10 @@
  */
 import * as PIXI from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
-import { AudioAnalysisEngine } from '../audio/AudioAnalysisEngine';
-import type { AnalysisOptions } from '../audio/AudioAnalysisEngine';
-import type { AudioEngine } from '../audio/AudioEngine';
-import type { AudioFrame, Visualizer } from './types';
+import { AudioAnalysisEngine } from '../audio/AudioAnalysisEngine.ts';
+import type { AnalysisOptions } from '../audio/AudioAnalysisEngine.ts';
+import type { AudioEngine } from '../audio/AudioEngine.ts';
+import type { AudioFrame, Visualizer } from './types.ts';
 
 export interface WaveSceneOptions {
   /** Paint the dark backdrop. False for transparent OBS overlays. */
@@ -169,7 +169,9 @@ export abstract class WaveScene implements Visualizer {
     this.art.filters = [];
     this.bloomFilter?.destroy();
     this.bloomFilter = null;
-    this.root.destroy({ children: true });
+    // Graphics keep their owned context unless told otherwise when destroy()
+    // gets options, so name it: every context here is owned, none is shared.
+    this.root.destroy({ children: true, context: true });
   }
 
   /** Paints the backdrop. Transparent scenes leave it empty. */

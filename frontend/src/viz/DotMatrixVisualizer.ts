@@ -1,10 +1,10 @@
 /* Constellation matrix — a curved frequency lattice suspended in a deeper
  * star field. Dots, rather than columns or filled waves, carry the signal. */
-import type { AudioFrame } from './types';
-import { WaveScene, type WaveSceneOptions } from './WaveScene';
-import { rampByName, type Ramp } from './palette';
+import type { AudioFrame } from './types.ts';
+import { WaveScene, type WaveSceneOptions } from './WaveScene.ts';
+import { rampByName, type Ramp } from './palette.ts';
 import * as PIXI from 'pixi.js';
-import type { AudioEngine } from '../audio/AudioEngine';
+import type { AudioEngine } from '../audio/AudioEngine.ts';
 
 const BAND_COUNT = 48;
 const ROWS = 17;

@@ -3,10 +3,10 @@
  * particles and two wave ribbons share the display-ready audio frame.
  */
 import * as PIXI from 'pixi.js';
-import { WaveScene, type WaveSceneOptions } from './WaveScene';
-import { rampByName, type Ramp } from './palette';
-import type { AudioEngine } from '../audio/AudioEngine';
-import type { AudioFrame } from './types';
+import { WaveScene, type WaveSceneOptions } from './WaveScene.ts';
+import { rampByName, type Ramp } from './palette.ts';
+import type { AudioEngine } from '../audio/AudioEngine.ts';
+import type { AudioFrame } from './types.ts';
 
 const TAU = Math.PI * 2;
 const NEEDLES = 96;
@@ -17,19 +17,15 @@ export class LofiRainVisualizer extends WaveScene {
   private readonly ramp: Ramp;
   private readonly colors: number[];
   private radius = 160;
-  private mounted = false;
 
   constructor(app: PIXI.Application, audio: AudioEngine, options: WaveSceneOptions = {}) {
     super(app, audio, options, { bands: NEEDLES, wavePoints: POINTS, bloom: 0.45, bandHeight: 0.28 });
     this.ramp = rampByName(options.ramp ?? 'NEON');
     this.colors = Array.from({ length: NEEDLES }, (_, i) => this.ramp.hex(i / (NEEDLES - 1)));
+    this.art.addChildAt(this.platter, 0);
   }
 
   protected onResize() {
-    if (!this.mounted) {
-      this.art.addChildAt(this.platter, 0);
-      this.mounted = true;
-    }
     this.radius = Math.min(this.W * 0.21, this.halfBand * 0.78);
     const r = this.radius;
     const g = this.platter.clear();
