@@ -34,11 +34,13 @@ make test       # go test -race ./...
 make fmt-check  # fail if gofmt would change a file
 make tidy-check # fail if go mod tidy would change go.mod or go.sum
 make vet        # go vet ./...
-make staticcheck # staticcheck at the CI-pinned version
-make vulncheck  # govulncheck at the CI-pinned version
+make staticcheck # staticcheck at the version pinned in this Makefile
+make vulncheck  # govulncheck at the version pinned in this Makefile
 make watch      # live reload with pinned air (no global install)
 make clean      # remove build artifacts
 ```
+
+The CI backend job runs these Makefile targets, so the Makefile versions are the CI versions.
 
 ## ⚙️ Configuration
 

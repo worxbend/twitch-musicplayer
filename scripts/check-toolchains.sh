@@ -4,7 +4,8 @@
 # setup-go version) and Node major (frontend/.nvmrc vs frontend/Dockerfile,
 # @types/node and package.json engines.node). Versions named in the README and
 # developer docs must match too, as must the README TypeScript badge.
-# Patch versions may differ so Dependabot patch bumps stay green.
+# Patch versions may differ so Dependabot patch bumps stay green. CI must not
+# pin staticcheck or govulncheck: backend/Makefile holds their only pins.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -89,5 +90,16 @@ typescript=$(grep -m1 -E '"typescript"[[:space:]]*:' frontend/package.json \
   | sed -E 's/.*"typescript"[[:space:]]*:[[:space:]]*"[^0-9]*([0-9]+).*/\1/' || true)
 check_prose "typescript major" frontend/package.json "$typescript" '\bTypeScript-[0-9]+' \
   README.md
+
+# CI runs the backend Makefile targets, so staticcheck and govulncheck have one
+# pin. A version in ci.yml would be a second one that can drift.
+for tool in honnef.co/go/tools/cmd/staticcheck golang.org/x/vuln/cmd/govulncheck; do
+  if grep -nF "$tool@" .github/workflows/ci.yml >&2; then
+    echo "::error::.github/workflows/ci.yml pins ${tool##*/}; pin it in backend/Makefile" >&2
+    status=1
+  else
+    echo "ok ${tool##*/}: pinned only in backend/Makefile"
+  fi
+done
 
 exit "$status"

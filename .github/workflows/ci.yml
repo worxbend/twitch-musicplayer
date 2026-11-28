@@ -33,21 +33,22 @@ jobs:
           go-version: '1.27.x'
           check-latest: true
           cache-dependency-path: backend/go.sum
+      # These steps run the backend Makefile targets, where the tool versions are pinned.
       # Local equivalent: make -C backend check
       - name: gofmt
-        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+        run: make fmt-check
       - name: go mod tidy
-        run: go mod tidy -diff
+        run: make tidy-check
       - name: go vet
-        run: go vet ./...
+        run: make vet
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
+        run: make staticcheck
       - name: go test
-        run: go test -race ./...
+        run: make test
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+        run: make vulncheck
       - name: go build
-        run: go build ./cmd/api
+        run: make build
 
   frontend:
     runs-on: ubuntu-latest

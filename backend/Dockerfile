@@ -6,14 +6,18 @@ ARG TARGETOS TARGETARCH
 
 WORKDIR /app
 
+# Modules live in a BuildKit cache mount, not in the layer, so the build step
+# mounts the same cache.
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 COPY . .
 
 # CGO stays off: nothing here needs a C library, so the result is a static
-# binary that runs on any base image.
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+# binary that runs on any base image. The build cache persists across builds.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /lofi-radio ./cmd/api
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────

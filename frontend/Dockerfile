@@ -5,8 +5,9 @@ FROM --platform=$BUILDPLATFORM node:26-alpine AS builder
 
 WORKDIR /app
 
+# The npm download cache is a BuildKit cache mount; node_modules stays in the layer.
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY . .
 
