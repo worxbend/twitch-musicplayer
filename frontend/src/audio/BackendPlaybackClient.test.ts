@@ -157,6 +157,7 @@ beforeEach(() => {
 
 afterEach(() => {
   client.stop();
+  Reflect.deleteProperty(navigator, 'onLine');
   mock.timers.reset();
   FakeWebSocket.throwNext = null;
   Object.assign(window, { __LOFI_CONFIG__: { backendUrl: 'http://localhost:8080' } });
@@ -1305,6 +1306,99 @@ test('online while the socket is stuck connecting reconnects', () => {
 
   assert.equal(stuck.readyState, FakeWebSocket.CLOSED);
   assert.equal(FakeWebSocket.instances.length, 2);
+});
+
+// Node's navigator has no onLine; an own property stands in for the browser's.
+function setOnline(onLine: boolean) {
+  Object.defineProperty(navigator, 'onLine', { value: onLine, configurable: true });
+}
+
+function goOffline() {
+  setOnline(false);
+  dispatchWindow('offline');
+}
+
+function goOnline() {
+  setOnline(true);
+  dispatchWindow('online');
+}
+
+test('a socket that closes while offline reports Offline and schedules no retry', () => {
+  const ws = socket();
+  ws.open();
+  goOffline();
+  const before = statuses.length;
+  const sockets = FakeWebSocket.instances.length;
+
+  ws.close();
+  mock.timers.tick(20000);
+
+  assert.deepEqual(statuses.at(-1), { connection: 'disconnected', playback: 'idle', message: 'network offline' });
+  assert.ok(statuses.slice(before).every(s => s.connection !== 'reconnecting'));
+  assert.equal(FakeWebSocket.instances.length, sockets);
+});
+
+test('going offline cancels a pending retry', () => {
+  socket().close();
+  const sockets = FakeWebSocket.instances.length;
+
+  goOffline();
+  mock.timers.tick(20000);
+
+  assert.equal(statuses.at(-1)?.connection, 'disconnected');
+  assert.equal(FakeWebSocket.instances.length, sockets);
+});
+
+test('a WebSocket constructor throw while offline reports Offline and schedules no retry', () => {
+  setOnline(false);
+  restartWithConstructorThrow(new DOMException('blocked', 'SecurityError'));
+
+  mock.timers.tick(20000);
+
+  assert.equal(statuses.at(-1)?.connection, 'disconnected');
+  assert.equal(statuses.at(-1)?.message, 'network offline');
+  assert.equal(FakeWebSocket.instances.length, 0);
+});
+
+test('online after offline connects at once and reports reconnecting', () => {
+  goOffline();
+  const sockets = FakeWebSocket.instances.length;
+
+  goOnline();
+
+  assert.equal(FakeWebSocket.instances.length, sockets + 1);
+  assert.equal(statuses.at(-1)?.connection, 'reconnecting');
+  assert.equal(statuses.at(-1)?.message, 'network online');
+});
+
+test('online after failed attempts connects at once and resets the backoff', () => {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    socket().close();
+    mock.timers.tick(8000);
+  }
+  goOffline();
+  const sockets = FakeWebSocket.instances.length;
+
+  goOnline();
+  assert.equal(FakeWebSocket.instances.length, sockets + 1, 'no backoff wait');
+
+  socket().close();
+  mock.timers.tick(900);
+  assert.equal(FakeWebSocket.instances.length, sockets + 2, 'first retry uses the base delay');
+});
+
+test('a song request made while offline only queues and is flushed once after online', () => {
+  goOffline();
+  const sockets = FakeWebSocket.instances.length;
+
+  internals().requestSong();
+  assert.equal(FakeWebSocket.instances.length, sockets, 'no connect while offline');
+
+  goOnline();
+  socket().open();
+
+  assert.equal(needSongCount(socket()), 1);
+  assert.deepEqual(internals().outbox, []);
 });
 
 function sentOfType(ws: FakeWebSocket, type: string) {

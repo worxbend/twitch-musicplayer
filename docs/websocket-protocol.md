@@ -256,7 +256,7 @@ The frontend does not fetch MP3 bytes into JavaScript. It assigns `stream_url` t
 The supported frontend is a single active WebSocket playback client. It is designed to stay connected indefinitely:
 
 - reconnects with exponential backoff up to a capped delay;
-- listens for browser `online` and `offline` events;
+- listens for browser `online` and `offline` events: while the browser is offline it stops retrying and shows Offline, and on `online` it reconnects at once with the backoff reset;
 - sends application heartbeats;
 - reconnects when heartbeat acknowledgements or other messages stop arriving;
 - retries a socket whose handshake has not finished within 10 seconds, on the same backoff;

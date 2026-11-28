@@ -234,8 +234,7 @@ export class BackendPlaybackClient {
       // A bad backend URL or a CSP block throws here and fires no onclose, so
       // the retry is scheduled here or the client would never connect again.
       this.socket = null;
-      this.report({ connection: 'reconnecting' }, `radio connection failed: ${errorName(error)}`);
-      this.scheduleReconnect();
+      this.retryOrWaitForNetwork(`radio connection failed: ${errorName(error)}`);
       return;
     }
     this.connecting = true;
@@ -283,8 +282,7 @@ export class BackendPlaybackClient {
       this.cancelHandshake();
       this.socket = null;
       if (this.shouldRun) {
-        this.report({ connection: 'reconnecting' }, 'radio disconnected');
-        this.scheduleReconnect();
+        this.retryOrWaitForNetwork('radio disconnected');
       } else {
         this.report({ connection: 'disconnected', playback: 'idle' }, 'radio stopped');
       }
@@ -297,6 +295,19 @@ export class BackendPlaybackClient {
       }
       this.reconnectNow('radio connection error');
     };
+  }
+
+  // A retry while the browser is offline only fails and flips the label to
+  // Reconnecting; the 'online' event restarts the connection instead.
+  private retryOrWaitForNetwork(reason: string) {
+    if (browserOffline()) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = 0;
+      this.report({ connection: 'disconnected' }, 'network offline');
+      return;
+    }
+    this.report({ connection: 'reconnecting' }, reason);
+    this.scheduleReconnect();
   }
 
   private scheduleReconnect() {
@@ -630,7 +641,8 @@ export class BackendPlaybackClient {
     }
     // A live socket flushes the outbox on open and a pending timer reconnects;
     // forcing a reconnect here would abort the handshake or lengthen the backoff.
-    if (!this.socket && !this.reconnectTimer) this.connect();
+    // While offline the 'online' event connects and flushes.
+    if (!this.socket && !this.reconnectTimer && !browserOffline()) this.connect();
   }
 
   private send(message: SocketMessage) {
@@ -646,10 +658,16 @@ export class BackendPlaybackClient {
   private reconnectNow(reason = 'radio reconnecting') {
     this.cancelHandshake();
     if (!this.shouldRun) return;
-    this.report({ connection: 'reconnecting' }, reason);
+    this.dropSocket();
+    this.retryOrWaitForNetwork(reason);
+  }
+
+  // Tears down the socket and any pending retry without reporting.
+  private dropSocket() {
     window.clearInterval(this.heartbeatTimer);
     window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = 0;
+    this.cancelHandshake();
     if (this.socket) {
       // Detach first so this socket's own close/error events cannot schedule a second reconnect.
       detachSocket(this.socket);
@@ -657,19 +675,25 @@ export class BackendPlaybackClient {
     }
     this.socket = null;
     this.connecting = false;
-    this.scheduleReconnect();
   }
 
   // An open socket can outlive a network flap (e.g. a localhost backend), so
   // online/offline only act when the socket is not open. The heartbeat
   // timeout still catches an open socket that really died.
+  // Back online, the backoff is over: connect at once with a fresh counter.
   private handleOnline = () => {
     if (this.socket?.readyState === WebSocket.OPEN) return;
-    this.reconnectNow('network online');
+    this.reconnectAttempts = 0;
+    this.dropSocket();
+    this.report({ connection: 'reconnecting' }, 'network online');
+    this.connect();
   };
 
+  // A pending retry or a half-made socket would only fail and report
+  // Reconnecting while offline, so both go until the 'online' event.
   private handleOffline = () => {
     if (this.socket?.readyState === WebSocket.OPEN) return;
+    this.dropSocket();
     this.report({ connection: 'disconnected' }, 'network offline');
   };
 
@@ -688,6 +712,10 @@ function detachSocket(socket: WebSocket) {
   socket.onmessage = null;
   socket.onclose = null;
   socket.onerror = null;
+}
+
+function browserOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
 }
 
 function errorName(error: unknown): string {
