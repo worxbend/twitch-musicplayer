@@ -7,6 +7,9 @@ on:
       - site/**
       - docs/signal-observatory/*.png
       - frontend/src/assets/worxbend-logo.png
+      - frontend/src/routes.ts
+      - frontend/src/viz/scenes.ts
+      - scripts/site.sh
       - .github/workflows/pages.yml
   # Pull requests build and check the site but never deploy it.
   pull_request:
@@ -14,6 +17,9 @@ on:
       - site/**
       - docs/signal-observatory/*.png
       - frontend/src/assets/worxbend-logo.png
+      - frontend/src/routes.ts
+      - frontend/src/viz/scenes.ts
+      - scripts/site.sh
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -38,43 +44,12 @@ jobs:
       - name: install webp tools
         run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends webp
       # The site reuses the README screenshots and logo instead of keeping copies.
-      # The source logo is 2048px; the page shows it at 40px, so ship an 80px copy.
       - name: assemble site
-        run: |
-          set -euo pipefail
-          mkdir -p _site/shots
-          cp site/index.html site/styles.css site/tuner.js _site/
-          cwebp -quiet -lossless -resize 80 80 frontend/src/assets/worxbend-logo.png -o _site/logo.webp
-          dwebp -quiet _site/logo.webp -o _site/logo.png
-          for n in player spectrum bars mirror dots ribbon line lens console; do
-            cp "docs/signal-observatory/$n-desktop.png" _site/shots/
-            cwebp -quiet -q 80 -m 6 "_site/shots/$n-desktop.png" -o "_site/shots/$n-desktop.webp"
-          done
-      # Fail on a missing local asset or an oversized site before anything deploys.
+        run: bash scripts/site.sh build _site
+      # Fail on a missing local asset, an oversized site or a tuner route with no
+      # frontend page before anything deploys.
       - name: check site
-        run: |
-          set -euo pipefail
-          missing=0
-          html_refs=$(grep -oE '(src|srcset|href)="[^"]*"' _site/index.html | cut -d'"' -f2)
-          scene_refs=$(sed -nE 's/^  ([a-z]+): \{ route:.*/\1/p' _site/tuner.js |
-            sed -E 's#.*#shots/&-desktop.png shots/&-desktop.webp#')
-          for ref in $html_refs $scene_refs; do
-            case "$ref" in http://*|https://*|'#'*) continue ;; esac
-            path="${ref%%[?#]*}"
-            case "$path" in */) path="${path}index.html" ;; esac
-            if [ ! -f "_site/$path" ]; then
-              echo "::error::missing site asset: $ref"
-              missing=1
-            fi
-          done
-          size=$(du -sb _site | cut -f1)
-          echo "site size: $size bytes"
-          # About 2.0 MB today (PNG fallbacks are 1.57 MB); the slack absorbs encoder drift.
-          if [ "$size" -gt 2500000 ]; then
-            echo "::error::site is $size bytes, over the 2500000 byte budget"
-            missing=1
-          fi
-          exit "$missing"
+        run: bash scripts/site.sh check _site
       - if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

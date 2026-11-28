@@ -241,6 +241,14 @@ CI (`.github/workflows/ci.yml`) runs the same gates in six jobs: `backend`, `fro
 `scripts/docker-smoke.sh` and a compose hardening check) and `docker-arm64` (native arm64
 image builds on an arm64 runner, an architecture check and the same smoke script).
 
+The product site has its own workflow (`.github/workflows/pages.yml`). `make site` runs the
+same steps locally through `scripts/site.sh`: it assembles `site/` with the logo and
+screenshots into a temp dir (needs `cwebp` from the `webp` package), then fails on a missing
+asset, a site over the 2.5 MB budget, a `site/tuner.js` syntax error, a tuner route with no
+frontend page (`frontend/src/routes.ts` or a scene slug in `frontend/src/viz/scenes.ts`), or
+tuner radios in `site/index.html` that differ from the scenes in `tuner.js`. It stays out of
+`make check`.
+
 Frontend unit tests run in plain Node, which executes the TypeScript directly.
 Browser tests use Playwright and a separate Vite server on port 3100.
 

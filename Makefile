@@ -1,7 +1,8 @@
 # Runs the CI gates locally (.github/workflows/ci.yml).
 # `make check` covers the toolchains, lint, backend and frontend jobs.
 # `make ui` (Playwright) and `make docker-smoke` (image builds) are opt-in:
-# both are heavy on a shared host.
+# both are heavy on a shared host. `make site` runs the Pages build and check
+# (.github/workflows/pages.yml) and needs cwebp.
 
 .DEFAULT_GOAL := check
 
@@ -40,4 +41,13 @@ docker-smoke:
 	docker rmi $(SMOKE_BE_IMAGE) $(SMOKE_FE_IMAGE) >/dev/null 2>&1 || true; \
 	exit $$status
 
-.PHONY: check toolchains lint backend frontend ui docker-smoke
+# Builds the product site into a temp dir like pages.yml, checks it and removes
+# the dir even when a step fails.
+site:
+	@command -v cwebp >/dev/null 2>&1 || { echo 'make site: cwebp not found; install the webp package' >&2; exit 127; }
+	out=$$(mktemp -d); status=0; \
+	bash scripts/site.sh build "$$out" && bash scripts/site.sh check "$$out" || status=$$?; \
+	rm -rf "$$out"; \
+	exit $$status
+
+.PHONY: check toolchains lint backend frontend ui docker-smoke site
