@@ -98,8 +98,9 @@ func (h *SongsHandler) StreamContent(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(sw, r, filepath.Base(file.path), file.info.ModTime(), f)
 }
 
-// Cover handles GET /v1/songs/{id}/cover: the embedded ID3v2 cover image,
-// revalidated by an ETag over its bytes.
+// Cover handles GET /v1/songs/{id}/cover: the embedded ID3v2 cover image.
+// Clients must revalidate every use with the ETag over its bytes, so a
+// retagged cover shows on the next request.
 func (h *SongsHandler) Cover(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	file, ok := h.resolveSongFile(r.Context(), w, id)
@@ -123,7 +124,7 @@ func (h *SongsHandler) Cover(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 	header.Set("Content-Type", mime)
 	header.Set("X-Content-Type-Options", "nosniff")
-	header.Set("Cache-Control", "public, max-age=3600")
+	header.Set("Cache-Control", "public, no-cache")
 	header.Set("ETag", `"`+hex.EncodeToString(sum[:8])+`"`)
 	http.ServeContent(w, r, "", file.info.ModTime(), bytes.NewReader(img))
 }

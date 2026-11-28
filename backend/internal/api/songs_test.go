@@ -500,6 +500,7 @@ func TestSongsCover(t *testing.T) {
 		{ID: "plain", Path: "plain.mp3"},
 		{ID: "link", Path: "link.mp3"},
 		{ID: "gone", Path: "gone.mp3"},
+		{ID: "retag", Path: "retag.mp3"},
 	}}
 	router := songsRouter(repo, musicDir)
 
@@ -511,7 +512,7 @@ func TestSongsCover(t *testing.T) {
 		want := map[string]string{
 			"Content-Type":           "image/png",
 			"ETag":                   wantETag,
-			"Cache-Control":          "public, max-age=3600",
+			"Cache-Control":          "public, no-cache",
 			"X-Content-Type-Options": "nosniff",
 		}
 		for name, value := range want {
@@ -529,6 +530,33 @@ func TestSongsCover(t *testing.T) {
 		rec := serve(t, router, http.MethodGet, "/v1/songs/art/cover", "", header)
 		if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
 			t.Fatalf("status = %d body %q, want 304 with no body", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("retagged cover is not served stale", func(t *testing.T) {
+		retagPath := filepath.Join(musicDir, "retag.mp3")
+		writeTaggedSong(t, retagPath, png)
+		first := serve(t, router, http.MethodGet, "/v1/songs/retag/cover", "", nil)
+		oldETag := first.Header().Get("ETag")
+		if first.Code != http.StatusOK || oldETag != wantETag {
+			t.Fatalf("first fetch: status = %d ETag %q, want 200 %q", first.Code, oldETag, wantETag)
+		}
+
+		pngB := append(bytes.Clone(png), "\x00\x00\x00\x02"...)
+		sumB := sha256.Sum256(pngB)
+		wantETagB := `"` + hex.EncodeToString(sumB[:])[:16] + `"`
+		writeTaggedSong(t, retagPath, pngB)
+
+		header := http.Header{"If-None-Match": {oldETag}}
+		rec := serve(t, router, http.MethodGet, "/v1/songs/retag/cover", "", header)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 after retag", rec.Code)
+		}
+		if got := rec.Header().Get("ETag"); got != wantETagB {
+			t.Errorf("ETag = %q, want %q (old %q)", got, wantETagB, oldETag)
+		}
+		if !bytes.Equal(rec.Body.Bytes(), pngB) {
+			t.Errorf("body = %q, want the retagged picture", rec.Body.Bytes())
 		}
 	})
 

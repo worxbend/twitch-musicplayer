@@ -68,7 +68,8 @@ GET /v1/songs/{id}/cover
 Returns the embedded ID3v2 (APIC) cover image: the front cover when present, else the first
 other picture. The type is sniffed from the bytes, and only `image/jpeg`, `image/png`,
 `image/gif` and `image/webp` are served, with `X-Content-Type-Options: nosniff`. Responses carry
-`Cache-Control: public, max-age=3600` and an `ETag`; a matching `If-None-Match` returns `304`.
+`Cache-Control: public, no-cache` and an `ETag`: clients revalidate on each use, a matching
+`If-None-Match` returns `304`, and a retagged cover appears on the next request.
 
 Returns `404` for an unknown song, a missing file, or a file without a usable picture (tags over
 8 MiB are not parsed and count as no picture), `403` when the song path resolves outside the

@@ -187,9 +187,12 @@ paths:
                 type: string
                 example: '"9f86d081884c7d65"'
             Cache-Control:
+              description: >-
+                Clients revalidate every use with If-None-Match against the
+                ETag, so a retagged cover shows on the next request.
               schema:
                 type: string
-                example: public, max-age=3600
+                example: public, no-cache
             X-Content-Type-Options:
               schema:
                 type: string
