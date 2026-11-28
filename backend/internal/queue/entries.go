@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -131,22 +132,35 @@ func (m *Manager) PlayNext(ctx context.Context, songID string) error {
 // manual so PlayNext cannot drop it as an auto duplicate. The least_played
 // count is rolled back because the play was not delivered. The played mark and
 // recent history are left alone: marking again is idempotent and a stale
-// recent entry only nudges the shuffle.
+// recent entry only nudges the shuffle. A song blocked after it was handed out
+// is not requeued, but its count is still rolled back.
 func (m *Manager) Requeue(ctx context.Context, songID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.isBlocked(songID) {
+		log.Printf("queue: not requeueing %s, song is blocked", songID)
+		m.rollbackPlayCount(songID)
+		return nil
+	}
 	if err := m.queue.EnqueueFront(ctx, newQueueItem(songID, models.QueueSourceManual)); err != nil {
 		return fmt.Errorf("requeue song %s: %w", songID, err)
 	}
-	// Drop a count that reaches zero so pruneCounts' size check stays honest.
-	if m.cfg.Shuffle.Strategy == ShuffleLeastPlayed && m.playCounts[songID] > 0 {
-		m.playCounts[songID]--
-		if m.playCounts[songID] == 0 {
-			delete(m.playCounts, songID)
-		}
-	}
+	m.rollbackPlayCount(songID)
 	return nil
+}
+
+// rollbackPlayCount undoes the least_played count of a play that was not
+// delivered. A count that reaches zero is dropped so pruneCounts' size check
+// stays honest. Must be called with m.mu held.
+func (m *Manager) rollbackPlayCount(songID string) {
+	if m.cfg.Shuffle.Strategy != ShuffleLeastPlayed || m.playCounts[songID] == 0 {
+		return
+	}
+	m.playCounts[songID]--
+	if m.playCounts[songID] == 0 {
+		delete(m.playCounts, songID)
+	}
 }
 
 // removeAutoEntries drops every auto-queued entry for songID. An entry that is

@@ -1174,6 +1174,56 @@ func TestRequeueRollsBackPlayCount(t *testing.T) {
 	})
 }
 
+// TestRequeueSkipsBlockedSong: a song blocked after NextSong handed it out
+// must not come back at the queue head when its play message fails, but the
+// undelivered play is still rolled back.
+func TestRequeueSkipsBlockedSong(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("manual queue gets no entry", func(t *testing.T) {
+		lib := library(2)
+		m, _, _ := buildBlockingManager(t, ManagerConfig{Fill: FillConfig{Strategy: FillManualOnly}}, lib)
+		for _, s := range lib {
+			if _, err := m.AddToQueue(ctx, s.ID, models.QueueSourceManual); err != nil {
+				t.Fatalf("AddToQueue %s: %v", s.ID, err)
+			}
+		}
+		id := playN(t, m, 1)[0]
+		if _, err := m.BlockSong(ctx, id); err != nil {
+			t.Fatalf("BlockSong: %v", err)
+		}
+
+		if err := m.Requeue(ctx, id); err != nil {
+			t.Fatalf("Requeue: %v", err)
+		}
+		for _, item := range listQueue(t, m) {
+			if item.SongID == id {
+				t.Fatalf("queue holds blocked %s: %+v", id, item)
+			}
+		}
+	})
+
+	t.Run("least_played count is still rolled back", func(t *testing.T) {
+		m, _, _ := buildBlockingManager(t, autoRefillCfg(ShuffleLeastPlayed), library(3))
+		id := playN(t, m, 1)[0]
+		if _, err := m.BlockSong(ctx, id); err != nil {
+			t.Fatalf("BlockSong: %v", err)
+		}
+
+		if err := m.Requeue(ctx, id); err != nil {
+			t.Fatalf("Requeue: %v", err)
+		}
+		if n, ok := m.playCounts[id]; ok {
+			t.Fatalf("count for blocked %s = %d, want rolled back", id, n)
+		}
+		for _, item := range listQueue(t, m) {
+			if item.SongID == id {
+				t.Fatalf("queue holds blocked %s: %+v", id, item)
+			}
+		}
+	})
+}
+
 // failingEnqueueRepo is a QueueRepository whose Enqueue fails while failing is
 // set. EnqueueFront still works, so a rollback can succeed.
 type failingEnqueueRepo struct {
