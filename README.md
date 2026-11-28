@@ -13,7 +13,7 @@ tracks, and renders an audio-reactive visualizer you can drop straight into OBS.
 <br />
 
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Solid](https://img.shields.io/badge/SolidJS-1.9-2C4F7C?style=for-the-badge&logo=solid&logoColor=white)](https://www.solidjs.com)
 [![Pixi](https://img.shields.io/badge/Pixi.js-8-E72264?style=for-the-badge&logo=javascript&logoColor=white)](https://pixijs.com)
 [![Docker](https://img.shields.io/badge/Docker-Compose_ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](#-quick-start)
