@@ -3,7 +3,9 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -66,4 +68,44 @@ func normalizeParams(ops map[string]bool) map[string]bool {
 		out[pathParam.ReplaceAllString(op, "{}")] = true
 	}
 	return out
+}
+
+// TestDocsHaveNoStaleRunCommand fails when a Markdown file still says
+// "go run cmd/api/main.go"; the documented command is "go run ./cmd/api".
+func TestDocsHaveNoStaleRunCommand(t *testing.T) {
+	const stale = "go run cmd/api/main.go"
+	root := filepath.Join("..", "..", "..")
+	skipDirs := map[string]bool{"node_modules": true, ".git": true, "test-results": true}
+	dist := filepath.Join(root, "frontend", "dist")
+
+	checked := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if skipDirs[d.Name()] || path == dist {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".md" {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		checked++
+		if bytes.Contains(raw, []byte(stale)) {
+			t.Errorf("%s: says %q; use \"go run ./cmd/api\"", path, stale)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	if checked == 0 {
+		t.Fatal("found no Markdown files to check")
+	}
 }

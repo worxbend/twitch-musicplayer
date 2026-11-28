@@ -200,7 +200,7 @@ cd backend
 cp .env.example .env
 cp config.example.toml config.toml
 mkdir -p music          # ← drop your MP3s in here
-go run cmd/api/main.go
+go run ./cmd/api
 ```
 
 **2️⃣ Start the frontend** 🖼️

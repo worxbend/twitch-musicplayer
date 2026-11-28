@@ -29,7 +29,7 @@ picked up live by the filesystem watcher — including files added to nested sub
 ```bash
 make check      # CI gates: toolchains, fmt-check, tidy-check, vet, staticcheck, test, vulncheck, build
 make build      # compile the binary
-make run        # build and run
+make run        # go run ./cmd/api (no binary)
 make test       # go test -race ./...
 make fmt-check  # fail if gofmt would change a file
 make tidy-check # fail if go mod tidy would change go.mod or go.sum

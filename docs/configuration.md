@@ -69,6 +69,8 @@ blocklist, and the file is replaced on the next block or unblock.
 Example: `backend/.env.example`.
 
 ```bash
+# Path to the TOML config (default config.toml); must exist when set.
+# LOFI_CONFIG=config.toml
 PORT=8080
 BLOOM_PATH=./lofi-radio.bloom
 MUSIC_DIR=./music
