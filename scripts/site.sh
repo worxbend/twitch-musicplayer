@@ -36,6 +36,11 @@ build() {
 # Prints "missing site asset" errors and returns 1 when any local reference is absent.
 check_assets() {
   local missing=0 html_refs scene_refs ref path
+  # The refs below are read from these files, so an empty OUT must not pass.
+  for path in index.html styles.css tuner.js; do
+    [ -f "$out/$path" ] || { echo "::error::missing site asset: $path"; missing=1; }
+  done
+  [ "$missing" -eq 0 ] || return 1
   html_refs=$(grep -oE '(src|srcset|href)="[^"]*"' "$out/index.html" | cut -d'"' -f2)
   scene_refs=$(sed -nE 's/^  ([a-z]+): \{ route:.*/\1/p' "$out/tuner.js" |
     sed -E 's#.*#shots/&-desktop.png shots/&-desktop.webp#')
