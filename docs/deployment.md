@@ -273,6 +273,7 @@ production:
 ## 🛠️ Operational Notes
 
 - The backend scans the music folder, including nested folders, on startup. The scan finishes before the API listens, so startup takes longer as the library grows. The healthcheck allows 300s for it; raise `start_period` for a very large library on slow storage.
+- The image healthcheck probes the port in `PORT`. Changing `PORT` moves the container port too, so update the port mapping (`-p <host>:<PORT>`) to match.
 - New files are indexed and queued once their size stops changing, so a slow copy straight into the folder is safe.
 - Deleted or renamed files are dropped from the library and the queue.
 - Symlinks that resolve outside `music_dir` are skipped.

@@ -35,12 +35,12 @@ readonly tmp
 cleanup() {
   local status=$?
   if [[ $status -ne 0 ]]; then
-    for name in "$BE_NAME" "$FE_NAME"; do
+    for name in "$BE_NAME" "$BE_NAME-port" "$FE_NAME"; do
       echo "--- docker logs $name" >&2
       docker logs "$name" >&2 2>&1 || true
     done
   fi
-  docker rm -f "$BE_NAME" "$FE_NAME" >/dev/null 2>&1 || true
+  docker rm -f "$BE_NAME" "$BE_NAME-port" "$FE_NAME" >/dev/null 2>&1 || true
   docker volume rm "$DATA_VOLUME" >/dev/null 2>&1 || true
   rm -rf -- "$tmp"
   exit "$status"
@@ -74,6 +74,17 @@ smoke_backend() {
     grep -i '^x-content-type-options: nosniff' h.txt
   done
   wait_healthy "$BE_NAME"
+}
+
+# The image healthcheck must follow PORT, not a hardcoded 8080. No host port:
+# only the in-container probe matters here.
+smoke_backend_port() {
+  docker run -d --name "$BE_NAME-port" -e PORT=9090 -e BASE_URL="$BE_URL" \
+    --health-interval 1s --health-start-period 0s \
+    --read-only --tmpfs /tmp --tmpfs /music -v "$DATA_VOLUME:/data" \
+    --cap-drop ALL --security-opt no-new-privileges:true "$BE_IMAGE" >/dev/null
+  wait_healthy "$BE_NAME-port"
+  echo "docker-smoke: backend with PORT=9090 is healthy"
 }
 
 # Hostile values must stop the hook before nginx starts. Only the hook runs
@@ -148,6 +159,7 @@ smoke_frontend_routes() {
 
 cd "$tmp"
 smoke_backend
+smoke_backend_port
 smoke_frontend_start
 smoke_frontend_config_hook
 smoke_frontend_routes
