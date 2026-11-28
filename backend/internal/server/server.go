@@ -89,6 +89,9 @@ func buildRoutes(opts Options) http.Handler {
 		MaxAge:          300,
 	}))
 	r.Use(rejectForeignWrites(allowOrigin))
+	// GetHead routes HEAD to the GET handler of any path without its own
+	// HEAD route; net/http drops the body, so clients get headers only.
+	r.Use(middleware.GetHead)
 
 	// HEAD is registered alongside GET because probes commonly use it —
 	// `wget --spider` and most load balancers send HEAD, and chi would

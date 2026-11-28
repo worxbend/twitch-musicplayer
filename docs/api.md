@@ -18,6 +18,8 @@ Base URL:
 http://localhost:8080
 ```
 
+Every `GET` route also answers `HEAD` with the same status and headers and no body.
+
 ## 🩺 Health
 
 ```http

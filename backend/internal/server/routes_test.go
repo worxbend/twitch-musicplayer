@@ -2,15 +2,21 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5/middleware"
 
 	"lofi-radio-backend/internal/api"
+	"lofi-radio-backend/internal/models"
+	"lofi-radio-backend/internal/player"
 	"lofi-radio-backend/internal/repository"
 )
 
@@ -133,6 +139,73 @@ func TestEveryResponseSendsNoSniff(t *testing.T) {
 			}
 			if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 				t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+		})
+	}
+}
+
+// headTestServer serves the full router over a real listener, so net/http
+// drops HEAD bodies as it does in production. The library holds one song,
+// "s", whose file is the 10-byte fixture a.mp3.
+func headTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	musicDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(musicDir, "a.mp3"), []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	songs := repository.NewMemSongRepo()
+	if err := songs.Create(context.Background(), &models.Song{ID: "s", Path: "a.mp3", Filename: "a.mp3"}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(buildRoutes(Options{
+		Songs:  api.NewSongsHandler(songs, musicDir),
+		Player: api.NewPlayerHandler(nil, nil, nil, player.NewStateTracker(), "{artist} - {title}"),
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestHeadOnGetRoutes(t *testing.T) {
+	srv := headTestServer(t)
+
+	tests := []struct {
+		name, path  string
+		wantStatus  int
+		wantHeaders map[string]string
+	}{
+		{name: "song list", path: "/v1/songs", wantStatus: http.StatusOK},
+		{name: "history", path: "/v1/history", wantStatus: http.StatusOK},
+		{name: "now playing text", path: "/v1/now-playing.txt", wantStatus: http.StatusOK},
+		{
+			name: "song content", path: "/v1/songs/s/content", wantStatus: http.StatusOK,
+			wantHeaders: map[string]string{"Content-Length": "10", "Accept-Ranges": "bytes"},
+		},
+		{name: "unknown song content", path: "/v1/songs/missing/content", wantStatus: http.StatusNotFound},
+		{name: "post-only queue route", path: "/v1/queue:skip", wantStatus: http.StatusMethodNotAllowed},
+		{name: "post-only player route", path: "/v1/player:skip", wantStatus: http.StatusMethodNotAllowed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := srv.Client().Head(srv.URL + tt.path)
+			if err != nil {
+				t.Fatalf("HEAD %s: %v", tt.path, err)
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if len(body) != 0 {
+				t.Fatalf("body = %q, want empty", body)
+			}
+			for name, want := range tt.wantHeaders {
+				if got := resp.Header.Get(name); got != want {
+					t.Errorf("%s = %q, want %q", name, got, want)
+				}
 			}
 		})
 	}

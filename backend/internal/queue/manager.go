@@ -320,7 +320,27 @@ func (m *Manager) recordPlay(song *models.Song) {
 }
 
 // TotalSongs reports how many indexed songs are in rotation (not blocked).
+// It counts without copying the library: it runs on every player poll, WS
+// snapshot and skip check. Reads are not atomic with library changes, so a
+// concurrent scan can skew the count by the songs it touches.
 func (m *Manager) TotalSongs(ctx context.Context) (int, error) {
-	rotation, err := m.rotation(ctx)
-	return len(rotation), err
+	total, err := m.songs.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count songs: %w", err)
+	}
+	if m.blocklist == nil {
+		return total, nil
+	}
+	for _, id := range m.blocklist.List() {
+		_, err := m.songs.GetByID(ctx, id)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Blocked file has left the library; it was never counted.
+		case err != nil:
+			return 0, fmt.Errorf("get blocked song %s: %w", id, err)
+		default:
+			total--
+		}
+	}
+	return max(total, 0), nil
 }

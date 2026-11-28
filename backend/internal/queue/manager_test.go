@@ -1285,3 +1285,78 @@ func TestNextSongFailedRefillKeepsQueuedEntry(t *testing.T) {
 		})
 	}
 }
+
+// countOnlySongRepo is a MemSongRepo that fails the test on List, so
+// TotalSongs must count without copying the library. A non-nil getErr is
+// returned by every GetByID.
+type countOnlySongRepo struct {
+	*repository.MemSongRepo
+	t      *testing.T
+	getErr error
+}
+
+func (r *countOnlySongRepo) List(context.Context) ([]*models.Song, error) {
+	r.t.Error("TotalSongs called List")
+	return nil, nil
+}
+
+func (r *countOnlySongRepo) GetByID(ctx context.Context, id string) (*models.Song, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
+	return r.MemSongRepo.GetByID(ctx, id)
+}
+
+// countOnlyManager seeds library(n) into a countOnlySongRepo and blocks the
+// given IDs; it uses no blocklist when blocked is nil.
+func countOnlyManager(t *testing.T, n int, getErr error, blocked []string) *Manager {
+	t.Helper()
+	songRepo := &countOnlySongRepo{MemSongRepo: repository.NewMemSongRepo(), t: t, getErr: getErr}
+	for _, s := range library(n) {
+		if err := songRepo.Create(context.Background(), s); err != nil {
+			t.Fatalf("seed song %s: %v", s.ID, err)
+		}
+	}
+	var cfg ManagerConfig
+	if blocked != nil {
+		store := blocklist.Empty(filepath.Join(t.TempDir(), "radio.blocked.json"))
+		for _, id := range blocked {
+			if err := store.Add(id); err != nil {
+				t.Fatalf("block %s: %v", id, err)
+			}
+		}
+		cfg.Blocklist = store
+	}
+	return New(songRepo, played.New(1000, 0.01), repository.NewMemQueueRepo(songRepo.MemSongRepo), cfg)
+}
+
+func TestTotalSongsCountsRotationWithoutList(t *testing.T) {
+	tests := []struct {
+		name    string
+		blocked []string
+		want    int
+	}{
+		{name: "no blocklist", want: 3},
+		{name: "empty blocklist", blocked: []string{}, want: 3},
+		{name: "blocked song in library", blocked: []string{"s1"}, want: 2},
+		{name: "blocked song left library", blocked: []string{"gone"}, want: 3},
+		{name: "every song blocked", blocked: []string{"s0", "s1", "s2"}, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := countOnlyManager(t, 3, nil, tt.blocked)
+			total, err := m.TotalSongs(context.Background())
+			if err != nil || total != tt.want {
+				t.Fatalf("TotalSongs = %d, %v; want %d, nil", total, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestTotalSongsPropagatesLookupError(t *testing.T) {
+	lookupErr := errors.New("disk on fire")
+	m := countOnlyManager(t, 3, lookupErr, []string{"s1"})
+	if _, err := m.TotalSongs(context.Background()); !errors.Is(err, lookupErr) {
+		t.Fatalf("TotalSongs error = %v, want %v", err, lookupErr)
+	}
+}
