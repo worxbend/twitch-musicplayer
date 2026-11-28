@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "test": "node --test \"src/**/*.test.ts\"",
     "test:ui": "playwright test",
+    "test:ui:prod": "PW_PROD=1 playwright test",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {

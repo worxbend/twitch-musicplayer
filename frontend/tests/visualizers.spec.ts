@@ -388,7 +388,7 @@ test('analysis tap detaches its input on rebind and repeated disposal without di
   expect(errors).toEqual([]);
 });
 
-test('oscilloscope preview pixels follow the selected ramp and its scene URLs', async ({ page }) => {
+test('oscilloscope preview pixels follow the selected ramp and its scene URLs', { tag: '@smoke' }, async ({ page }) => {
   const errors = recordErrors(page);
   await page.goto('/scenes');
   const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'Oscilloscope', exact: true }) });

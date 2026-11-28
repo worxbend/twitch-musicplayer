@@ -101,6 +101,10 @@ jobs:
         run: npm run test:ui
         env:
           CI: true
+      - name: playwright (production bundle smoke)
+        run: npm run test:ui:prod
+        env:
+          CI: true
       - name: upload playwright report
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

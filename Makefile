@@ -1,7 +1,7 @@
 # Runs the CI gates locally (.github/workflows/ci.yml).
 # `make check` covers the toolchains, lint, backend and frontend jobs.
-# `make ui` (Playwright) and `make docker-smoke` (image builds) are opt-in:
-# both are heavy on a shared host. `make site` runs the Pages build and check
+# `make ui`, `make ui-prod` (Playwright) and `make docker-smoke` (image builds)
+# are opt-in: they are heavy on a shared host. `make site` runs the Pages build and check
 # (.github/workflows/pages.yml) and needs cwebp.
 
 .DEFAULT_GOAL := check
@@ -37,6 +37,11 @@ ui:
 	$(call need,npm,$(NPM_HINT))
 	cd frontend && npm run test:ui
 
+# The @smoke subset against the production bundle (vite build + vite preview).
+ui-prod:
+	$(call need,npm,$(NPM_HINT))
+	cd frontend && npm run test:ui:prod
+
 # Builds both images, smokes them and the compose hardening on spare ports
 # and removes the tags even when a step fails.
 docker-smoke:
@@ -63,4 +68,4 @@ site:
 	rm -rf "$$out"; \
 	exit $$status
 
-.PHONY: check toolchains lint backend frontend ui docker-smoke site
+.PHONY: check toolchains lint backend frontend ui ui-prod docker-smoke site

@@ -100,7 +100,7 @@ for (const viewport of [{width: 1440, height: 960}, {width: 768, height: 1024}, 
   });
 }
 
-test('scene ramp selection, copy confirmation, and clipboard fallback', async ({ page, context }) => {
+test('scene ramp selection, copy confirmation, and clipboard fallback', { tag: '@smoke' }, async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/scenes');
   await page.getByLabel('Colour ramp').selectOption('EMBER');
@@ -140,7 +140,7 @@ test('now playing overlay URL builder copies the configured URL', async ({ page,
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('http://127.0.0.1:3100/now-playing?align=center&size=48&hold=8&art=1&theme=pill&font=mono&next=1&progress=1&ticker=1');
 });
 
-test('library search, queue add/remove, and keyboard-safe clear confirmation', async ({ page }) => {
+test('library search, queue add/remove, and keyboard-safe clear confirmation', { tag: '@smoke' }, async ({ page }) => {
   await mockStation(page);
   await page.goto('/admin');
   const library = page.getByRole('region', { name: 'Music library' });
@@ -476,7 +476,7 @@ async function mockBlocklist(page: Page, initial: { id: string; title?: string; 
   });
 }
 
-test('admin blocks a song from the library and allows it again', async ({ page }) => {
+test('admin blocks a song from the library and allows it again', { tag: '@smoke' }, async ({ page }) => {
   await mockStation(page);
   await mockBlocklist(page);
   const queuePosts: string[] = [];
@@ -746,7 +746,7 @@ test('volume shortcuts fire only while focus is inside the player deck', async (
   await expect(mute).toHaveAttribute('aria-pressed', 'false');
 });
 
-test('scene routes share the persisted volume; overlays render no slider', async ({ page }) => {
+test('scene routes share the persisted volume; overlays render no slider', { tag: '@smoke' }, async ({ page }) => {
   await mockStation(page, { empty: true });
   await page.goto('/');
   await page.getByRole('button', { name: 'Mute' }).focus();
@@ -879,7 +879,7 @@ test('now-playing shows cover art only with ?art=1', async ({ page }) => {
   await expect(page.locator('.np-art')).toHaveCount(0);
 });
 
-test('now-playing ?next=1 shows the next queued title; an empty queue hides it', async ({ page }) => {
+test('now-playing ?next=1 shows the next queued title; an empty queue hides it', { tag: '@smoke' }, async ({ page }) => {
   let route!: WebSocketRoute;
   await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { route = ws; });
   const send = (msg: object) => route.send(JSON.stringify(msg));

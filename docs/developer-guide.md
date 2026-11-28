@@ -201,6 +201,8 @@ Run every CI gate from the repo root with one command:
 make check              # toolchain parity, lint, backend check, frontend
                         # npm ci + audit + typecheck + test + build
 make ui                 # opt-in: Playwright (needs chromium installed)
+make ui-prod            # opt-in: the @smoke Playwright subset against the
+                        # production bundle (vite build + vite preview)
 make docker-smoke       # opt-in: builds both images, runs scripts/docker-smoke.sh
                         # and scripts/compose-smoke.sh (hub/local compose
                         # hardening parity, then docker-compose.yml hardening)
@@ -208,7 +210,7 @@ make docker-smoke       # opt-in: builds both images, runs scripts/docker-smoke.
                         # SMOKE_FE_PORT=...), then removes the images
 ```
 
-`ui` and `docker-smoke` stay out of `make check` because both are heavy on a shared host.
+`ui`, `ui-prod` and `docker-smoke` stay out of `make check` because they are heavy on a shared host.
 The blocks below are the per-gate detail.
 
 ```bash
@@ -225,6 +227,7 @@ npm test                # unit tests, via node --test
 npm run build           # typecheck + production bundle
 npx playwright install chromium
 npm run test:ui         # Chromium artwork, accessibility, playback and interaction checks
+npm run test:ui:prod    # tests tagged @smoke against a dist-e2e build served by vite preview
 ```
 
 ```bash
