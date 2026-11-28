@@ -6,13 +6,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/bits-and-blooms/bloom/v3"
+
+	"lofi-radio-backend/internal/atomicfile"
 )
 
 // Tracker tracks which songs have been played using an in-memory Bloom filter.
@@ -157,32 +159,10 @@ func (t *Tracker) RunAutosave(ctx context.Context, path string, every time.Durat
 // saveLocked writes the filter to path atomically. The caller holds t.mu
 // (read or write).
 func (t *Tracker) saveLocked(path string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".bloom-*")
-	if err != nil {
+	return atomicfile.Write(path, ".bloom-*", 0o600, func(w io.Writer) error {
+		_, err := t.f.WriteTo(w)
 		return err
-	}
-	if err := writeSynced(tmp, t.f); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	return nil
-}
-
-// writeSynced writes f to tmp, syncs it, and closes it. tmp is always closed.
-func writeSynced(tmp *os.File, f *bloom.BloomFilter) error {
-	if _, err := f.WriteTo(tmp); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	return tmp.Close()
+	})
 }
 
 // Load restores the filter from path. Returns nil if path does not exist.

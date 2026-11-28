@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"slices"
 	"sync"
+
+	"lofi-radio-backend/internal/atomicfile"
 )
 
 const fileVersion = 1
@@ -121,30 +123,8 @@ func (s *Store) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".blocked-*")
-	if err != nil {
+	return atomicfile.Write(s.path, ".blocked-*", 0o600, func(w io.Writer) error {
+		_, err := w.Write(data)
 		return err
-	}
-	if err := writeSynced(tmp, data); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	if err := os.Rename(tmp.Name(), s.path); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	return nil
-}
-
-// writeSynced writes data to tmp, syncs it, and closes it. tmp is always closed.
-func writeSynced(tmp *os.File, data []byte) error {
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	return tmp.Close()
+	})
 }
