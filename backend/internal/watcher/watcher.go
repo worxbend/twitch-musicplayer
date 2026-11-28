@@ -87,9 +87,11 @@ type Watcher struct {
 	resyncC  coalescer
 	// watchedDirs records every folder whose watch was added, so a Remove or
 	// Rename re-walks only for a folder. fsnotify's WatchList cannot serve:
-	// it may already have dropped a renamed folder's watch by then.
+	// it may already have dropped a renamed folder's watch by then. movedDirs
+	// holds renamed folders until their own MOVE_SELF Rename arrives.
 	watchedMu   sync.Mutex
 	watchedDirs map[string]struct{}
+	movedDirs   map[string]struct{}
 
 	// OnRemoved, when set before Start, is notified after songs are dropped.
 	OnRemoved OnSongsRemoved
@@ -141,6 +143,7 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 		settleSem:  make(chan struct{}, settleWorkers),
 
 		watchedDirs: map[string]struct{}{absDir: {}},
+		movedDirs:   make(map[string]struct{}),
 	}
 	w.settleWait = w.waitSettled
 	return w, nil
@@ -250,7 +253,7 @@ func (w *Watcher) handleEvent(ctx context.Context, event fsnotify.Event) {
 	if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 		// A rename's new path arrives separately as a Create event.
 		w.unregisterPath(ctx, event.Name)
-		if w.forgetWatchedUnder(event.Name) {
+		if w.folderGone(event) {
 			// inotify gives a moved folder its old watch descriptor, and
 			// fsnotify then removes that shared watch for the old path, so
 			// the folder's new path can silently stop reporting files. The
@@ -274,20 +277,39 @@ func (w *Watcher) recordWatched(dir string) {
 	w.watchedDirs[dir] = struct{}{}
 }
 
-// forgetWatchedUnder drops path and every recorded folder below it, and
-// reports whether path was a watched folder or held one.
-func (w *Watcher) forgetWatchedUnder(path string) bool {
+// folderGone drops event.Name and every recorded folder below it, and reports
+// whether it was a watched folder or held one. A renamed folder is reported
+// twice: by its parent, then by its own MOVE_SELF watch. Both must re-walk:
+// the first walk can re-add the folder's new path, which inotify gives the
+// old watch descriptor, before fsnotify handles MOVE_SELF and removes that
+// shared watch. So a Rename parks the folders in movedDirs until the second
+// report, which is matched by the same old path.
+func (w *Watcher) folderGone(event fsnotify.Event) bool {
+	path := event.Name
 	prefix := path + string(filepath.Separator)
+	under := func(dir string) bool { return dir == path || strings.HasPrefix(dir, prefix) }
+	renamed := event.Has(fsnotify.Rename)
 	w.watchedMu.Lock()
 	defer w.watchedMu.Unlock()
-	forgot := false
-	for dir := range w.watchedDirs {
-		if dir == path || strings.HasPrefix(dir, prefix) {
-			delete(w.watchedDirs, dir)
-			forgot = true
+	_, gone := w.movedDirs[path]
+	if gone {
+		// The MOVE_SELF report: the last for this rename.
+		for dir := range w.movedDirs {
+			if under(dir) {
+				delete(w.movedDirs, dir)
+			}
 		}
 	}
-	return forgot
+	for dir := range w.watchedDirs {
+		if under(dir) {
+			delete(w.watchedDirs, dir)
+			if renamed {
+				w.movedDirs[dir] = struct{}{}
+			}
+			gone = true
+		}
+	}
+	return gone
 }
 
 // requestRewatch re-walks the library in the background to re-add every

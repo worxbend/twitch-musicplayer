@@ -317,6 +317,42 @@ func TestWatcherRewatchesAfterRenamingFolderNamedLikeMusicFile(t *testing.T) {
 	}
 }
 
+// A renamed folder is reported by its parent and then by its own MOVE_SELF
+// watch under the same old path; both reports must re-walk, since the first
+// walk can re-add the shared watch that MOVE_SELF then removes.
+func TestFolderGoneRewalksForBothRenameReports(t *testing.T) {
+	dir := t.TempDir()
+	w, err := New(dir, nil, repository.NewMemSongRepo(), nil, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { w.fsWatcher.Close() })
+	folder := filepath.Join(w.dir, "a")
+	w.recordWatched(folder)
+	w.recordWatched(filepath.Join(folder, "b"))
+	rename := func(path string) bool { return w.folderGone(fsnotify.Event{Name: path, Op: fsnotify.Rename}) }
+
+	if !rename(folder) {
+		t.Fatal("parent's Rename report of a watched folder started no re-walk")
+	}
+	if !rename(folder) {
+		t.Fatal("folder's own MOVE_SELF report started no re-walk")
+	}
+	if rename(folder) || rename(filepath.Join(folder, "b")) {
+		t.Fatal("a third report re-walked; the rename should be settled")
+	}
+
+	gone := filepath.Join(w.dir, "c")
+	w.recordWatched(gone)
+	remove := fsnotify.Event{Name: gone, Op: fsnotify.Remove}
+	if !w.folderGone(remove) {
+		t.Fatal("Remove of a watched folder started no re-walk")
+	}
+	if w.folderGone(remove) || w.folderGone(fsnotify.Event{Name: filepath.Join(w.dir, "cover.jpg"), Op: fsnotify.Remove}) {
+		t.Fatal("Remove of an unwatched path started a re-walk")
+	}
+}
+
 func TestWatcherIndexesFileInRepeatedlyRenamedFolder(t *testing.T) {
 	if testing.Short() {
 		t.Skip("stress test")
