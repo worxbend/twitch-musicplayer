@@ -30,3 +30,9 @@ export function isNew(addedAt: string, nowMs: number): boolean {
   const age = nowMs - t;
   return age >= -CLOCK_SKEW_MS && age < NEW_WINDOW_MS;
 }
+
+/** The library count: '1 track' / 'N tracks', or with a search '1 song matches' / 'N songs match'. */
+export function libraryCountText(count: number, query: string): string {
+  if (query.trim()) return count === 1 ? '1 song matches' : `${count} songs match`;
+  return count === 1 ? '1 track' : `${count} tracks`;
+}

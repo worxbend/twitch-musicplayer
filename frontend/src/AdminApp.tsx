@@ -4,7 +4,7 @@ import { reconnectDelay, HEARTBEAT_MS, isStale, armHandshakeTimeout } from './co
 import { createLatest } from './admin/latestRequest';
 import { connectionAnnouncement, connectionLabel, type AdminConnection } from './admin/connection';
 import { HttpError, errorText, fetchWithTimeout, REQUEST_TIMEOUT_MS } from './admin/request';
-import { isNew, sortSongs, type LibrarySort } from './admin/librarySort';
+import { isNew, libraryCountText, sortSongs, type LibrarySort } from './admin/librarySort';
 import { blockedIdSet, blockedReason } from './admin/blocked';
 import { TerminalHeader } from './components/TerminalHeader';
 import { formatDuration } from './format/trackTime';
@@ -120,6 +120,8 @@ export function AdminApp() {
   // A fresh id per call makes Solid insert a new node, so a repeated message is re-announced.
   const [notice, setNotice] = createSignal<{ id: number; text: string; error: boolean } | null>(null);
   const [searchQuery, setSearchQuery] = createSignal('');
+  // Set only by a user search reply, so silent refetches never announce.
+  const [searchAnnouncement, setSearchAnnouncement] = createSignal('');
   const [sort, setSort] = createSignal<LibrarySort>(savedSort());
   const sortedSongs = createMemo(() => sortSongs(songs(), sort()));
   // Drives the New badge; refreshed by each library fetch and once a minute.
@@ -169,9 +171,13 @@ export function AdminApp() {
         setSongs(data.songs ?? []);
         setLibraryError(false);
         restoreSongFocus(focused, sortedSongs());
+        if (!opts?.silent && q.trim()) setSearchAnnouncement(libraryCountText(songs().length, q));
       }
     // loading() is still true before the first rows arrive: nothing to keep.
-    } catch { if (id === searchRequest && !disposed && (!opts?.silent || loading())) setLibraryError(true); }
+    } catch {
+      if (id === searchRequest && !disposed) setSearchAnnouncement('');
+      if (id === searchRequest && !disposed && (!opts?.silent || loading())) setLibraryError(true);
+    }
     finally { if (id === searchRequest && !disposed) setLoading(false); }
   }
   function chooseSort(next: LibrarySort) {
@@ -391,6 +397,7 @@ export function AdminApp() {
     window.clearTimeout(searchTimer);
     // Invalidate an in-flight result as soon as the query changes.
     searchRequest++;
+    if (!q.trim()) setSearchAnnouncement('');
     searchTimer = window.setTimeout(() => void fetchSongs(q), 280);
   });
   onMount(() => {
@@ -432,25 +439,31 @@ export function AdminApp() {
         </section>
         <div class="admin-main">
           <section class="song-panel" aria-labelledby="library-heading">
-            <div class="panel-header"><h2 id="library-heading" class="panel-title" tabIndex={-1}>Music library</h2><div class="sort-group" role="group" aria-label="Sort library"><button type="button" class="btn" aria-pressed={sort() === 'title'} onClick={() => chooseSort('title')}>A–Z</button><button type="button" class="btn" aria-pressed={sort() === 'recent'} onClick={() => chooseSort('recent')}>Recently added</button></div><span class="panel-meta">{songs().length} {searchQuery() ? 'matches' : 'tracks'}</span></div>
+            <div class="panel-header"><h2 id="library-heading" class="panel-title" tabIndex={-1}>Music library</h2><div class="sort-group" role="group" aria-label="Sort library"><button type="button" class="btn" aria-pressed={sort() === 'title'} onClick={() => chooseSort('title')}>A–Z</button><button type="button" class="btn" aria-pressed={sort() === 'recent'} onClick={() => chooseSort('recent')}>Recently added</button></div><span class="panel-meta">{libraryCountText(songs().length, searchQuery())}</span></div>
             <div class="search-row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="6" stroke="currentColor" stroke-width="1.5" /><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg><input ref={searchInput} class="search-box" aria-label="Search music library" type="search" placeholder="Search title, artist, album…" value={searchQuery()} onInput={e => setSearchQuery(e.currentTarget.value)} /><Show when={searchQuery()}><button class="btn" onClick={() => { setSearchQuery(''); searchInput.focus(); }}>Reset</button></Show></div>
+            <p id="library-search-status" class="sr-only" aria-live="polite">{searchAnnouncement()}</p>
             <div class="list-column-labels" aria-hidden="true"><span>Track / artist / album</span><span>Time</span><span>Actions</span></div>
             <div class="song-list" aria-busy={loading()}>
               <Show when={!loading()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--loading" aria-hidden="true">◌</span><h3>Reading your library</h3><p>Fetching tracks from the backend.</p></div>}>
                 <Show when={!libraryError()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--error" aria-hidden="true">!</span><h3>Library unavailable</h3><p>Check the backend connection, then try again.</p><button class="btn" onClick={() => retry('library-heading', () => fetchSongs())}>Retry connection</button></div>}>
-                  <For each={sortedSongs()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">♫</span><h3>{searchQuery() ? 'No matching tracks' : 'Your library is quiet'}</h3><p>{searchQuery() ? 'Try a different title, artist, or album.' : 'Add MP3 files to your configured music folder.'}</p></div>}>
-                    {(song, idx) => {
-                      const reason = () => blockedReasonFor(song);
-                      const reasonId = `song-blocked-${song.id}`;
-                      return <div class="song-item" classList={{'song-item--playing': currentSong()?.id === song.id, 'song-item--blocked': !!reason()}}>
-                        <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
-                        <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta"><Show when={reason()}><span class="song-badge song-badge--blocked">Blocked</span></Show><Show when={isNew(song.added_at, now())}><span class="song-badge">New</span></Show>{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
-                        <span class="song-duration">{formatDuration(song.duration_secs)}</span>
-                        <div class="song-actions"><ActionButton class="btn btn-ghost btn-icon" title={reason() ?? 'Add to queue'} aria-label={`Add ${songLabel(song)} to queue`} aria-describedby={reason() ? reasonId : undefined} data-song-id={song.id} data-song-action="queue" inactive={() => !!busy() || !!reason()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</ActionButton><ActionButton class="btn btn-primary btn-icon" title={reason() ?? 'Play now'} aria-label={`Play ${songLabel(song)} now`} aria-describedby={reason() ? reasonId : undefined} data-song-id={song.id} data-song-action="play" inactive={() => !!busy() || !!reason()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</ActionButton><Show when={reason()} fallback={<ActionButton class="btn btn-ghost btn-icon" title="Don't play this" aria-label={`Don't play ${songLabel(song)}`} data-song-id={song.id} data-song-action="block" inactive={() => !!busy()} onClick={() => void blockSong(song)}><span aria-hidden="true">⊘</span></ActionButton>}><ActionButton class="btn btn-ghost song-allow" aria-label={`Allow ${songLabel(song)} again`} data-song-id={song.id} data-song-action="allow" inactive={() => !!busy()} onClick={() => void allowAgain(song, () => songControl(song.id, 'block')?.focus())}>Allow again</ActionButton></Show></div>
-                        <Show when={reason()}>{text => <span id={reasonId} class="sr-only">{text()}</span>}</Show>
-                      </div>;
-                    }}
-                  </For>
+                  <Show when={sortedSongs().length} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">♫</span><h3>{searchQuery() ? 'No matching tracks' : 'Your library is quiet'}</h3><p>{searchQuery() ? 'Try a different title, artist, or album.' : 'Add MP3 files to your configured music folder.'}</p></div>}>
+                    <ul class="song-rows" role="list" aria-labelledby="library-heading">
+                      <For each={sortedSongs()}>
+                        {(song, idx) => {
+                          const reason = () => blockedReasonFor(song);
+                          const reasonId = `song-blocked-${song.id}`;
+                          const titleId = `song-title-${song.id}`;
+                          return <li class="song-item" classList={{'song-item--playing': currentSong()?.id === song.id, 'song-item--blocked': !!reason()}} aria-labelledby={titleId}>
+                            <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
+                            <div class="song-info"><div id={titleId} class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta"><Show when={reason()}><span class="song-badge song-badge--blocked">Blocked</span></Show><Show when={isNew(song.added_at, now())}><span class="song-badge">New</span></Show>{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
+                            <span class="song-duration">{formatDuration(song.duration_secs)}</span>
+                            <div class="song-actions"><ActionButton class="btn btn-ghost btn-icon" title={reason() ?? 'Add to queue'} aria-label={`Add ${songLabel(song)} to queue`} aria-describedby={reason() ? reasonId : undefined} data-song-id={song.id} data-song-action="queue" inactive={() => !!busy() || !!reason()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</ActionButton><ActionButton class="btn btn-primary btn-icon" title={reason() ?? 'Play now'} aria-label={`Play ${songLabel(song)} now`} aria-describedby={reason() ? reasonId : undefined} data-song-id={song.id} data-song-action="play" inactive={() => !!busy() || !!reason()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</ActionButton><Show when={reason()} fallback={<ActionButton class="btn btn-ghost btn-icon" title="Don't play this" aria-label={`Don't play ${songLabel(song)}`} data-song-id={song.id} data-song-action="block" inactive={() => !!busy()} onClick={() => void blockSong(song)}><span aria-hidden="true">⊘</span></ActionButton>}><ActionButton class="btn btn-ghost song-allow" aria-label={`Allow ${songLabel(song)} again`} data-song-id={song.id} data-song-action="allow" inactive={() => !!busy()} onClick={() => void allowAgain(song, () => songControl(song.id, 'block')?.focus())}>Allow again</ActionButton></Show></div>
+                            <Show when={reason()}>{text => <span id={reasonId} class="sr-only">{text()}</span>}</Show>
+                          </li>;
+                        }}
+                      </For>
+                    </ul>
+                  </Show>
                 </Show>
               </Show>
             </div>
@@ -461,9 +474,13 @@ export function AdminApp() {
             <div class="queue-legend"><span><i class="queue-source manual" />manual</span><span><i class="queue-source auto" />auto rotation</span></div>
             <div class="queue-list">
               <Show when={!queueError()} fallback={<div class="empty-state"><h3>Queue unavailable</h3><p>Live updates will resume when the backend reconnects.</p><button class="btn" onClick={() => retry('queue-heading', fetchQueue)}>Retry</button></div>}>
-                <For each={queue()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">+</span><h3>Make the next move</h3><p>Add a track from the library. Automatic rotation keeps things moving when the player is listening.</p></div>}>
-                  {(item, idx) => <div class="queue-item"><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div class="queue-title">{queueItemLabel(item)}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><MoveButton item={item} direction="up" blocked={idx() === 0} /><MoveButton item={item} direction="down" blocked={idx() === queue().length - 1} /><ActionButton class="btn btn-danger btn-icon" aria-label={`Remove ${queueItemLabel(item)} from queue`} title="Remove from queue" inactive={() => !!busy()} data-queue-id={item.id} data-queue-action="remove" onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</ActionButton></div>}
-                </For>
+                <Show when={queue().length} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">+</span><h3>Make the next move</h3><p>Add a track from the library. Automatic rotation keeps things moving when the player is listening.</p></div>}>
+                  <ol class="queue-rows" role="list" aria-labelledby="queue-heading">
+                    <For each={queue()}>
+                      {(item, idx) => <li class="queue-item" aria-labelledby={`queue-title-${item.id}`}><span class="queue-pos">{(idx() + 1).toString().padStart(2, '0')}</span><span class={`queue-source ${item.source}`} role="img" aria-label={`${item.source} selection`} /><div class="queue-info"><div id={`queue-title-${item.id}`} class="queue-title">{queueItemLabel(item)}</div><div class="queue-artist">{item.song?.artist || 'Unknown artist'}</div></div><MoveButton item={item} direction="up" blocked={idx() === 0} /><MoveButton item={item} direction="down" blocked={idx() === queue().length - 1} /><ActionButton class="btn btn-danger btn-icon" aria-label={`Remove ${queueItemLabel(item)} from queue`} title="Remove from queue" inactive={() => !!busy()} data-queue-id={item.id} data-queue-action="remove" onClick={() => void action(`/v1/queue/${item.id}`, 'Track removed from queue.', 'DELETE')}>×</ActionButton></li>}
+                    </For>
+                  </ol>
+                </Show>
               </Show>
             </div>
             <div class="panel-footnote">Queue changes sync with every listener.</div>

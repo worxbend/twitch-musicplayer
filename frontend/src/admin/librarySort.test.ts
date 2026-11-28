@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NEW_WINDOW_MS, isNew, sortSongs } from './librarySort.ts';
+import { NEW_WINDOW_MS, isNew, libraryCountText, sortSongs } from './librarySort.ts';
 
 const now = Date.parse('2026-11-28T12:00:00Z');
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -52,4 +52,21 @@ test('isNew allows five minutes of clock skew', () => {
 test('isNew is false for an invalid or empty date', () => {
   assert.equal(isNew('not a date', now), false);
   assert.equal(isNew('', now), false);
+});
+
+test('libraryCountText pluralizes search matches', () => {
+  assert.equal(libraryCountText(0, 'lofi'), '0 songs match');
+  assert.equal(libraryCountText(1, 'lofi'), '1 song matches');
+  assert.equal(libraryCountText(12, 'lofi'), '12 songs match');
+});
+
+test('libraryCountText pluralizes tracks without a query', () => {
+  assert.equal(libraryCountText(0, ''), '0 tracks');
+  assert.equal(libraryCountText(1, ''), '1 track');
+  assert.equal(libraryCountText(12, ''), '12 tracks');
+});
+
+test('libraryCountText treats a whitespace-only query as no query', () => {
+  assert.equal(libraryCountText(1, '   '), '1 track');
+  assert.equal(libraryCountText(12, ' \t'), '12 tracks');
 });

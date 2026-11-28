@@ -22,7 +22,7 @@ html, body { min-height: 100%; background: var(--bg); }
 .song-panel, .queue-panel, .history-panel { min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 14px; background: #0d1423; overflow: hidden; }
 .queue-panel, .history-panel { background: #101a2a; }
 .history-panel { margin-bottom: 28px; }
-.history-list { list-style: none; margin: 0; padding: 0; }
+.history-list, .song-rows, .queue-rows { list-style: none; margin: 0; padding: 0; }
 .setlist-copy { display: block; margin: 16px 24px 0; color: var(--amber); font-size: 12px; }
 .setlist-copy textarea { display: block; width: 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--ink); font-family: var(--mono); font-size: 12px; resize: vertical; }
 .history-time { color: var(--muted); font-family: var(--mono); font-size: 11px; flex-shrink: 0; }

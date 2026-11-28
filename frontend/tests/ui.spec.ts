@@ -166,6 +166,32 @@ test('library search, queue add/remove, and keyboard-safe clear confirmation', {
   await expect(library.locator('.song-item')).toHaveCount(2);
 });
 
+test('library and queue rows are named lists with an announced, pluralized search count', async ({ page }) => {
+  await mockStation(page);
+  await page.goto('/admin');
+  const library = page.getByRole('list', { name: 'Music library' });
+  await expect(library.getByRole('listitem')).toHaveCount(2);
+  await expect(library.getByRole('listitem', { name: 'Midnight compiler' })).toBeVisible();
+  await expect(library.getByRole('listitem', { name: 'Buffering dreams' })).toBeVisible();
+  const queue = page.getByRole('list', { name: /Up next/ });
+  await expect(queue.getByRole('listitem')).toHaveCount(1);
+  await expect(queue.getByRole('listitem', { name: 'Buffering dreams' })).toBeVisible();
+  const meta = page.locator('.song-panel .panel-meta');
+  const announcement = page.locator('#library-search-status');
+  await expect(meta).toHaveText('2 tracks');
+  await expect(announcement).toHaveText('');
+  const search = page.getByLabel('Search music library');
+  await search.fill('Midnight');
+  await expect(announcement).toHaveText('1 song matches');
+  await expect(meta).toHaveText('1 song matches');
+  await search.fill('night');
+  await expect(announcement).toHaveText('2 songs match');
+  await search.fill('');
+  await expect(announcement).toHaveText('');
+  await expect(meta).toHaveText('2 tracks');
+  expect((await new AxeBuilder({ page }).include('.song-panel').include('.queue-panel').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+});
+
 test('empty, loading, search-empty, and backend failure states', async ({ page }) => {
   await mockStation(page, { empty: true, slow: true });
   await page.goto('/admin');
