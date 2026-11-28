@@ -560,6 +560,54 @@ func TestWatcherRefreshesRetaggedFileInPlace(t *testing.T) {
 	}
 }
 
+// The song repo is in memory, so a restart re-creates every song: AddedAt
+// must come from the file, not the boot time.
+func TestScanExistingTakesAddedAtFromModTime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old.mp3")
+	writeFile(t, path)
+	mtime := time.Now().Add(-72 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	h := startWatcher(t, dir)
+
+	if got := h.song(t, path).AddedAt.Truncate(time.Second); !got.Equal(mtime) {
+		t.Fatalf("AddedAt = %v, want modtime %v", got, mtime)
+	}
+}
+
+func TestScanExistingCapsFutureModTime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "future.mp3")
+	writeFile(t, path)
+	mtime := time.Now().Add(48 * time.Hour)
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	h := startWatcher(t, dir)
+
+	if got := h.song(t, path).AddedAt; got.After(time.Now()) {
+		t.Fatalf("AddedAt = %v, want capped at now", got)
+	}
+}
+
+func TestWatcherStampsDiscoveryTimeOnNewFile(t *testing.T) {
+	dir := t.TempDir()
+	h := startWatcher(t, dir)
+	path := filepath.Join(dir, "new.mp3")
+	writeFile(t, path)
+	old := time.Now().Add(-72 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 5*time.Second, "new file indexed", func() bool { return h.indexed(t, "new.mp3") })
+	if age := time.Since(h.song(t, path).AddedAt); age < 0 || age > 10*time.Second {
+		t.Fatalf("AddedAt age = %v, want within the last 10s", age)
+	}
+}
+
 func TestWatcherRefreshesFileReplacedByRename(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.mp3")

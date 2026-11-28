@@ -3,8 +3,8 @@ import AxeBuilder from '@axe-core/playwright';
 import { createHash } from 'node:crypto';
 
 const songs = [
-  { id: 'a', title: 'Midnight compiler', artist: 'Soft Circuit', album: 'After hours', filename: 'a.mp3', duration_secs: 180, size_bytes: 1024 },
-  { id: 'b', title: 'Buffering dreams', artist: 'Terminal Club', album: 'Night shift', filename: 'b.mp3', duration_secs: 205, size_bytes: 1024 },
+  { id: 'a', title: 'Midnight compiler', artist: 'Soft Circuit', album: 'After hours', filename: 'a.mp3', duration_secs: 180, size_bytes: 1024, added_at: '2026-01-01T00:00:00Z' },
+  { id: 'b', title: 'Buffering dreams', artist: 'Terminal Club', album: 'Night shift', filename: 'b.mp3', duration_secs: 205, size_bytes: 1024, added_at: '2026-01-01T00:00:00Z' },
 ];
 const setlistText = '2026-01-01 19:57 UTC  Soft Circuit - Midnight compiler\n2026-01-01 20:01 UTC  Terminal Club - Buffering dreams\n';
 
@@ -284,13 +284,80 @@ test('admin refetches the library when the socket reconnects', async ({ page }) 
   await expect(tracks).toHaveCount(2);
   // One fetch from the search debounce, one from the first socket open.
   await expect.poll(() => songRequests).toBe(2);
-  const rescanned = { id: 'c', title: 'Rescanned lullaby', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024 };
+  const rescanned = { id: 'c', title: 'Rescanned lullaby', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024, added_at: '2026-01-01T00:00:00Z' };
   library = [...songs, rescanned];
   await sockets[0].close();
   await expect.poll(() => sockets.length).toBe(2);
   await expect.poll(() => songRequests).toBe(3);
   await expect(tracks).toHaveCount(3);
   await expect(page.getByText('Rescanned lullaby')).toBeVisible();
+});
+
+test('admin sorts the library by recently added, badges new songs, and keeps the sort', async ({ page }) => {
+  await mockStation(page);
+  const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+  // The server lists songs in title order.
+  const library = [
+    { ...songs[0], id: 'old', title: 'Afternoon tape', added_at: hoursAgo(72) },
+    { ...songs[1], added_at: hoursAgo(2) },
+    { ...songs[0], added_at: hoursAgo(1) },
+  ];
+  await page.route(url => url.pathname === '/v1/songs', route => route.fulfill({ json: { songs: library } }));
+  await page.goto('/admin');
+  const panel = page.getByRole('region', { name: 'Music library' });
+  const titles = panel.locator('.song-title');
+  await expect(titles).toHaveText(['Afternoon tape', 'Buffering dreams', 'Midnight compiler']);
+  const sortGroup = panel.getByRole('group', { name: 'Sort library' });
+  const byTitle = sortGroup.getByRole('button', { name: 'A–Z' });
+  const recent = sortGroup.getByRole('button', { name: 'Recently added' });
+  await expect(byTitle).toHaveAttribute('aria-pressed', 'true');
+  await byTitle.focus();
+  await page.keyboard.press('Tab');
+  await expect(recent).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(recent).toHaveAttribute('aria-pressed', 'true');
+  await expect(byTitle).toHaveAttribute('aria-pressed', 'false');
+  await expect(titles).toHaveText(['Midnight compiler', 'Buffering dreams', 'Afternoon tape']);
+  await expect(page.getByRole('status')).toContainText('Sorted by recently added');
+  await expect(panel.locator('.song-item').filter({ has: page.locator('.song-badge', { hasText: 'New' }) }).locator('.song-title')).toHaveText(['Midnight compiler', 'Buffering dreams']);
+  expect((await new AxeBuilder({ page }).include('.song-panel').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await page.reload();
+  await expect(recent).toHaveAttribute('aria-pressed', 'true');
+  await expect(titles).toHaveText(['Midnight compiler', 'Buffering dreams', 'Afternoon tape']);
+});
+
+test('admin refetches the library silently on file events and keeps focus', async ({ page }) => {
+  await mockStation(page);
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket(/\/ws(\?.*)?$/, ws => { sockets.push(ws); });
+  let library = songs;
+  let songRequests = 0;
+  await page.route(url => url.pathname === '/v1/songs', route => { songRequests++; return route.fulfill({ json: { songs: library } }); });
+  await page.goto('/admin');
+  const panel = page.getByRole('region', { name: 'Music library' });
+  const tracks = panel.locator('.song-item');
+  await expect(tracks).toHaveCount(2);
+  await expect.poll(() => songRequests).toBe(2);
+  // Record any loading state the refetches would show.
+  await page.evaluate(() => {
+    new MutationObserver(() => {
+      if (document.querySelector('.song-list')?.textContent?.includes('Reading your library')) document.body.dataset.sawLoading = 'yes';
+    }).observe(document.body, { subtree: true, childList: true, characterData: true });
+  });
+  const fresh = { id: 'c', title: 'Fresh tape', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024, added_at: new Date().toISOString() };
+  library = [...songs, fresh];
+  sockets[0].send(JSON.stringify({ type: 'queue_updated', payload: { reason: 'new_file', queue_depth: 1 } }));
+  await expect(tracks).toHaveCount(3);
+  await expect(tracks.filter({ hasText: 'Fresh tape' }).locator('.song-badge')).toHaveText('New');
+
+  const add = panel.getByRole('button', { name: 'Add Midnight compiler to queue' });
+  await add.focus();
+  library = [songs[0], songs[1], { ...fresh, title: 'Fresh tape (retagged)' }];
+  sockets[0].send(JSON.stringify({ type: 'queue_updated', payload: { reason: 'file_updated', queue_depth: 1 } }));
+  await expect(panel.getByText('Fresh tape (retagged)')).toBeVisible();
+  await expect(add).toBeFocused();
+  expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.songAction)).toBe('queue');
+  expect(await page.evaluate(() => document.body.dataset.sawLoading)).toBeUndefined();
 });
 
 test('admin drops a silent socket and reconnects', async ({ page }) => {
@@ -319,7 +386,7 @@ test('untitled queue song is labelled by its filename', async ({ page }) => {
 
 test('queue reorder by keyboard keeps focus', async ({ page }) => {
   await mockStation(page);
-  const third = { id: 'c', title: 'Cassette rain', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024 };
+  const third = { id: 'c', title: 'Cassette rain', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024, added_at: '2026-01-01T00:00:00Z' };
   const [qa, qb, qc] = [songs[0], songs[1], third].map((song, i) => ({ id: `q${song.id}`, song_id: song.id, song, position: i + 1, source: 'manual' }));
   let queue = [qa, qb, qc];
   const moves: { url: string; body: unknown }[] = [];
@@ -355,7 +422,7 @@ test('queue reorder by keyboard keeps focus', async ({ page }) => {
 
 test('queue remove by keyboard moves focus to the next row, then the heading', async ({ page }) => {
   await mockStation(page);
-  const third = { id: 'c', title: 'Cassette rain', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024 };
+  const third = { id: 'c', title: 'Cassette rain', artist: 'Soft Circuit', album: 'After hours', filename: 'c.mp3', duration_secs: 150, size_bytes: 1024, added_at: '2026-01-01T00:00:00Z' };
   let queue = [songs[0], songs[1], third].map((song, i) => ({ id: `q${song.id}`, song_id: song.id, song, position: i + 1, source: 'manual' }));
   await page.route('**/v1/queue', route => route.fulfill({ json: { items: queue } }));
   await page.route(url => url.pathname.startsWith('/v1/queue/q'), route => {

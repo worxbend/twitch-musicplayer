@@ -28,6 +28,9 @@ html, body { min-height: 100%; background: var(--bg); }
 .history-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .history-actions .btn { min-height: 36px; padding: 6px 11px; font-size: 11px; background: transparent; }
 .panel-header .btn { min-height: 36px; font-size: 11px; padding: 6px 11px; background: transparent; }
+.song-panel .panel-header { flex-wrap: wrap; }
+.sort-group { display: flex; gap: 6px; margin-left: auto; }
+.sort-group .btn[aria-pressed='true'] { color: var(--accent); border-color: var(--accent); }
 .search-row { display: flex; align-items: center; gap: 12px; margin: 22px 24px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); padding: 0 14px; }
 .search-row:focus-within { border-color: var(--accent); }
 .search-row > svg { color: var(--accent2); flex-shrink: 0; }
@@ -45,6 +48,7 @@ html, body { min-height: 100%; background: var(--bg); }
 .song-info, .queue-info { flex: 1; min-width: 0; }
 .song-title { font-size: 14px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .song-meta { color: var(--muted); font-size: 11px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song-badge { display: inline-block; margin-right: 8px; padding: 0 6px; border-radius: 4px; background: var(--accent); color: var(--bg); font-family: var(--mono); font-size: 10px; font-weight: 600; line-height: 16px; }
 .song-duration { width: 50px; font-family: var(--mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
 .song-actions { display: flex; gap: 6px; }
 .song-actions .btn-ghost { background: transparent; }

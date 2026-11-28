@@ -1,15 +1,16 @@
-import { createSignal, createEffect, on, onMount, onCleanup, splitProps, For, Show, type JSX } from 'solid-js';
+import { createSignal, createEffect, createMemo, on, onMount, onCleanup, splitProps, For, Show, type JSX } from 'solid-js';
 import { getBackendURL, getWebSocketURL } from './config/backend';
 import { reconnectDelay, HEARTBEAT_MS, isStale, armHandshakeTimeout } from './config/reconnect';
 import { createLatest } from './admin/latestRequest';
 import { connectionAnnouncement, connectionLabel, type AdminConnection } from './admin/connection';
 import { HttpError, errorText, fetchWithTimeout, REQUEST_TIMEOUT_MS } from './admin/request';
+import { isNew, sortSongs, type LibrarySort } from './admin/librarySort';
 import { TerminalHeader } from './components/TerminalHeader';
 import { formatDuration } from './format/trackTime';
 
 interface Song {
   id: string; filename: string; title: string; artist: string; album: string;
-  duration_secs: number; size_bytes: number;
+  duration_secs: number; size_bytes: number; added_at: string;
 }
 interface QueueItem {
   id: string; song_id: string; song?: Song; position: number;
@@ -41,6 +42,32 @@ function restoreQueueFocus(control: QueueControl | null, items: QueueItem[]) {
   if (!items.length) { document.getElementById('queue-heading')?.focus(); return; }
   const slot = items[Math.min(Math.max(control.index, 0), items.length - 1)];
   document.querySelector<HTMLElement>(`.queue-list [data-queue-id="${CSS.escape(slot.id)}"][data-queue-action="remove"]`)?.focus();
+}
+// fetchSongs replaces every row too, and a file event refetches it while the
+// streamer may be on a library button. Same rule, keyed by song id.
+type SongControl = { id: string; action: string; index: number };
+function focusedSongControl(items: Song[]): SongControl | null {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !el.closest('.song-list')) return null;
+  const { songId, songAction } = el.dataset;
+  if (!songId || !songAction) return null;
+  return { id: songId, action: songAction, index: items.findIndex(song => song.id === songId) };
+}
+function restoreSongFocus(control: SongControl | null, items: Song[]) {
+  if (!control) return;
+  const action = CSS.escape(control.action);
+  const same = document.querySelector<HTMLElement>(`.song-list [data-song-id="${CSS.escape(control.id)}"][data-song-action="${action}"]`);
+  if (same) { same.focus(); return; }
+  if (!items.length) { document.getElementById('library-heading')?.focus(); return; }
+  const slot = items[Math.min(Math.max(control.index, 0), items.length - 1)];
+  document.querySelector<HTMLElement>(`.song-list [data-song-id="${CSS.escape(slot.id)}"][data-song-action="${action}"]`)?.focus();
+}
+const SORT_KEY = 'lofi-admin-library-sort';
+// queue_updated reasons sent when a library file appears, leaves or changes.
+const LIBRARY_REASONS = new Set(['new_file', 'file_removed', 'file_updated']);
+// Storage can be blocked (private mode, cleared site data); the sort is a convenience.
+function savedSort(): LibrarySort {
+  try { return localStorage.getItem(SORT_KEY) === 'recent' ? 'recent' : 'title'; } catch { return 'title'; }
 }
 // fetchHistory replaces every row too, and a play-now refetches it. A song can
 // appear twice, so history controls are keyed by started_at, not song id.
@@ -84,6 +111,10 @@ export function AdminApp() {
   // A fresh id per call makes Solid insert a new node, so a repeated message is re-announced.
   const [notice, setNotice] = createSignal<{ id: number; text: string; error: boolean } | null>(null);
   const [searchQuery, setSearchQuery] = createSignal('');
+  const [sort, setSort] = createSignal<LibrarySort>(savedSort());
+  const sortedSongs = createMemo(() => sortSongs(songs(), sort()));
+  // Drives the New badge; refreshed by each library fetch and once a minute.
+  const [now, setNow] = createSignal(Date.now());
   const [loading, setLoading] = createSignal(true);
   const [libraryError, setLibraryError] = createSignal(false);
   const [queueError, setQueueError] = createSignal(false);
@@ -98,6 +129,7 @@ export function AdminApp() {
   let noticeSeq = 0;
   let searchTimer = 0;
   let searchRequest = 0;
+  let nowTimer = 0;
   const queueGate = createLatest();
   const historyGate = createLatest();
   const blockedGate = createLatest();
@@ -115,14 +147,29 @@ export function AdminApp() {
     });
   }
   const readJSON = (res: Response) => res.json();
-  async function fetchSongs(q = searchQuery()) {
+  // A silent refetch (reconnect, file event) keeps the current rows on screen,
+  // also on error, so it never swaps the list out from under keyboard focus.
+  async function fetchSongs(q = searchQuery(), opts?: { silent?: boolean }) {
     const id = ++searchRequest;
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     try {
       const data = await request(`/v1/songs${q ? `?q=${encodeURIComponent(q)}` : ''}`, readJSON);
-      if (id === searchRequest && !disposed) { setSongs(data.songs ?? []); setLibraryError(false); }
-    } catch { if (id === searchRequest && !disposed) setLibraryError(true); }
+      if (id === searchRequest && !disposed) {
+        const focused = focusedSongControl(sortedSongs());
+        setNow(Date.now());
+        setSongs(data.songs ?? []);
+        setLibraryError(false);
+        restoreSongFocus(focused, sortedSongs());
+      }
+    // loading() is still true before the first rows arrive: nothing to keep.
+    } catch { if (id === searchRequest && !disposed && (!opts?.silent || loading())) setLibraryError(true); }
     finally { if (id === searchRequest && !disposed) setLoading(false); }
+  }
+  function chooseSort(next: LibrarySort) {
+    if (next === sort()) return;
+    setSort(next);
+    try { localStorage.setItem(SORT_KEY, next); } catch { /* Storage blocked: the sort lasts this visit. */ }
+    showNotification(next === 'recent' ? 'Sorted by recently added' : 'Sorted A–Z');
   }
   async function fetchQueue() {
     const id = queueGate.begin();
@@ -281,7 +328,7 @@ export function AdminApp() {
       reconnectAttempts = 0;
       lastMessageAt = Date.now();
       setConn('connected');
-      void fetchQueue(); void fetchPlayerState(); void fetchHistory(); void fetchSongs(); void fetchBlocked();
+      void fetchQueue(); void fetchPlayerState(); void fetchHistory(); void fetchSongs(undefined, { silent: true }); void fetchBlocked();
       window.clearInterval(heartbeatInterval);
       heartbeatInterval = window.setInterval(() => {
         // Half-open socket: no heartbeat_ack or update for too long.
@@ -292,8 +339,11 @@ export function AdminApp() {
     ws.onmessage = e => {
       lastMessageAt = Date.now();
       try {
-        const msg = JSON.parse(e.data) as { type: string; payload?: { song?: Song; current_song?: Song } };
-        if (msg.type === 'queue_updated') { void fetchQueue(); void fetchBlocked(); }
+        const msg = JSON.parse(e.data) as { type: string; payload?: { song?: Song; current_song?: Song; reason?: string } };
+        if (msg.type === 'queue_updated') {
+          void fetchQueue(); void fetchBlocked();
+          if (LIBRARY_REASONS.has(msg.payload?.reason ?? '')) void fetchSongs(undefined, { silent: true });
+        }
         // A pushed song is newer than any /v1/player reply still in flight.
         if (msg.type === 'now_playing') { playerGate.begin(); setCurrentSong(msg.payload?.song ?? null); void fetchQueue(); void fetchHistory(); }
         if (msg.type === 'state') { playerGate.begin(); setCurrentSong(msg.payload?.current_song ?? null); void fetchQueue(); void fetchHistory(); }
@@ -329,6 +379,7 @@ export function AdminApp() {
     searchTimer = window.setTimeout(() => void fetchSongs(q), 280);
   });
   onMount(() => {
+    nowTimer = window.setInterval(() => setNow(Date.now()), 60_000);
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
     void fetchQueue(); void fetchPlayerState(); void fetchHistory(); void fetchBlocked(); connectWS();
@@ -341,6 +392,7 @@ export function AdminApp() {
     window.clearTimeout(reconnectTimeout);
     window.clearTimeout(notifTimer);
     window.clearTimeout(searchTimer);
+    window.clearInterval(nowTimer);
     dropSocket();
   });
 
@@ -365,18 +417,18 @@ export function AdminApp() {
         </section>
         <div class="admin-main">
           <section class="song-panel" aria-labelledby="library-heading">
-            <div class="panel-header"><h2 id="library-heading" class="panel-title" tabIndex={-1}>Music library</h2><span class="panel-meta">{songs().length} {searchQuery() ? 'matches' : 'tracks'}</span></div>
+            <div class="panel-header"><h2 id="library-heading" class="panel-title" tabIndex={-1}>Music library</h2><div class="sort-group" role="group" aria-label="Sort library"><button type="button" class="btn" aria-pressed={sort() === 'title'} onClick={() => chooseSort('title')}>A–Z</button><button type="button" class="btn" aria-pressed={sort() === 'recent'} onClick={() => chooseSort('recent')}>Recently added</button></div><span class="panel-meta">{songs().length} {searchQuery() ? 'matches' : 'tracks'}</span></div>
             <div class="search-row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="6" stroke="currentColor" stroke-width="1.5" /><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg><input ref={searchInput} class="search-box" aria-label="Search music library" type="search" placeholder="Search title, artist, album…" value={searchQuery()} onInput={e => setSearchQuery(e.currentTarget.value)} /><Show when={searchQuery()}><button class="btn" onClick={() => { setSearchQuery(''); searchInput.focus(); }}>Reset</button></Show></div>
             <div class="list-column-labels" aria-hidden="true"><span>Track / artist / album</span><span>Time</span><span>Actions</span></div>
             <div class="song-list" aria-busy={loading()}>
               <Show when={!loading()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--loading" aria-hidden="true">◌</span><h3>Reading your library</h3><p>Fetching tracks from the backend.</p></div>}>
                 <Show when={!libraryError()} fallback={<div class="empty-state"><span class="empty-symbol empty-symbol--error" aria-hidden="true">!</span><h3>Library unavailable</h3><p>Check the backend connection, then try again.</p><button class="btn" onClick={() => retry('library-heading', () => fetchSongs())}>Retry connection</button></div>}>
-                  <For each={songs()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">♫</span><h3>{searchQuery() ? 'No matching tracks' : 'Your library is quiet'}</h3><p>{searchQuery() ? 'Try a different title, artist, or album.' : 'Add MP3 files to your configured music folder.'}</p></div>}>
+                  <For each={sortedSongs()} fallback={<div class="empty-state"><span class="empty-symbol" aria-hidden="true">♫</span><h3>{searchQuery() ? 'No matching tracks' : 'Your library is quiet'}</h3><p>{searchQuery() ? 'Try a different title, artist, or album.' : 'Add MP3 files to your configured music folder.'}</p></div>}>
                     {(song, idx) => <div class="song-item" classList={{'song-item--playing': currentSong()?.id === song.id}}>
                       <span class="song-index" aria-hidden="true">{currentSong()?.id === song.id ? '♫' : (idx() + 1).toString().padStart(2, '0')}</span>
-                      <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta">{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
+                      <div class="song-info"><div class="song-title" title={songLabel(song)}>{songLabel(song)}</div><div class="song-meta"><Show when={isNew(song.added_at, now())}><span class="song-badge">New</span></Show>{[song.artist, song.album].filter(Boolean).join(' / ') || 'Unknown artist'}</div></div>
                       <span class="song-duration">{formatDuration(song.duration_secs)}</span>
-                      <div class="song-actions"><ActionButton class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} inactive={() => !!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</ActionButton><ActionButton class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} inactive={() => !!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</ActionButton><ActionButton class="btn btn-ghost btn-icon" title="Don't play this" aria-label={`Don't play ${songLabel(song)}`} inactive={() => !!busy()} onClick={() => void blockSong(song)}><span aria-hidden="true">⊘</span></ActionButton></div>
+                      <div class="song-actions"><ActionButton class="btn btn-ghost btn-icon" title="Add to queue" aria-label={`Add ${songLabel(song)} to queue`} data-song-id={song.id} data-song-action="queue" inactive={() => !!busy()} onClick={() => void action('/v1/queue', `Queued: ${songLabel(song)}`, 'POST', { song_id: song.id })}>+</ActionButton><ActionButton class="btn btn-primary btn-icon" title="Play now" aria-label={`Play ${songLabel(song)} now`} data-song-id={song.id} data-song-action="play" inactive={() => !!busy()} onClick={() => void action('/v1/queue:play-next', `Play requested: ${songLabel(song)}`, 'POST', { song_id: song.id })}>▶</ActionButton><ActionButton class="btn btn-ghost btn-icon" title="Don't play this" aria-label={`Don't play ${songLabel(song)}`} data-song-id={song.id} data-song-action="block" inactive={() => !!busy()} onClick={() => void blockSong(song)}><span aria-hidden="true">⊘</span></ActionButton></div>
                     </div>}
                   </For>
                 </Show>

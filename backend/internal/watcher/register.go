@@ -21,11 +21,12 @@ func songID(path string) string {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(path)).String()
 }
 
-// withFileMetadata returns song with the fields read from the file at path.
-func withFileMetadata(song models.Song, path string) (models.Song, error) {
+// withFileMetadata returns song with the fields read from the file at path,
+// and the file's modification time.
+func withFileMetadata(song models.Song, path string) (models.Song, time.Time, error) {
 	stat, err := os.Stat(path)
 	if err != nil {
-		return song, err
+		return song, time.Time{}, err
 	}
 	m := meta.Extract(path)
 	song.Title = m.Title
@@ -35,7 +36,7 @@ func withFileMetadata(song models.Song, path string) (models.Song, error) {
 	song.HasCover = m.HasCover
 	song.CoverVersion = m.CoverVersion
 	song.SizeBytes = stat.Size()
-	return song, nil
+	return song, stat.ModTime(), nil
 }
 
 // registerFile inserts a new song record and optionally queues it. A path
@@ -53,14 +54,21 @@ func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool
 		return song, false, err
 	}
 
-	fresh, err := withFileMetadata(models.Song{
+	now := time.Now()
+	fresh, modTime, err := withFileMetadata(models.Song{
 		ID:       songID(path),
 		Filename: filepath.Base(path),
 		Path:     path,
-		AddedAt:  time.Now(),
+		AddedAt:  now,
 	}, path)
 	if err != nil {
 		return nil, false, err
+	}
+	// The repo is in memory, so the startup scan (the only caller that does not
+	// queue) re-creates every song. Its modtime stands in for when it joined;
+	// a future modtime is capped so it cannot pin the song as new.
+	if !addToQueue && modTime.Before(now) {
+		fresh.AddedAt = modTime
 	}
 	song := &fresh
 
@@ -102,7 +110,7 @@ func (w *Watcher) refreshFile(ctx context.Context, path string) (*models.Song, e
 	if err != nil {
 		return nil, err
 	}
-	updated, err := withFileMetadata(*current, path)
+	updated, _, err := withFileMetadata(*current, path)
 	if err != nil {
 		return nil, err
 	}

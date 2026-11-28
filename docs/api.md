@@ -52,6 +52,8 @@ image, so clients can skip the cover request for songs without art. `cover_versi
 opaque string, present only with a cover, that changes when the embedded cover changes and
 equals the cover's `ETag` value. Clients append it to the cover URL as `?v=` so a retagged
 cover refetches.
+`added_at` is when the file joined the library: its modification time (capped at now) for
+files found at startup, the discovery time for files added while running.
 
 ```http
 GET /v1/songs/{id}/content

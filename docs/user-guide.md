@@ -160,6 +160,13 @@ track means "don't play this": the track leaves rotation, even after a restart, 
 again** to add it to the end of the queue, or **Play now** to interrupt the current track with
 it. A blocked track is refused with "song is blocked".
 
+The library sorts **A–Z** by default. Press **Recently added** to put the newest tracks first;
+the console remembers your choice in this browser. A **New** badge marks every track added in
+the last 24 hours. For files already in the music folder when the backend starts, "added" means
+the file's modification time, so a restart does not make the whole library look new. Files you
+drop in while it runs count from the moment they are found, and they appear in an open console
+without a reload.
+
 Anything else can drive it over HTTP:
 
 ```bash

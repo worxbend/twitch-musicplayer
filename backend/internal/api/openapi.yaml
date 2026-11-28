@@ -803,6 +803,9 @@ components:
         added_at:
           type: string
           format: date-time
+          description: >-
+            When the file joined the library: its modification time (capped at now)
+            for files found at startup, the discovery time for files added while running.
 
     MissingSong:
       type: object
