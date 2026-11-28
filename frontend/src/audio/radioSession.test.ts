@@ -125,6 +125,14 @@ test('a song change reports title, artist and cover and sets the session metadat
   );
 });
 
+test('a retag of the same song replaces the title and the versioned artwork', () => {
+  start();
+  client.song({ title: 'Rain', coverUrl: '/v1/songs/a/cover?v=old' });
+  client.song({ title: 'Rain (remaster)', coverUrl: '/v1/songs/a/cover?v=new' });
+  assert.equal(session.metadata?.title, 'Rain (remaster)');
+  assert.deepEqual(session.metadata?.artwork, [{ src: '/v1/songs/a/cover?v=new' }]);
+});
+
 test('a next song without a cover clears the artwork', () => {
   start();
   client.song({ title: 'Rain', coverUrl: '/cover.jpg' });

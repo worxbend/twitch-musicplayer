@@ -27,6 +27,7 @@ interface Song {
   artist?: string;
   filename: string;
   has_cover?: boolean;
+  cover_version?: unknown;
 }
 
 interface PlaySongPayload {
@@ -722,7 +723,7 @@ function songInfo(song: Song): SongInfo {
   return {
     title: displayTitle(song),
     artist: song.artist,
-    coverUrl: song.has_cover === true ? coverURL(song.id) : undefined,
+    coverUrl: song.has_cover === true ? coverURL(song.id, typeof song.cover_version === 'string' ? song.cover_version : undefined) : undefined,
   };
 }
 

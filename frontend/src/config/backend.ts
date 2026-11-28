@@ -53,7 +53,12 @@ export function resolveStreamURL(url: string): string {
   return new URL(url, getBackendURL()).toString();
 }
 
-/** The embedded cover art of a song; only worth requesting when the song has `has_cover`. */
-export function coverURL(songId: string): string {
-  return `${getBackendURL()}/v1/songs/${encodeURIComponent(songId)}/cover`;
+/**
+ * The embedded cover art of a song; only worth requesting when the song has `has_cover`.
+ * `version` is the song's `cover_version`: as `?v=` it gives a retagged cover a new URL,
+ * so images and OS media artwork refetch it.
+ */
+export function coverURL(songId: string, version?: string): string {
+  const url = `${getBackendURL()}/v1/songs/${encodeURIComponent(songId)}/cover`;
+  return version ? `${url}?v=${encodeURIComponent(version)}` : url;
 }

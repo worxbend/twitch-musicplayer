@@ -35,7 +35,7 @@ export function NowPlayingOverlay(props: Props) {
   const [failedCover, setFailedCover] = createSignal('');
   const cover = () => {
     const id = props.art ? song()?.coverId : undefined;
-    const url = id ? coverURL(id) : '';
+    const url = id ? coverURL(id, song()?.coverVersion) : '';
     return url !== failedCover() ? url : '';
   };
   let shown: ShownKey = { key: '', title: '' };

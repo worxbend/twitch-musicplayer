@@ -299,6 +299,11 @@ test('a song with has_cover reports its cover URL', async () => {
   assert.equal(song?.coverUrl, 'http://localhost:8080/v1/songs/a%201/cover');
 });
 
+test('a song with a cover_version reports a versioned cover URL', async () => {
+  const song = await startedSong({ has_cover: true, cover_version: 'a1' });
+  assert.equal(song?.coverUrl, 'http://localhost:8080/v1/songs/a%201/cover?v=a1');
+});
+
 for (const [name, extra] of [['false', { has_cover: false }], ['absent', {}]] as const) {
   test(`a song with has_cover ${name} reports no cover URL`, async () => {
     assert.equal((await startedSong(extra))?.coverUrl, undefined);
@@ -316,9 +321,9 @@ test('a retag of the song on screen shows its new title, artist and cover at onc
   await startedSong({ has_cover: true, artist: 'Old' });
   const reports = statuses.length;
 
-  socket().message(retag('a 1', { title: 'New', artist: 'Cat', has_cover: true }));
+  socket().message(retag('a 1', { title: 'New', artist: 'Cat', has_cover: true, cover_version: 'b2' }));
 
-  assert.deepEqual(songs.at(-1), { title: 'New', artist: 'Cat', coverUrl: 'http://localhost:8080/v1/songs/a%201/cover' });
+  assert.deepEqual(songs.at(-1), { title: 'New', artist: 'Cat', coverUrl: 'http://localhost:8080/v1/songs/a%201/cover?v=b2' });
   assert.equal(statuses.length, reports, 'a retag does not re-report playback');
   assert.equal(audio.plays.length, 1, 'a retag does not restart the stream');
 });

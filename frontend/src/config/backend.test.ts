@@ -92,3 +92,11 @@ test('the cover URL keeps the backend path prefix and encodes the song id', () =
   useBackend('https://host/radio/');
   assert.equal(coverURL('a b/c'), 'https://host/radio/v1/songs/a%20b%2Fc/cover');
 });
+
+test('a cover version is appended as an encoded ?v=, and an empty one adds nothing', () => {
+  useBackend('http://host:8080');
+  assert.equal(coverURL('a', '3f2a9c1d8e7b6a50'), 'http://host:8080/v1/songs/a/cover?v=3f2a9c1d8e7b6a50');
+  assert.equal(coverURL('a', 'x y&z'), 'http://host:8080/v1/songs/a/cover?v=x%20y%26z');
+  assert.equal(coverURL('a', ''), 'http://host:8080/v1/songs/a/cover');
+  assert.equal(coverURL('a', undefined), 'http://host:8080/v1/songs/a/cover');
+});

@@ -61,6 +61,21 @@ test('a song with has_cover carries its id as coverId', () => {
   assert.equal(reduceNowPlaying(null, state)?.coverId, 's1');
 });
 
+test('a cover retag re-announce carries the new coverVersion', () => {
+  const start = frame('now_playing', { song: song({ has_cover: true, cover_version: 'aaaa' }), history_id: 'h1' });
+  const before = reduceNowPlaying(null, start);
+  assert.equal(before?.coverVersion, 'aaaa');
+  const retag = frame('now_playing', { song: song({ has_cover: true, cover_version: 'bbbb' }), elapsed_secs: 5 });
+  assert.equal(reduceNowPlaying(before, retag)?.coverVersion, 'bbbb');
+});
+
+test('coverVersion needs a coverId and a non-empty cover_version', () => {
+  for (const fields of [{ has_cover: true }, { has_cover: true, cover_version: '' }, { has_cover: true, cover_version: 7 }, { has_cover: false, cover_version: 'aaaa' }]) {
+    const raw = frame('now_playing', { song: song(fields) });
+    assert.equal(reduceNowPlaying(null, raw)?.coverVersion, undefined, JSON.stringify(fields));
+  }
+});
+
 test('coverId needs has_cover true and a song id', () => {
   for (const fields of [{ has_cover: false }, { has_cover: 'true' }, {}, { has_cover: true, id: '' }, { has_cover: true, id: 7 }]) {
     const raw = frame('now_playing', { song: song(fields) });

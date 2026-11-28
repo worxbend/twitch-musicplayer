@@ -11,6 +11,7 @@
 /**
  * `startId` is now_playing's history_id: set on a real song start, absent on a retag or `state` frame.
  * `coverId` is the song id when the song has embedded cover art; the overlay turns it into a URL.
+ * `coverVersion` is the song's `cover_version` when it has `coverId`; it changes on a cover retag.
  * `durationSecs` is the song length (> 0); `elapsedSecs` is the server's play time when the frame was built.
  */
 export type NowPlayingSong = {
@@ -18,6 +19,7 @@ export type NowPlayingSong = {
   artist: string;
   startId?: string;
   coverId?: string;
+  coverVersion?: string;
   durationSecs?: number;
   elapsedSecs?: number;
 };
@@ -71,6 +73,8 @@ function toSong(raw: unknown): NowPlayingSong | null {
   const song: NowPlayingSong = { title, artist: asText(raw.artist) };
   const coverId = raw.has_cover === true ? asText(raw.id) : '';
   if (coverId) song.coverId = coverId;
+  const coverVersion = coverId ? asText(raw.cover_version) : '';
+  if (coverVersion) song.coverVersion = coverVersion;
   const durationSecs = asSeconds(raw.duration_secs);
   if (durationSecs) song.durationSecs = durationSecs;
   return song;
