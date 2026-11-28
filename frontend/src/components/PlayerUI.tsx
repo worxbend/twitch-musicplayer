@@ -6,6 +6,7 @@ import { TerminalHeader } from './TerminalHeader';
 import { playerStatus, playToggle } from './playerStatus';
 import { SCENES } from '../viz/scenes';
 import { sceneHref } from '../routes';
+import { formatTrackTime } from '../format/trackTime';
 
 interface Props {
   trackName: () => string;
@@ -22,10 +23,6 @@ interface Props {
   onEnableAudio: () => Promise<void> | undefined;
   sceneName?: string;
   sceneSlug?: string;
-}
-function fmtTime(secs: number): string {
-  if (!Number.isFinite(secs) || secs < 0) secs = 0;
-  return `${Math.floor(secs / 60)}:${Math.floor(secs % 60).toString().padStart(2, '0')}`;
 }
 
 // Reading window.localStorage itself throws when site data is blocked.
@@ -97,9 +94,9 @@ export function PlayerUI(props: Props) {
       const progress = props.audio()?.getPlaybackProgress() ?? null;
       if (progress && progress.duration > 0) {
         setFraction(Math.min(1, Math.max(0, progress.currentTime / progress.duration)));
-        setElapsed(fmtTime(progress.currentTime));
-        setRemaining('-' + fmtTime(progress.duration - progress.currentTime));
-        setValueText(`${fmtTime(progress.currentTime)} of ${fmtTime(progress.duration)}`);
+        setElapsed(formatTrackTime(progress.currentTime));
+        setRemaining('-' + formatTrackTime(progress.duration - progress.currentTime));
+        setValueText(`${formatTrackTime(progress.currentTime)} of ${formatTrackTime(progress.duration)}`);
       } else { setFraction(0); setElapsed('0:00'); setRemaining('0:00'); setValueText('No track loaded'); }
     };
     tick();

@@ -5,6 +5,7 @@ import { createLatest } from './admin/latestRequest';
 import { connectionAnnouncement, connectionLabel, type AdminConnection } from './admin/connection';
 import { HttpError, errorText, fetchWithTimeout, REQUEST_TIMEOUT_MS } from './admin/request';
 import { TerminalHeader } from './components/TerminalHeader';
+import { formatDuration } from './format/trackTime';
 
 interface Song {
   id: string; filename: string; title: string; artist: string; album: string;
@@ -17,10 +18,6 @@ interface QueueItem {
 interface HistoryItem { song: Song; started_at: string; }
 // GET /v1/blocked lists a song whose file left the library by its id alone.
 type BlockedEntry = Song | { id: string; missing: true };
-function formatDuration(secs: number): string {
-  if (!secs || secs <= 0) return '--:--';
-  return `${Math.floor(secs / 60)}:${Math.floor(secs % 60).toString().padStart(2, '0')}`;
-}
 function songLabel(song: Song) { return song.title || song.filename; }
 function queueItemLabel(item: QueueItem) { return item.song ? songLabel(item.song) : item.song_id; }
 function blockedLabel(entry: BlockedEntry) { return 'missing' in entry ? entry.id : songLabel(entry); }
