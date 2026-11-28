@@ -3,6 +3,8 @@ package player
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"lofi-radio-backend/internal/models"
@@ -125,5 +127,41 @@ func TestNowPlayingFileWriteMissingDir(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "absent", "nowplaying.txt")
 	if err := NewNowPlayingFile(path, "{title}").Write(&models.Song{Title: "x"}); err == nil {
 		t.Fatal("Write succeeded, want error for missing directory")
+	}
+}
+
+func TestNowPlayingFileWriteIsWorldReadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	path := filepath.Join(t.TempDir(), "nowplaying.txt")
+	if err := NewNowPlayingFile(path, "{title}").Write(&models.Song{Title: "x"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("mode = %o, want 644", got)
+	}
+}
+
+func TestNowPlayingFileWriteOntoDirectoryLeavesNoTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nowplaying.txt")
+	if err := os.MkdirAll(filepath.Join(path, "child"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	err := NewNowPlayingFile(path, "{title}").Write(&models.Song{Title: "x"})
+	if err == nil || !strings.HasPrefix(err.Error(), "now-playing file: replace ") {
+		t.Fatalf("Write error = %v, want prefix %q", err, "now-playing file: replace ")
+	}
+	leftovers, err := filepath.Glob(filepath.Join(dir, ".nowplaying-*.tmp"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(leftovers) != 0 {
+		t.Errorf("temp files left behind: %v", leftovers)
 	}
 }

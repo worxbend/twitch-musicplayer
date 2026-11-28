@@ -3,6 +3,7 @@ package blocklist
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -100,5 +101,40 @@ func TestFailedSaveRollsBack(t *testing.T) {
 	}
 	if s.Has("a") {
 		t.Fatal("Add kept the id after a failed save")
+	}
+}
+
+func TestSaveIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	path := filepath.Join(t.TempDir(), "radio.blocked.json")
+	if err := Empty(path).Add("a"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("mode = %o, want 600", got)
+	}
+}
+
+func TestSaveOntoDirectoryLeavesNoTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "radio.blocked.json")
+	if err := os.MkdirAll(filepath.Join(path, "child"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := Empty(path).Add("a"); err == nil {
+		t.Fatal("Add onto a directory succeeded, want error")
+	}
+	leftovers, err := filepath.Glob(filepath.Join(dir, ".blocked-*"))
+	if err != nil {
+		t.Fatalf("Glob: %v", err)
+	}
+	if len(leftovers) != 0 {
+		t.Errorf("temp files left behind: %v", leftovers)
 	}
 }
