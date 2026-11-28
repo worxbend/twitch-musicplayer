@@ -1,6 +1,11 @@
 package models
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"testing"
+	"time"
+)
 
 func TestFirstPlayable(t *testing.T) {
 	dead := &QueueItem{ID: "q1", SongID: "gone"}
@@ -33,5 +38,19 @@ func TestNextPlayableSong(t *testing.T) {
 	}
 	if got := NextPlayableSong([]*QueueItem{dead}); got != nil {
 		t.Fatalf("NextPlayableSong(all dead) = %+v, want nil", got)
+	}
+}
+
+func TestSongJSONOmitsModTime(t *testing.T) {
+	without, err := json.Marshal(Song{ID: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	with, err := json.Marshal(Song{ID: "a", ModTime: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(with, without) {
+		t.Fatalf("Song JSON with ModTime = %s, want %s", with, without)
 	}
 }

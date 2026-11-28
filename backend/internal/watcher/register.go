@@ -21,12 +21,11 @@ func songID(path string) string {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(path)).String()
 }
 
-// withFileMetadata returns song with the fields read from the file at path,
-// and the file's modification time.
-func withFileMetadata(song models.Song, path string) (models.Song, time.Time, error) {
+// withFileMetadata returns song with the fields read from the file at path.
+func withFileMetadata(song models.Song, path string) (models.Song, error) {
 	stat, err := os.Stat(path)
 	if err != nil {
-		return song, time.Time{}, err
+		return song, err
 	}
 	m := meta.Extract(path)
 	song.Title = m.Title
@@ -36,7 +35,8 @@ func withFileMetadata(song models.Song, path string) (models.Song, time.Time, er
 	song.HasCover = m.HasCover
 	song.CoverVersion = m.CoverVersion
 	song.SizeBytes = stat.Size()
-	return song, stat.ModTime(), nil
+	song.ModTime = stat.ModTime()
+	return song, nil
 }
 
 // registerFile inserts a new song record and optionally queues it. A path
@@ -55,7 +55,7 @@ func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool
 	}
 
 	now := time.Now()
-	fresh, modTime, err := withFileMetadata(models.Song{
+	fresh, err := withFileMetadata(models.Song{
 		ID:       songID(path),
 		Filename: filepath.Base(path),
 		Path:     path,
@@ -67,8 +67,8 @@ func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool
 	// The repo is in memory, so the startup scan (the only caller that does not
 	// queue) re-creates every song. Its modtime stands in for when it joined;
 	// a future modtime is capped so it cannot pin the song as new.
-	if !addToQueue && modTime.Before(now) {
-		fresh.AddedAt = modTime
+	if !addToQueue && fresh.ModTime.Before(now) {
+		fresh.AddedAt = fresh.ModTime
 	}
 	song := &fresh
 
@@ -98,8 +98,9 @@ func (w *Watcher) registerFile(ctx context.Context, path string, addToQueue bool
 }
 
 // refreshFile re-reads the metadata of an indexed file that was rewritten or
-// replaced, so a retag shows up without a restart. It never re-queues, and it
-// writes and notifies OnUpdated only when the metadata changed. It returns
+// replaced, so a retag shows up without a restart. It never re-queues. It
+// writes when the metadata or the modtime changed, and notifies OnUpdated only
+// when the metadata changed, so a bare touch never re-announces. It returns
 // (nil, nil) when the song left the library, even mid-refresh: the write is
 // update-only, so a delete racing the tag re-read cannot revive the song.
 func (w *Watcher) refreshFile(ctx context.Context, path string) (*models.Song, error) {
@@ -110,13 +111,16 @@ func (w *Watcher) refreshFile(ctx context.Context, path string) (*models.Song, e
 	if err != nil {
 		return nil, err
 	}
-	updated, _, err := withFileMetadata(*current, path)
+	updated, err := withFileMetadata(*current, path)
 	if err != nil {
 		return nil, err
 	}
 	// Only file-derived fields can differ; ID, Path and AddedAt are copied.
 	// CoverVersion makes a picture-only retag compare unequal.
-	if updated == *current {
+	sameModTime := updated
+	sameModTime.ModTime = current.ModTime
+	metadataChanged := sameModTime != *current
+	if !metadataChanged && updated.ModTime.Equal(current.ModTime) {
 		return current, nil
 	}
 	err = w.songRepo.Update(ctx, &updated)
@@ -126,11 +130,32 @@ func (w *Watcher) refreshFile(ctx context.Context, path string) (*models.Song, e
 	if err != nil {
 		return nil, err
 	}
+	if !metadataChanged {
+		return &updated, nil
+	}
 	w.logger.Printf("updated: %s", updated.Title)
 	if w.OnUpdated != nil {
 		w.OnUpdated(&updated)
 	}
 	return &updated, nil
+}
+
+// changedOnDisk reports whether the music file at path is not indexed yet, or
+// differs in size or modtime from when it was last read. It stats like
+// withFileMetadata, following symlinks.
+func (w *Watcher) changedOnDisk(ctx context.Context, path string) (bool, error) {
+	song, err := w.songRepo.GetByID(ctx, songID(path))
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	return info.Size() != song.SizeBytes || !info.ModTime().Equal(song.ModTime), nil
 }
 
 // unregisterPath drops songs for a path that no longer exists.

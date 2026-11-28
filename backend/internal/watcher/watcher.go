@@ -344,12 +344,11 @@ func (w *Watcher) handleError(ctx context.Context, err error) {
 	}
 }
 
-// resync re-walks the tree in the background to watch every folder and index
-// new files, then drops songs whose files are gone. It runs in w.settling so
-// Start waits for it. An overflow during a running resync queues exactly one
-// more resync after it, since the running walk or sweep may already have
-// passed the files whose events it lost. Retags lost in an overflow are not
-// re-read.
+// resync re-walks the tree in the background to watch every folder, index new
+// files and re-read changed ones, then drops songs whose files are gone. It
+// runs in w.settling so Start waits for it. An overflow during a running
+// resync queues exactly one more resync after it, since the running walk or
+// sweep may already have passed the files whose events it lost.
 func (w *Watcher) resync(ctx context.Context) {
 	w.resyncC.request(&w.settling, func() {
 		if _, err := w.rescanTree(ctx); err != nil {
@@ -364,15 +363,17 @@ func (w *Watcher) resync(ctx context.Context) {
 }
 
 // rescanTree watches every folder in the library and queues each music file
-// that is not indexed yet for registration. It returns the watched folders.
+// that is not indexed yet, or whose size or modtime changed since it was read,
+// for registration. The latter catches retags whose Write events were lost.
+// It returns the watched folders.
 func (w *Watcher) rescanTree(ctx context.Context) (int, error) {
 	return w.walkTree(ctx, w.dir, func(path string) error {
-		indexed, err := w.songRepo.ExistsByPath(ctx, path)
+		changed, err := w.changedOnDisk(ctx, path)
 		if err != nil {
 			w.logger.Printf("rescan %s: %v", path, err)
 			return nil
 		}
-		if !indexed {
+		if changed {
 			w.registerWhenSettled(ctx, path)
 		}
 		return nil

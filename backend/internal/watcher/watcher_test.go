@@ -999,6 +999,79 @@ func TestOverflowResync(t *testing.T) {
 	}
 }
 
+// overflow resyncs h like a lost-event overflow and waits for it to finish.
+func (h *harness) overflow(t *testing.T) {
+	t.Helper()
+	h.w.handleError(context.Background(), fsnotify.ErrEventOverflow)
+	h.w.settling.Wait()
+}
+
+// TestOverflowResyncRereadsRetags rewrites a.mp3 behind an unstarted watcher,
+// as if its Write events were lost in an overflow: once with a new size, then
+// with an equal-size tag and only a later modtime to tell it apart.
+func TestOverflowResyncRereadsRetags(t *testing.T) {
+	h := overflowHarness(t)
+	h.w.OnUpdated = func(_ *models.Song) { h.updates.Add(1) }
+	path := filepath.Join(h.dir, "a.mp3")
+
+	retag(t, path, "v2")
+	h.overflow(t)
+	if got := titleOf(t, h.songs, path); got != "v2" {
+		t.Fatalf("title = %q after resync, want v2", got)
+	}
+	if n := h.updates.Load(); n != 1 {
+		t.Fatalf("OnUpdated fired %d times, want 1", n)
+	}
+
+	size := h.song(t, path).SizeBytes
+	retag(t, path, "v3")
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+	h.overflow(t)
+	song := h.song(t, path)
+	if song.SizeBytes != size {
+		t.Fatalf("size = %d, want unchanged %d so only the modtime differs", song.SizeBytes, size)
+	}
+	if song.Title != "v3" {
+		t.Fatalf("title = %q after modtime-only resync, want v3", song.Title)
+	}
+	if n := h.updates.Load(); n != 2 {
+		t.Fatalf("OnUpdated fired %d times, want 2", n)
+	}
+}
+
+// A touch alone stores the new modtime without announcing, so the next resync
+// leaves the file alone.
+func TestOverflowResyncStoresTouchSilently(t *testing.T) {
+	h := overflowHarness(t)
+	h.w.OnUpdated = func(_ *models.Song) { h.updates.Add(1) }
+	path := filepath.Join(h.dir, "a.mp3")
+	later := time.Now().Add(time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	h.overflow(t)
+	if got := h.song(t, path).ModTime; !got.Equal(later) {
+		t.Fatalf("stored modtime = %v, want %v", got, later)
+	}
+
+	var reads atomic.Int32
+	h.w.settleWait = func(context.Context, string) error {
+		reads.Add(1)
+		return nil
+	}
+	h.overflow(t)
+	if n := reads.Load(); n != 0 {
+		t.Fatalf("second resync re-read %d files, want 0", n)
+	}
+	if n := h.updates.Load(); n != 0 {
+		t.Fatalf("OnUpdated fired %d times for a touch, want 0", n)
+	}
+}
+
 // gatedListRepo is a MemSongRepo whose List, once armed, reports entry on
 // entered and blocks until release is closed. cur and peak count the List
 // calls in progress, so a test can catch two resyncs sweeping at once.

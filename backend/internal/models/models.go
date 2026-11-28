@@ -15,6 +15,9 @@ type Song struct {
 	HasCover     bool      `json:"has_cover"`
 	CoverVersion string    `json:"cover_version,omitempty"`
 	AddedAt      time.Time `json:"added_at"`
+	// ModTime is the file's modtime when it was last read. A resync compares
+	// it, with SizeBytes, to spot a retag whose events were lost.
+	ModTime time.Time `json:"-"`
 }
 
 // QueueSource indicates whether a queue entry was added automatically or manually.
