@@ -35,7 +35,7 @@ func main() {
 	songRepo := repository.NewMemSongRepo()
 	queueRepo := repository.NewMemQueueRepo(songRepo)
 
-	// ── Played tracker (Bloom filter; with the blocklist, all that persists) ──
+	// ── Played tracker (Bloom filter; persisted with the blocklist, history) ──
 	playedTracker := played.New(10_000, 0.01)
 	if err := playedTracker.Load(cfg.BloomPath); err != nil {
 		log.Printf("bloom filter: starting fresh (%v)", err)
@@ -62,6 +62,8 @@ func main() {
 
 	// ── Player state tracker ──────────────────────────────────────────────────
 	stateTracker := player.NewStateTracker()
+	historyPath := sidecarPath(cfg.BloomPath, ".history.json")
+	loadHistory(stateTracker, historyPath)
 	if cfg.OBS.NowPlayingFile != "" {
 		setupNowPlayingFile(stateTracker, cfg.OBS)
 	}
@@ -140,6 +142,7 @@ func main() {
 		}
 	}()
 	go playedTracker.RunAutosave(ctx, cfg.BloomPath, time.Minute, log.Printf)
+	go runHistoryAutosave(ctx, stateTracker, historyPath, time.Minute)
 
 	// ── Shutdown ──────────────────────────────────────────────────────────────
 	done := make(chan bool, 1)
@@ -150,11 +153,13 @@ func main() {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		shutdownSequence{
-			hub:        hub,
-			server:     httpServer,
-			nowPlaying: stateTracker,
-			bloom:      playedTracker,
-			bloomPath:  cfg.BloomPath,
+			hub:         hub,
+			server:      httpServer,
+			nowPlaying:  stateTracker,
+			bloom:       playedTracker,
+			bloomPath:   cfg.BloomPath,
+			history:     stateTracker,
+			historyPath: historyPath,
 		}.run(shutCtx)
 		done <- true
 	}()
@@ -170,17 +175,17 @@ func main() {
 	fmt.Println("shutdown complete.")
 }
 
-// blocklistPath returns where the blocklist lives: the Bloom file's path with
-// its extension replaced by ".blocked.json".
-func blocklistPath(bloomPath string) string {
-	return strings.TrimSuffix(bloomPath, filepath.Ext(bloomPath)) + ".blocked.json"
+// sidecarPath returns where a file kept next to the Bloom file lives: the
+// Bloom file's path with its extension replaced by suffix.
+func sidecarPath(bloomPath, suffix string) string {
+	return strings.TrimSuffix(bloomPath, filepath.Ext(bloomPath)) + suffix
 }
 
 // loadBlocklist loads the blocklist next to the Bloom file. A corrupt file is
 // logged and replaced by an empty list on the next change, so it never stops
 // the radio.
 func loadBlocklist(bloomPath string) *blocklist.Store {
-	path := blocklistPath(bloomPath)
+	path := sidecarPath(bloomPath, ".blocked.json")
 	store, err := blocklist.Load(path)
 	if err != nil {
 		log.Printf("warning: blocklist: starting empty (%v)", err)
@@ -188,6 +193,48 @@ func loadBlocklist(bloomPath string) *blocklist.Store {
 	}
 	log.Printf("blocklist loaded from %s (%d songs blocked)", path, len(store.List()))
 	return store
+}
+
+// loadHistory restores the play history saved at path. Like the blocklist, a
+// corrupt file is logged and replaced on the next save, so it never stops the
+// radio.
+func loadHistory(tracker *player.StateTracker, path string) {
+	entries, err := player.LoadHistoryFile(path)
+	if err != nil {
+		log.Printf("warning: play history: starting empty (%v)", err)
+		return
+	}
+	tracker.LoadHistory(entries)
+	log.Printf("play history loaded from %s (%d entries)", path, len(tracker.History(player.MaxHistory)))
+}
+
+// historySaver is the part of player.StateTracker that persists history.
+type historySaver interface {
+	SaveHistoryIfDirty(save func([]player.PlayEntry) error) error
+}
+
+// saveHistory writes the play history to path when it changed.
+func saveHistory(history historySaver, path string) error {
+	return history.SaveHistoryIfDirty(func(entries []player.PlayEntry) error {
+		return player.SaveHistory(path, entries)
+	})
+}
+
+// runHistoryAutosave saves the play history every interval when it changed,
+// until ctx ends, so a crash loses at most one interval of history.
+func runHistoryAutosave(ctx context.Context, history historySaver, path string, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := saveHistory(history, path); err != nil {
+				log.Printf("warning: play history autosave failed: %v", err)
+			}
+		}
+	}
 }
 
 // bloomSaver is the part of played.Tracker that shutdown persists.
@@ -198,15 +245,17 @@ type bloomSaver interface {
 
 // shutdownSequence holds what a graceful shutdown stops, clears and saves.
 type shutdownSequence struct {
-	hub        interface{ Shutdown(context.Context) error }
-	server     *http.Server
-	nowPlaying interface{ ClearCurrentSong() bool }
-	bloom      bloomSaver
-	bloomPath  string
+	hub         interface{ Shutdown(context.Context) error }
+	server      *http.Server
+	nowPlaying  interface{ ClearCurrentSong() bool }
+	bloom       bloomSaver
+	bloomPath   string
+	history     historySaver
+	historyPath string
 }
 
 // run stops the hub and the HTTP server, clears now-playing and saves the
-// Bloom filter. Every step runs even when an earlier one fails or ctx ends.
+// Bloom filter and the play history. Every step runs even when an earlier one fails or ctx ends.
 func (s shutdownSequence) run(ctx context.Context) {
 	// Hijacked /ws connections are not closed by server.Shutdown, so the hub
 	// sends peers 1001 Going Away first.
@@ -227,6 +276,9 @@ func (s shutdownSequence) run(ctx context.Context) {
 		log.Printf("warning: bloom filter save failed: %v", err)
 	} else {
 		log.Printf("bloom filter saved to %s (~%d songs played)", s.bloomPath, s.bloom.ApproxCount())
+	}
+	if err := saveHistory(s.history, s.historyPath); err != nil {
+		log.Printf("warning: play history save failed: %v", err)
 	}
 }
 

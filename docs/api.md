@@ -320,8 +320,12 @@ curl 'http://localhost:8080/v1/history?format=text&limit=50'
 2026-01-01 20:15 UTC  Nujabes - Aruarian Dance
 ```
 
-History is kept in memory: it holds the last 50 starts and resets when the server
-restarts. A song is recorded when a player starts it, so a skipped track still appears.
+History holds the last 50 starts and survives a restart. It is saved next to the Bloom
+file, with its extension replaced by `.history.json` (`./lofi-radio.bloom` gives
+`./lofi-radio.history.json`), within a minute of a change and on graceful shutdown. A
+corrupt file is logged at startup and replaced on the next save. Song IDs are derived from
+the file path, so entries for a file that was moved or renamed cannot be re-queued. A song
+is recorded when a player starts it, so a skipped track still appears.
 
 This list is separate from the Bloom filter, which is used only to decide what has
 already been played this cycle. The `history_id` in WebSocket payloads is a per-playback

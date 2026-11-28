@@ -64,6 +64,15 @@ Every block or unblock rewrites it atomically: a temp file (`.blocked-*`) in the
 then a rename. A corrupt or unreadable file is logged at startup, the radio starts with an empty
 blocklist, and the file is replaced on the next block or unblock.
 
+### 🕰️ Play History File
+
+The last 50 song starts (`GET /v1/history`, **Recently played**, **Copy setlist**) are saved
+beside the blocklist, with the extension replaced by `.history.json`: `./lofi-radio.bloom` gives
+`./lofi-radio.history.json`. The file is version-1 JSON, `{"version":1,"entries":[...]}`, with
+mode `0600`. It is rewritten atomically (temp file `.history-*`) within a minute of a change and
+on graceful shutdown. A corrupt, unreadable or oversized (over 1 MiB) file is logged at startup,
+history starts empty, and the file is replaced on the next save.
+
 ## 🌱 Backend Environment
 
 Example: `backend/.env.example`.

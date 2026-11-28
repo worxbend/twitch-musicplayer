@@ -239,11 +239,13 @@ func runShutdown(t *testing.T, ctx context.Context, hub interface{ Shutdown(cont
 	t.Helper()
 	bloomPath := filepath.Join(t.TempDir(), "played.bloom")
 	shutdownSequence{
-		hub:        hub,
-		server:     srv,
-		nowPlaying: tracker,
-		bloom:      played.New(100, 0.01),
-		bloomPath:  bloomPath,
+		hub:         hub,
+		server:      srv,
+		nowPlaying:  tracker,
+		bloom:       played.New(100, 0.01),
+		bloomPath:   bloomPath,
+		history:     tracker,
+		historyPath: sidecarPath(bloomPath, ".history.json"),
 	}.run(ctx)
 	return bloomPath
 }
@@ -276,6 +278,21 @@ func TestShutdownStillClearsWhenHubTimesOut(t *testing.T) {
 	defer cancel()
 	bloomPath := runShutdown(t, ctx, blockingHub{}, &http.Server{}, tracker)
 	assertShutdownCleared(t, tracker, npPath, bloomPath)
+}
+
+func TestShutdownSavesPlayHistory(t *testing.T) {
+	tracker := player.NewStateTracker()
+	tracker.SetCurrentSong(&models.Song{ID: "a", Title: "A"})
+	tracker.SetCurrentSong(&models.Song{ID: "b", Title: "B"})
+
+	bloomPath := runShutdown(t, context.Background(), websocket.NewHub(), &http.Server{}, tracker)
+	entries, err := player.LoadHistoryFile(sidecarPath(bloomPath, ".history.json"))
+	if err != nil {
+		t.Fatalf("LoadHistoryFile: %v", err)
+	}
+	if len(entries) != 2 || entries[0].Song.ID != "a" || entries[1].Song.ID != "b" {
+		t.Fatalf("saved history = %+v, want a then b", entries)
+	}
 }
 
 // A song stream stalled past the shutdown budget must not keep its
@@ -362,15 +379,17 @@ func TestBroadcastQueueUpdatedSendsOnListError(t *testing.T) {
 	assertQueueUpdated(t, hub, 0, "file_removed")
 }
 
-func TestBlocklistPath(t *testing.T) {
-	tests := map[string]string{
-		"./lofi-radio.bloom":     "./lofi-radio.blocked.json",
-		"/data/lofi-radio.bloom": "/data/lofi-radio.blocked.json",
-		"/data/history":          "/data/history.blocked.json",
+func TestSidecarPath(t *testing.T) {
+	tests := []struct{ bloom, suffix, want string }{
+		{"./lofi-radio.bloom", ".blocked.json", "./lofi-radio.blocked.json"},
+		{"/data/lofi-radio.bloom", ".blocked.json", "/data/lofi-radio.blocked.json"},
+		{"/data/history", ".blocked.json", "/data/history.blocked.json"},
+		{"./lofi-radio.bloom", ".history.json", "./lofi-radio.history.json"},
+		{"/data/radio.v2.bloom", ".history.json", "/data/radio.v2.history.json"},
 	}
-	for bloom, want := range tests {
-		if got := blocklistPath(bloom); got != want {
-			t.Errorf("blocklistPath(%q) = %q, want %q", bloom, got, want)
+	for _, tt := range tests {
+		if got := sidecarPath(tt.bloom, tt.suffix); got != tt.want {
+			t.Errorf("sidecarPath(%q, %q) = %q, want %q", tt.bloom, tt.suffix, got, tt.want)
 		}
 	}
 }
@@ -379,7 +398,7 @@ func TestBlocklistPath(t *testing.T) {
 // that overwrites it on the next change.
 func TestLoadBlocklistReplacesCorruptFile(t *testing.T) {
 	bloom := filepath.Join(t.TempDir(), "radio.bloom")
-	path := blocklistPath(bloom)
+	path := sidecarPath(bloom, ".blocked.json")
 	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}

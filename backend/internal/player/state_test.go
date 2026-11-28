@@ -1,6 +1,7 @@
 package player
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
@@ -512,5 +513,118 @@ func TestElapsedSecsRoundsToMillisAndClampsNegative(t *testing.T) {
 		if got := ElapsedSecs(tc.in); got == nil || *got != tc.want {
 			t.Errorf("ElapsedSecs(%v) = %v, want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+// entriesAt returns one entry per id, started that many minutes after epoch.
+func entriesAt(minutes map[string]int) []PlayEntry {
+	out := make([]PlayEntry, 0, len(minutes))
+	for id, m := range minutes {
+		out = append(out, PlayEntry{Song: models.Song{ID: id}, StartedAt: epoch.Add(time.Duration(m) * time.Minute)})
+	}
+	return out
+}
+
+func TestLoadHistorySortsAndKeepsNewest(t *testing.T) {
+	minutes := map[string]int{}
+	for i := range MaxHistory + 3 {
+		minutes[fmt.Sprintf("s%d", i)] = i
+	}
+	tr := NewStateTracker()
+	tr.LoadHistory(entriesAt(minutes))
+	got := tr.History(MaxHistory + 10)
+	if len(got) != MaxHistory {
+		t.Fatalf("len = %d, want %d", len(got), MaxHistory)
+	}
+	if got[0].Song.ID != "s52" || got[len(got)-1].Song.ID != "s3" {
+		t.Fatalf("kept %s..%s, want s52..s3", got[0].Song.ID, got[len(got)-1].Song.ID)
+	}
+	if tr.GetCurrentSong() != nil {
+		t.Fatal("LoadHistory set a current song")
+	}
+}
+
+func TestSetCurrentSongAppendsAfterLoadedHistory(t *testing.T) {
+	tr := newFakeClockTracker()
+	tr.LoadHistory(entriesAt(map[string]int{"old2": -1, "old1": -2}))
+	tr.SetCurrentSong(&models.Song{ID: "new"})
+	if got := fmt.Sprint(ids(tr.History(MaxHistory))); got != "[new old2 old1]" {
+		t.Fatalf("History = %s, want [new old2 old1]", got)
+	}
+}
+
+// recordingSave counts calls and saves the entries it was given.
+type recordingSave struct {
+	calls int
+	last  []PlayEntry
+	err   error
+}
+
+func (r *recordingSave) save(entries []PlayEntry) error {
+	r.calls++
+	r.last = entries
+	return r.err
+}
+
+func TestSaveHistoryIfDirtySkipsCleanHistory(t *testing.T) {
+	tr := newFakeClockTracker()
+	tr.LoadHistory(entriesAt(map[string]int{"old": 0}))
+	rec := &recordingSave{}
+	if err := tr.SaveHistoryIfDirty(rec.save); err != nil || rec.calls != 0 {
+		t.Fatalf("clean save: err=%v calls=%d, want nil and 0", err, rec.calls)
+	}
+}
+
+func TestSaveHistoryIfDirtyClearsAfterSuccess(t *testing.T) {
+	tr := newFakeClockTracker()
+	pushSongs(tr, 2)
+	rec := &recordingSave{}
+	if err := tr.SaveHistoryIfDirty(rec.save); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if got := fmt.Sprint(ids(rec.last)); rec.calls != 1 || got != "[s0 s1]" {
+		t.Fatalf("calls=%d entries=%s, want 1 and [s0 s1] oldest first", rec.calls, got)
+	}
+	if err := tr.SaveHistoryIfDirty(rec.save); err != nil || rec.calls != 1 {
+		t.Fatalf("second save: err=%v calls=%d, want nil and 1", err, rec.calls)
+	}
+}
+
+func TestSaveHistoryIfDirtyRetriesAfterFailure(t *testing.T) {
+	tr := newFakeClockTracker()
+	pushSongs(tr, 1)
+	rec := &recordingSave{err: errors.New("disk full")}
+	if err := tr.SaveHistoryIfDirty(rec.save); err == nil {
+		t.Fatal("failing save returned nil")
+	}
+	rec.err = nil
+	if err := tr.SaveHistoryIfDirty(rec.save); err != nil || rec.calls != 2 {
+		t.Fatalf("retry: err=%v calls=%d, want nil and 2", err, rec.calls)
+	}
+}
+
+func TestRetagOfNewestEntryMarksHistoryDirty(t *testing.T) {
+	tr := newFakeClockTracker()
+	pushSongs(tr, 1)
+	rec := &recordingSave{}
+	if err := tr.SaveHistoryIfDirty(rec.save); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	tr.UpdateSong(&models.Song{ID: "s0", Title: "Retagged"})
+	if err := tr.SaveHistoryIfDirty(rec.save); err != nil || rec.calls != 2 || rec.last[0].Song.Title != "Retagged" {
+		t.Fatalf("after retag: err=%v calls=%d entries=%+v", err, rec.calls, rec.last)
+	}
+}
+
+func TestClearCurrentSongLeavesHistoryClean(t *testing.T) {
+	tr := newFakeClockTracker()
+	pushSongs(tr, 1)
+	rec := &recordingSave{}
+	if err := tr.SaveHistoryIfDirty(rec.save); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	tr.ClearCurrentSong()
+	if err := tr.SaveHistoryIfDirty(rec.save); err != nil || rec.calls != 1 {
+		t.Fatalf("after clear: err=%v calls=%d, want nil and 1", err, rec.calls)
 	}
 }

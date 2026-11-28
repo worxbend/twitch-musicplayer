@@ -1,6 +1,7 @@
 package player
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -28,13 +29,18 @@ type PlayEntry struct {
 // startSeq counts song starts. A retag replaces currentSong but keeps
 // startSeq and currentStartedAt, so it tells a new start from a metadata
 // update and does not reset the elapsed time.
+//
+// dirty records a history change since the last SaveHistoryIfDirty. saveMu
+// serializes those saves so an older snapshot never lands after a newer one.
 type StateTracker struct {
 	announceMu       sync.Mutex
+	saveMu           sync.Mutex
 	mu               sync.RWMutex
 	currentSong      *models.Song
 	currentStartedAt time.Time // zero when no song is current
 	startSeq         uint64
 	history          []PlayEntry // oldest first, at most MaxHistory entries
+	dirty            bool
 	now              func() time.Time
 	onChange         func(*models.Song)
 }
@@ -165,6 +171,7 @@ func (t *StateTracker) setCurrent(song *models.Song) func(*models.Song) {
 		if excess := len(t.history) - MaxHistory; excess > 0 {
 			t.history = t.history[excess:]
 		}
+		t.dirty = true
 	}
 	return t.onChange
 }
@@ -209,6 +216,7 @@ func (t *StateTracker) update(song *models.Song) (models.Song, time.Duration, fu
 	t.currentSong = &updated
 	if last := len(t.history) - 1; last >= 0 && t.history[last].Song.ID == song.ID {
 		t.history[last].Song = updated
+		t.dirty = true
 	}
 	return updated, t.elapsedLocked(), t.onChange, true
 }
@@ -265,4 +273,49 @@ func (t *StateTracker) History(limit int) []PlayEntry {
 		out = append(out, t.history[i])
 	}
 	return out
+}
+
+// LoadHistory replaces the play history with entries, for example ones saved
+// before a restart. It keeps the newest MaxHistory entries by StartedAt and
+// leaves the current song alone. Loaded entries do not count as a change, so
+// SaveHistoryIfDirty does not write them back.
+func (t *StateTracker) LoadHistory(entries []PlayEntry) {
+	sorted := slices.Clone(entries)
+	slices.SortStableFunc(sorted, func(a, b PlayEntry) int { return a.StartedAt.Compare(b.StartedAt) })
+	sorted = sorted[max(0, len(sorted)-MaxHistory):]
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.history = sorted
+}
+
+// SaveHistoryIfDirty calls save with a copy of the history, oldest first, when
+// it changed since the last successful save, and does nothing otherwise. save
+// runs outside the tracker's lock. When save fails the history stays dirty,
+// so the next call retries, and the error is returned.
+func (t *StateTracker) SaveHistoryIfDirty(save func([]PlayEntry) error) error {
+	t.saveMu.Lock()
+	defer t.saveMu.Unlock()
+	entries, ok := t.takeDirtyHistory()
+	if !ok {
+		return nil
+	}
+	if err := save(entries); err != nil {
+		t.mu.Lock()
+		t.dirty = true
+		t.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// takeDirtyHistory returns a copy of the history and clears dirty, or false
+// when the history has not changed.
+func (t *StateTracker) takeDirtyHistory() ([]PlayEntry, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.dirty {
+		return nil, false
+	}
+	t.dirty = false
+	return slices.Clone(t.history), true
 }
