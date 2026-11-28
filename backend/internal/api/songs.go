@@ -3,9 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"io/fs"
 	"log"
@@ -120,12 +118,11 @@ func (h *SongsHandler) Cover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sum := sha256.Sum256(img)
 	header := w.Header()
 	header.Set("Content-Type", mime)
 	header.Set("X-Content-Type-Options", "nosniff")
 	header.Set("Cache-Control", "public, no-cache")
-	header.Set("ETag", `"`+hex.EncodeToString(sum[:8])+`"`)
+	header.Set("ETag", `"`+meta.CoverVersion(img)+`"`)
 	http.ServeContent(w, r, "", file.info.ModTime(), bytes.NewReader(img))
 }
 

@@ -1,6 +1,8 @@
 package meta
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +24,9 @@ type Info struct {
 	Album        string
 	DurationSecs float64
 	HasCover     bool
+	// CoverVersion is the CoverVersion of the picture Cover serves, or ""
+	// when there is none or the tag is too large to parse its pictures.
+	CoverVersion string
 }
 
 // maxCoverTagBytes caps the ID3v2 tag size whose pictures are parsed, so a
@@ -66,7 +71,10 @@ func Extract(path string) Info {
 	}
 	defer tag.Close()
 
-	_, _, info.HasCover = coverPicture(tag)
+	if _, data, ok := coverPicture(tag); ok {
+		info.HasCover = true
+		info.CoverVersion = CoverVersion(data)
+	}
 
 	if t := cleanTag(tag.Title()); t != "" {
 		info.Title = t
@@ -109,6 +117,14 @@ func controlToSpace(r rune) rune {
 		return ' '
 	}
 	return r
+}
+
+// CoverVersion returns an opaque version of the cover image img: 16 hex
+// characters of its SHA-256. It is the cover's ETag value and the song's
+// cover_version, so it changes whenever the embedded picture does.
+func CoverVersion(img []byte) string {
+	sum := sha256.Sum256(img)
+	return hex.EncodeToString(sum[:8])
 }
 
 // Cover returns the embedded cover image of the file at path and its sniffed

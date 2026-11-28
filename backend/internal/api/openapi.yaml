@@ -794,6 +794,12 @@ components:
         has_cover:
           type: boolean
           description: True when GET /v1/songs/{id}/cover serves an embedded image.
+        cover_version:
+          type: string
+          description: >-
+            Opaque version of the embedded cover, omitted when has_cover is false.
+            It changes when the cover changes and equals the cover's ETag value;
+            clients append it to the cover URL as ?v= so a retagged cover refetches.
         added_at:
           type: string
           format: date-time

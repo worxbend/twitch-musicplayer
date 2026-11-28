@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	id3 "github.com/bogem/id3v2/v2"
@@ -331,10 +332,32 @@ func TestCover(t *testing.T) {
 			if mime != tt.wantMIME || !bytes.Equal(data, tt.wantData) {
 				t.Errorf("Cover() = %q/%q, want %q/%q", mime, data, tt.wantMIME, tt.wantData)
 			}
-			if hasCover := Extract(path).HasCover; hasCover != (tt.wantError == nil) {
-				t.Errorf("Extract().HasCover = %v, want %v", hasCover, tt.wantError == nil)
+			info := Extract(path)
+			if info.HasCover != (tt.wantError == nil) {
+				t.Errorf("Extract().HasCover = %v, want %v", info.HasCover, tt.wantError == nil)
+			}
+			wantVersion := ""
+			if tt.wantError == nil {
+				wantVersion = CoverVersion(tt.wantData)
+			}
+			if info.CoverVersion != wantVersion {
+				t.Errorf("Extract().CoverVersion = %q, want %q", info.CoverVersion, wantVersion)
 			}
 		})
+	}
+}
+
+func TestCoverVersion(t *testing.T) {
+	t.Parallel()
+	version := CoverVersion(pngBytes)
+	if len(version) != 16 || strings.Trim(version, "0123456789abcdef") != "" {
+		t.Fatalf("CoverVersion() = %q, want 16 lowercase hex characters", version)
+	}
+	if again := CoverVersion(bytes.Clone(pngBytes)); again != version {
+		t.Errorf("CoverVersion() of equal bytes = %q, want %q", again, version)
+	}
+	if other := CoverVersion(jpegBytes); other == version {
+		t.Errorf("CoverVersion() of different bytes = %q, want a different version", other)
 	}
 }
 

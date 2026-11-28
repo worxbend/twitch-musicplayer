@@ -1,6 +1,7 @@
 package watcher
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -480,6 +481,13 @@ func TestWatcherCapsConcurrentSettling(t *testing.T) {
 // is built outside the library: id3v2's Save renames a temp file over its target.
 func taggedMP3(t *testing.T, title string) []byte {
 	t.Helper()
+	return taggedMP3WithCover(t, title, nil)
+}
+
+// taggedMP3WithCover is taggedMP3 that also embeds picture as the front
+// cover when it is non-nil.
+func taggedMP3WithCover(t *testing.T, title string, picture []byte) []byte {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "tagged.mp3")
 	if err := os.WriteFile(path, make([]byte, 4096), 0o644); err != nil {
 		t.Fatal(err)
@@ -489,6 +497,14 @@ func taggedMP3(t *testing.T, title string) []byte {
 		t.Fatalf("id3 open: %v", err)
 	}
 	tag.SetTitle(title)
+	if picture != nil {
+		tag.AddAttachedPicture(id3.PictureFrame{
+			Encoding:    id3.EncodingUTF8,
+			MimeType:    "image/png",
+			PictureType: id3.PTFrontCover,
+			Picture:     picture,
+		})
+	}
 	if err := tag.Save(); err != nil {
 		tag.Close()
 		t.Fatalf("id3 save: %v", err)
@@ -594,6 +610,41 @@ func TestWatcherOnUpdatedFiresOnlyWhenMetadataChanges(t *testing.T) {
 	time.Sleep(3 * h.w.settlePoll)
 	if n := h.updates.Load(); n != 1 {
 		t.Fatalf("OnUpdated fired %d times, want 1", n)
+	}
+}
+
+// A retag that swaps only the embedded picture keeps every other field,
+// size included, so only cover_version tells the songs apart.
+func TestWatcherOnUpdatedFiresForCoverOnlyRetag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp3")
+	pngA := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01")
+	pngB := bytes.Clone(pngA)
+	pngB[len(pngB)-1] = 0x02
+	if err := os.WriteFile(path, taggedMP3WithCover(t, "Same", pngA), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := startWatcher(t, dir)
+	before := h.song(t, path)
+	if before.CoverVersion == "" {
+		t.Fatal("indexed song has no cover_version")
+	}
+
+	retagged := taggedMP3WithCover(t, "Same", pngB)
+	if err := os.WriteFile(path, retagged, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, "OnUpdated", func() bool { return h.updates.Load() > 0 })
+	time.Sleep(3 * h.w.settlePoll)
+	if n := h.updates.Load(); n != 1 {
+		t.Fatalf("OnUpdated fired %d times, want 1", n)
+	}
+	after := h.song(t, path)
+	if after.CoverVersion == before.CoverVersion {
+		t.Fatalf("cover_version = %q, want it changed", after.CoverVersion)
+	}
+	if after.Title != before.Title || after.SizeBytes != before.SizeBytes {
+		t.Fatalf("title/size = %q/%d, want unchanged %q/%d", after.Title, after.SizeBytes, before.Title, before.SizeBytes)
 	}
 }
 

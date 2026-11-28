@@ -23,6 +23,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"lofi-radio-backend/internal/meta"
 	"lofi-radio-backend/internal/models"
 )
 
@@ -522,6 +523,14 @@ func TestSongsCover(t *testing.T) {
 		}
 		if !bytes.Equal(rec.Body.Bytes(), png) {
 			t.Errorf("body = %q, want the embedded picture", rec.Body.Bytes())
+		}
+	})
+
+	t.Run("ETag is the indexed cover_version", func(t *testing.T) {
+		info := meta.Extract(filepath.Join(musicDir, "art.mp3"))
+		rec := serve(t, router, http.MethodGet, "/v1/songs/art/cover", "", nil)
+		if got, want := rec.Header().Get("ETag"), `"`+info.CoverVersion+`"`; info.CoverVersion == "" || got != want {
+			t.Fatalf("ETag = %q, want %q", got, want)
 		}
 	})
 

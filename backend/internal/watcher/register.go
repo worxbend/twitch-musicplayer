@@ -33,6 +33,7 @@ func withFileMetadata(song models.Song, path string) (models.Song, error) {
 	song.Album = m.Album
 	song.DurationSecs = m.DurationSecs
 	song.HasCover = m.HasCover
+	song.CoverVersion = m.CoverVersion
 	song.SizeBytes = stat.Size()
 	return song, nil
 }
@@ -106,6 +107,7 @@ func (w *Watcher) refreshFile(ctx context.Context, path string) (*models.Song, e
 		return nil, err
 	}
 	// Only file-derived fields can differ; ID, Path and AddedAt are copied.
+	// CoverVersion makes a picture-only retag compare unequal.
 	if updated == *current {
 		return current, nil
 	}

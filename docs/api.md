@@ -48,7 +48,10 @@ GET /v1/songs/{id}
 ```
 
 Returns a song resource. `has_cover` is `true` when the file embeds a usable ID3v2 cover
-image, so clients can skip the cover request for songs without art.
+image, so clients can skip the cover request for songs without art. `cover_version` is an
+opaque string, present only with a cover, that changes when the embedded cover changes and
+equals the cover's `ETag` value. Clients append it to the cover URL as `?v=` so a retagged
+cover refetches.
 
 ```http
 GET /v1/songs/{id}/content

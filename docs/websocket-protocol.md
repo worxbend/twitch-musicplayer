@@ -90,6 +90,8 @@ Instructs the frontend to stream a song.
       "album": "",
       "duration_secs": 0,
       "size_bytes": 12345,
+      "has_cover": true,
+      "cover_version": "3f2a9c1d8e7b6a50",
       "added_at": "2026-06-06T12:00:00Z"
     },
     "stream_url": "http://localhost:8080/v1/songs/song-id/content",
@@ -115,8 +117,12 @@ Broadcast to every client when a song starts, after its `play_song` was delivere
 }
 ```
 
+Song objects in every frame use the [song resource](api.md) fields. `cover_version` is
+present only when `has_cover` is true and changes when the embedded cover changes; clients
+append it to the cover URL as `?v=` so a retagged cover refetches.
+
 `history_id` matches the `play_song.history_id` of that start. It is absent when the server
-re-announces the current song after its tags change, so the `/now-playing` overlay can
+re-announces the current song after its tags change (title, artist, album or cover), so the `/now-playing` overlay can
 re-show a repeated title on a new start (`?hold=N`) without re-showing it on a retag.
 
 `elapsed_secs` is how long the song has been playing, in seconds rounded to the millisecond,

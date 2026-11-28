@@ -13,6 +13,7 @@ type Song struct {
 	DurationSecs float64   `json:"duration_secs"`
 	SizeBytes    int64     `json:"size_bytes"`
 	HasCover     bool      `json:"has_cover"`
+	CoverVersion string    `json:"cover_version,omitempty"`
 	AddedAt      time.Time `json:"added_at"`
 }
 
