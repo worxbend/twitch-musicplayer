@@ -85,6 +85,11 @@ type Watcher struct {
 	// an overflow resync into exactly one more run after it.
 	rewatchC coalescer
 	resyncC  coalescer
+	// watchedDirs records every folder whose watch was added, so a Remove or
+	// Rename re-walks only for a folder. fsnotify's WatchList cannot serve:
+	// it may already have dropped a renamed folder's watch by then.
+	watchedMu   sync.Mutex
+	watchedDirs map[string]struct{}
 
 	// OnRemoved, when set before Start, is notified after songs are dropped.
 	OnRemoved OnSongsRemoved
@@ -134,6 +139,8 @@ func New(dir string, extensions []string, songRepo SongRepository, queueMgr Queu
 		settlePoll: 250 * time.Millisecond,
 		inflight:   make(map[string]bool),
 		settleSem:  make(chan struct{}, settleWorkers),
+
+		watchedDirs: map[string]struct{}{absDir: {}},
 	}
 	w.settleWait = w.waitSettled
 	return w, nil
@@ -196,6 +203,7 @@ func (w *Watcher) walkTree(ctx context.Context, root string, onMusicFile func(pa
 		if d.IsDir() {
 			if filepath.Clean(path) != w.dir {
 				if err := w.fsWatcher.Add(path); err == nil {
+					w.recordWatched(path)
 					watched++
 				}
 			}
@@ -242,10 +250,11 @@ func (w *Watcher) handleEvent(ctx context.Context, event fsnotify.Event) {
 	if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 		// A rename's new path arrives separately as a Create event.
 		w.unregisterPath(ctx, event.Name)
-		if !w.isMusicFile(event.Name) {
+		if w.forgetWatchedUnder(event.Name) {
 			// inotify gives a moved folder its old watch descriptor, and
 			// fsnotify then removes that shared watch for the old path, so
-			// the folder's new path can silently stop reporting files.
+			// the folder's new path can silently stop reporting files. The
+			// walk re-records the folders that still exist.
 			w.requestRewatch(ctx, "removed "+event.Name)
 		}
 		return
@@ -257,6 +266,28 @@ func (w *Watcher) handleEvent(ctx context.Context, event fsnotify.Event) {
 		// mid-flight into exactly one more pass.
 		w.registerWhenSettled(ctx, event.Name)
 	}
+}
+
+func (w *Watcher) recordWatched(dir string) {
+	w.watchedMu.Lock()
+	defer w.watchedMu.Unlock()
+	w.watchedDirs[dir] = struct{}{}
+}
+
+// forgetWatchedUnder drops path and every recorded folder below it, and
+// reports whether path was a watched folder or held one.
+func (w *Watcher) forgetWatchedUnder(path string) bool {
+	prefix := path + string(filepath.Separator)
+	w.watchedMu.Lock()
+	defer w.watchedMu.Unlock()
+	forgot := false
+	for dir := range w.watchedDirs {
+		if dir == path || strings.HasPrefix(dir, prefix) {
+			delete(w.watchedDirs, dir)
+			forgot = true
+		}
+	}
+	return forgot
 }
 
 // requestRewatch re-walks the library in the background to re-add every

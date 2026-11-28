@@ -228,13 +228,17 @@ func TestWatcherRewatchesAfterDirectoryRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(sub, "a.mp3"))
+	old := filepath.Join(dir, "old")
+	if err := os.Mkdir(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	h := startWatcher(t, dir)
 	// Stands in for fsnotify dropping the watch a renamed folder shares by wd.
 	if err := h.w.fsWatcher.Remove(sub); err != nil {
 		t.Fatal(err)
 	}
 
-	h.w.handleEvent(t.Context(), fsnotify.Event{Name: filepath.Join(dir, "old"), Op: fsnotify.Rename})
+	h.w.handleEvent(t.Context(), fsnotify.Event{Name: old, Op: fsnotify.Rename})
 
 	waitFor(t, 3*time.Second, "sub watched again", func() bool {
 		return slices.Contains(h.w.fsWatcher.WatchList(), sub)
@@ -243,6 +247,74 @@ func TestWatcherRewatchesAfterDirectoryRemoval(t *testing.T) {
 	waitFor(t, 3*time.Second, "sub/new.mp3 indexed", func() bool {
 		return h.indexed(t, filepath.Join("sub", "new.mp3"))
 	})
+}
+
+// unwatch removes folder's watch, so only a rewatch walk can put it back.
+func (h *harness) unwatch(t *testing.T, folder string) {
+	t.Helper()
+	if err := h.w.fsWatcher.Remove(folder); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (h *harness) watching(folder string) bool {
+	return slices.Contains(h.w.fsWatcher.WatchList(), folder)
+}
+
+func TestWatcherDeletedNonMusicFileStartsNoRewatch(t *testing.T) {
+	dir := t.TempDir()
+	sentinel := filepath.Join(dir, "sentinel")
+	if err := os.Mkdir(sentinel, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cover := filepath.Join(dir, "cover.jpg")
+	writeFile(t, cover)
+	marker := filepath.Join(dir, "marker.mp3")
+	writeFile(t, marker)
+	h := startWatcher(t, dir)
+	h.unwatch(t, sentinel)
+
+	if err := os.Remove(cover); err != nil {
+		t.Fatal(err)
+	}
+	// The marker's later Remove proves the cover's event was handled.
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, "marker.mp3 removed", func() bool { return h.count(t) == 0 })
+	time.Sleep(h.w.settlePoll)
+	if h.watching(sentinel) {
+		t.Fatal("deleting cover.jpg re-walked the library")
+	}
+}
+
+func TestWatcherRewatchesAfterRenamingFolderNamedLikeMusicFile(t *testing.T) {
+	dir := t.TempDir()
+	sentinel := filepath.Join(dir, "sentinel")
+	if err := os.Mkdir(sentinel, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Join(dir, "Beats.mp3")
+	if err := os.Mkdir(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(folder, "a.mp3"))
+	h := startWatcher(t, dir)
+	h.unwatch(t, sentinel)
+
+	renamed := filepath.Join(dir, "Beats2")
+	if err := os.Rename(folder, renamed); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 3*time.Second, "rewatch after the folder rename", func() bool { return h.watching(sentinel) })
+	writeFile(t, filepath.Join(renamed, "new.mp3"))
+	waitFor(t, 3*time.Second, "Beats2/new.mp3 indexed", func() bool {
+		return h.indexed(t, filepath.Join("Beats2", "new.mp3"))
+	})
+	if h.indexed(t, filepath.Join("Beats.mp3", "a.mp3")) {
+		t.Fatal("Beats.mp3/a.mp3 still indexed after the folder rename")
+	}
 }
 
 func TestWatcherIndexesFileInRepeatedlyRenamedFolder(t *testing.T) {
