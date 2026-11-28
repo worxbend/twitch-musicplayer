@@ -105,3 +105,34 @@ export function reduceEnvelope(
     outRms[i] = Math.sqrt(sumSq / (end - start));
   }
 }
+
+/**
+ * Moves `cur` toward `target` by an exponential envelope measured in seconds.
+ *
+ * A constant per-frame lerp ties the feel to the frame rate: at 30 fps a bar
+ * releases at half the speed it does at 60 fps, and at 144 Hz it snaps more
+ * than twice as fast. Scaling the step by 1 - exp(-dt / tau) makes the curve
+ * depend on elapsed time only. `attackSecs` applies when rising and
+ * `releaseSecs` when falling; pass the same value for a symmetric follower.
+ */
+export function followEnvelope(
+  cur: number,
+  target: number,
+  attackSecs: number,
+  releaseSecs: number,
+  dt: number,
+): number {
+  if (dt <= 0) return cur;
+  const tau = target > cur ? attackSecs : releaseSecs;
+  return cur + (target - cur) * (1 - Math.exp(-dt / tau));
+}
+
+/**
+ * Time constant that reproduces a per-frame lerp factor `alpha` at 60 fps.
+ *
+ * One frame of followEnvelope at dt = 1/60 moves by 1 - exp(-1 / (60 tau)).
+ * Setting that equal to alpha and solving gives tau = -1 / (60 ln(1 - alpha)).
+ */
+export function tauFor60fps(alpha: number): number {
+  return -1 / (60 * Math.log(1 - alpha));
+}

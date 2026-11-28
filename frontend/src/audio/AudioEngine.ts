@@ -1,8 +1,20 @@
-import { clamp, lerp } from '../viz/util.ts';
+import { clamp } from '../viz/util.ts';
 import type { AudioBands } from '../viz/types';
 import { mediaStateOf, positionStateOf } from './mediaSession.ts';
+import { followEnvelope, tauFor60fps } from './analysisMath.ts';
 
 const BINS = 512;
+// Visual envelopes as time constants in seconds, so 30 fps OBS sources and
+// 144 Hz monitors move alike. Each matches the per-frame lerp factor it
+// replaced at 60 fps. Spectrum: fast attack, slow release.
+const SPECTRUM_ATTACK_SECS = tauFor60fps(0.45);
+const SPECTRUM_RELEASE_SECS = tauFor60fps(0.12);
+const BASS_SECS = tauFor60fps(0.4);
+const MIDS_SECS = tauFor60fps(0.25);
+const HIGHS_SECS = tauFor60fps(0.5);
+const VOLUME_SECS = tauFor60fps(0.25);
+// Slow running bass average that a kick must clear to count as a beat.
+const BEAT_BASELINE_SECS = tauFor60fps(0.06);
 const DEFAULT_FADE_OUT_MS = 2500;
 const DEFAULT_FADE_IN_MS = 2500;
 // A stream whose play() has not settled by then is treated as failed.
@@ -646,23 +658,24 @@ export class AudioEngine {
     }
 
     for (let i = 0; i < BINS; i++) {
-      const target = this.raw[i] / 255;
-      const cur = this.spectrum[i];
-      this.spectrum[i] = target > cur ? lerp(cur, target, 0.45) : lerp(cur, target, 0.12);
+      this.spectrum[i] = followEnvelope(
+        this.spectrum[i], this.raw[i] / 255, SPECTRUM_ATTACK_SECS, SPECTRUM_RELEASE_SECS, dt,
+      );
     }
 
     const avg = (a: number, b: number) => {
       let s = 0; for (let i = a; i < b; i++) s += this.raw[i];
       return s / ((b - a) * 255);
     };
-    const k = 0.25;
-    this.bands.bass = lerp(this.bands.bass, avg(1, 12), 0.4);
-    this.bands.mids = lerp(this.bands.mids, avg(34, 120), k);
-    this.bands.highs = lerp(this.bands.highs, avg(150, 360), 0.5);
-    this.bands.volume = lerp(this.bands.volume, avg(1, 380), k);
-
+    const follow = (cur: number, target: number, tau: number) =>
+      followEnvelope(cur, target, tau, tau, dt);
     const instBass = avg(1, 12);
-    this._bassAvg = lerp(this._bassAvg, instBass, 0.06);
+    this.bands.bass = follow(this.bands.bass, instBass, BASS_SECS);
+    this.bands.mids = follow(this.bands.mids, avg(34, 120), MIDS_SECS);
+    this.bands.highs = follow(this.bands.highs, avg(150, 360), HIGHS_SECS);
+    this.bands.volume = follow(this.bands.volume, avg(1, 380), VOLUME_SECS);
+
+    this._bassAvg = follow(this._bassAvg, instBass, BEAT_BASELINE_SECS);
     this._beatCooldown -= dt;
     this.beat = false;
     if (instBass > this._bassAvg * 1.32 && instBass > 0.18 && this._beatCooldown <= 0) {

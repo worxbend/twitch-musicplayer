@@ -19,7 +19,7 @@
  */
 import type { AudioEngine } from './AudioEngine';
 import type { AudioFrame } from '../viz/types';
-import { buildLogBands, reduceEnvelope } from './analysisMath';
+import { buildLogBands, followEnvelope, reduceEnvelope, tauFor60fps } from './analysisMath.ts';
 
 export interface AnalysisOptions {
   /** Number of log-spaced spectrum bands. */
@@ -42,11 +42,12 @@ const SMOOTHING = 0.55;
 const DEFAULTS = { bands: 64, wavePoints: 256, minHz: 30, maxHz: 16000 };
 
 // Band envelope: snap upward, ease downward. Matches how a level meter behaves
-// and how people expect a bar to react to a transient.
-const BAND_ATTACK = 0.55;
-const BAND_RELEASE = 0.14;
+// and how people expect a bar to react to a transient. Time constants in
+// seconds, chosen to match the original per-frame factors 0.55 / 0.14 at 60 fps.
+const BAND_ATTACK_SECS = tauFor60fps(0.55);
+const BAND_RELEASE_SECS = tauFor60fps(0.14);
 // Peak caps hang, then fall away.
-const PEAK_FALL_PER_SEC = 0.55;
+export const PEAK_FALL_PER_SEC = 0.55;
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -215,8 +216,7 @@ export class AudioAnalysisEngine {
       }
       v = clamp01(v * this.bandTilt[i]);
 
-      const cur = bands[i];
-      bands[i] = cur + (v - cur) * (v > cur ? BAND_ATTACK : BAND_RELEASE);
+      bands[i] = followEnvelope(bands[i], v, BAND_ATTACK_SECS, BAND_RELEASE_SECS, dt);
 
       if (bands[i] >= bandPeaks[i]) bandPeaks[i] = bands[i];
       else bandPeaks[i] = Math.max(bands[i], bandPeaks[i] - fall);

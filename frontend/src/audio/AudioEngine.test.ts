@@ -270,6 +270,26 @@ test('visuals fall back to the synth once the active track ends', async () => {
   assert.equal(readSpectrum.mock.callCount(), 1);
 });
 
+test('the beat baseline and bass band track a steady input alike at 30 and 60 fps', async () => {
+  await playFirstTrack();
+  mock.method(ctx().analyser, 'getByteFrequencyData', (bins: Uint8Array) => bins.fill(200));
+
+  const after1s = (fps: number) => {
+    engine['_bassAvg'] = 0;
+    engine.bands.bass = 0;
+    for (let i = 0; i < fps; i++) engine.update(1 / fps);
+    return { baseline: engine['_bassAvg'], bass: engine.bands.bass };
+  };
+  const slow = after1s(30);
+  const fast = after1s(60);
+
+  // The baseline is still climbing after 1 s, so a per-frame lerp would leave
+  // the 30 fps run far behind.
+  assert.ok(fast.baseline > 0.5 && fast.baseline < 200 / 255);
+  assert.ok(Math.abs(slow.baseline - fast.baseline) < 1e-3, `${slow.baseline} vs ${fast.baseline}`);
+  assert.ok(Math.abs(slow.bass - fast.bass) < 1e-3, `${slow.bass} vs ${fast.bass}`);
+});
+
 test('audible is true while a started backend track plays', async () => {
   await playFirstTrack();
   assert.equal(engine.audible, true);

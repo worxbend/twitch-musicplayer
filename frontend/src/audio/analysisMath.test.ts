@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLogBands, reduceEnvelope } from './analysisMath.ts';
+import { buildLogBands, followEnvelope, reduceEnvelope, tauFor60fps } from './analysisMath.ts';
 
 const RATE = 44100;
 const FFT = 2048;
@@ -152,5 +152,44 @@ test('more buckets than samples does not produce garbage', () => {
     assert.ok(Number.isFinite(min[i]), `bucket ${i} min is not finite: ${min[i]}`);
     assert.ok(Number.isFinite(max[i]), `bucket ${i} max is not finite: ${max[i]}`);
     assert.ok(Number.isFinite(rms[i]), `bucket ${i} rms is not finite: ${rms[i]}`);
+  }
+});
+
+// ── followEnvelope ──────────────────────────────────────────────────────────
+
+/** Runs the follower toward `target` for `secs` seconds at `fps`. */
+function settle(fps: number, secs: number, target: number, attack: number, release: number, from = 0) {
+  let v = from;
+  const frames = Math.round(secs * fps);
+  for (let i = 0; i < frames; i++) v = followEnvelope(v, target, attack, release, 1 / fps);
+  return v;
+}
+
+test('followEnvelope leaves the value alone for a zero or negative dt', () => {
+  assert.equal(followEnvelope(0.3, 1, 0.05, 0.1, 0), 0.3);
+  assert.equal(followEnvelope(0.3, 1, 0.05, 0.1, -0.016), 0.3);
+});
+
+test('followEnvelope reaches the same level after 1 s at 30, 60 and 144 Hz', () => {
+  // A 0.3 s release keeps the step response well short of its target after 1 s,
+  // so a frame-rate dependence would show.
+  for (const [attack, release, from, target] of [[0.3, 0.3, 0, 1], [0.02, 0.3, 1, 0]]) {
+    const at60 = settle(60, 1, target, attack, release, from);
+    assert.ok(Math.abs(settle(30, 1, target, attack, release, from) - at60) < 1e-3);
+    assert.ok(Math.abs(settle(144, 1, target, attack, release, from) - at60) < 1e-3);
+  }
+});
+
+test('followEnvelope rises faster than it falls when attack is shorter', () => {
+  const rise = followEnvelope(0, 1, 0.02, 0.1, 1 / 60);
+  const fall = 1 - followEnvelope(1, 0, 0.02, 0.1, 1 / 60);
+  assert.ok(rise > fall, `rise ${rise} should exceed fall ${fall}`);
+});
+
+test('one 1/60 s step with tauFor60fps reproduces the old per-frame factor', () => {
+  for (const alpha of [0.55, 0.14, 0.45, 0.12, 0.06]) {
+    const tau = tauFor60fps(alpha);
+    assert.ok(Math.abs(followEnvelope(0, 1, tau, tau, 1 / 60) - alpha) < 1e-9, `rise for ${alpha}`);
+    assert.ok(Math.abs(1 - followEnvelope(1, 0, tau, tau, 1 / 60) - alpha) < 1e-9, `fall for ${alpha}`);
   }
 });
